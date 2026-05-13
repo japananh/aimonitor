@@ -7,8 +7,18 @@ import (
 	"strings"
 
 	"github.com/japananh/aimonitor/internal/config"
+	"github.com/japananh/aimonitor/internal/install"
 	"github.com/spf13/cobra"
 )
+
+// applyAutostart bridges the YAML flip to the OS-level service manager
+// (LaunchAgent on macOS; Linux gets a real systemd writer in Phase 5).
+func applyAutostart(enable bool) error {
+	if enable {
+		return install.EnableAutostart("")
+	}
+	return install.DisableAutostart()
+}
 
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -48,6 +58,13 @@ func newConfigCmd() *cobra.Command {
 				}
 				if err := config.Save("", updated); err != nil {
 					return err
+				}
+				// Side effect: flipping `autostart` (de)registers the
+				// LaunchAgent so the YAML and OS state stay in sync.
+				if args[0] == "autostart" && cfg.AutoStart != updated.AutoStart {
+					if err := applyAutostart(updated.AutoStart); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: autostart %v failed: %v\n", updated.AutoStart, err)
+					}
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Set %s = %s\n", args[0], args[1])
 				return nil
