@@ -30,26 +30,32 @@ func New() *Provider { return &Provider{} }
 // Name implements provider.Provider.
 func (p *Provider) Name() string { return Name }
 
+// LoadAccounts implements provider.Provider.
 func (p *Provider) LoadAccounts(ctx context.Context) ([]provider.Account, error) {
 	return nil, ErrNotImplemented
 }
 
+// EstimateSessionUsage implements provider.Provider.
 func (p *Provider) EstimateSessionUsage(ctx context.Context, acct provider.Account) (provider.Usage, error) {
 	return provider.Usage{}, ErrNotImplemented
 }
 
+// ProbeServerSide implements provider.Provider.
 func (p *Provider) ProbeServerSide(ctx context.Context, acct provider.Account) (provider.RateLimit, error) {
 	return provider.RateLimit{}, ErrNotImplemented
 }
 
+// ActiveCredential implements provider.Provider.
 func (p *Provider) ActiveCredential(ctx context.Context) (provider.Credential, error) {
 	return provider.Credential{}, ErrNotImplemented
 }
 
+// SetActiveCredential implements provider.Provider.
 func (p *Provider) SetActiveCredential(ctx context.Context, cred provider.Credential) error {
 	return ErrNotImplemented
 }
 
+// OnboardingFlow implements provider.Provider.
 func (p *Provider) OnboardingFlow(ctx context.Context) (provider.Credential, error) {
 	return provider.Credential{}, ErrNotImplemented
 }

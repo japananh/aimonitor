@@ -1,3 +1,6 @@
+// Command aimonitor is the CLI entry point. It dispatches to subcommands
+// (add, list, switch, status, config, probe, log, daemon, doctor,
+// uninstall) defined in internal/cli.
 package main
 
 import (
