@@ -1,0 +1,60 @@
+name: release
+
+# Triggered by a pushed tag like `v1.0.0-beta.1`. goreleaser handles
+# cross-compilation, the universal Mac binary, the GitHub release, and
+# the Homebrew tap update in a single step.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Cancel an in-progress release of the same tag if a force-push or
+# retag happens; we never want two goreleaser runs publishing the
+# same artifact name concurrently.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # create release + upload artifacts
+
+jobs:
+  release:
+    name: goreleaser
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # goreleaser auto-generates a changelog from git history;
+          # without a deep fetch it sees only the tagged commit.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: Verify Swift toolchain
+        run: swift --version
+
+      - name: Set up goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          install-only: true
+          version: '~> v2'
+
+      # Sanity check: confirm the bundling hook works before goreleaser
+      # invokes it. Saves a long failed run if something's misconfigured.
+      - name: Pre-flight bundle-app
+        run: bash scripts/bundle-app.sh
+
+      - name: Run goreleaser
+        run: goreleaser release --clean
+        env:
+          # Default to the workflow's job token for the release upload,
+          # and use a personal-access token with `repo` scope for the
+          # cross-repo push to japananh/homebrew-tap.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
