@@ -36,4 +36,10 @@ clean:
 
 widget:
 	@if [ "$$(uname)" != "Darwin" ]; then echo "widget target is macOS-only"; exit 1; fi
-	@cd ui/macos && xcodebuild -project AIMonitor.xcodeproj -scheme AIMonitor -configuration Release
+	@cd ui/macos && swift build -c release
+	@bash scripts/bundle-app.sh
+
+release-snapshot:
+	@which goreleaser >/dev/null || { echo "goreleaser missing: brew install goreleaser"; exit 1; }
+	rm -rf dist build
+	goreleaser release --snapshot --clean --skip=publish
