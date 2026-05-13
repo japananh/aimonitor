@@ -2,14 +2,19 @@
 // Code OAuth ecosystem. In v1 this is the only provider; v2 will add
 // alongside (not replace) an OpenAI/Codex implementation.
 //
-// All exported entry points are stubs that return ErrNotImplemented in this
-// scaffolding milestone. Real implementations land in Phase 2 (JSONL parser,
-// Keychain bridge, onboarding flow) and Phase 3 (rate-limit probe).
+// Behavioural surface as of Phase 2:
+//   - ActiveCredential / SetActiveCredential are wired to the OS keyring.
+//   - OnboardingFlow runs the defensive byte-diff dance around
+//     `claude login` (see onboarding.go).
+//   - LoadAccounts, EstimateSessionUsage, ProbeServerSide remain stubs
+//     until later in Phase 2 (LoadAccounts depends on the daemon's view
+//     of the accounts table) and Phase 3 (Probe).
 package claude
 
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/japananh/aimonitor/internal/provider"
 )
@@ -17,12 +22,21 @@ import (
 // Name is the stable provider identifier.
 const Name = "claude"
 
-// ErrNotImplemented is the placeholder error returned by every method until
-// the corresponding phase lands.
-var ErrNotImplemented = errors.New("claude provider: not implemented in v1.0.0-beta scaffolding")
+// ErrNotImplemented is the placeholder error still returned by the
+// behaviours that haven't been wired yet.
+var ErrNotImplemented = errors.New("claude provider: not implemented in v1.0.0-beta")
 
 // Provider is the Claude implementation of provider.Provider.
-type Provider struct{}
+//
+// The keychainOps backend is constructed lazily on first use so that
+// merely importing the package (e.g. for init-time registration) doesn't
+// touch the OS keyring or fail when libsecret/Keychain isn't available
+// in a constrained context like a test or a `--help` invocation.
+type Provider struct {
+	keysOnce sync.Once
+	keys     *keychainOps
+	keysErr  error
+}
 
 // New returns a fresh Claude provider instance.
 func New() *Provider { return &Provider{} }
@@ -30,34 +44,66 @@ func New() *Provider { return &Provider{} }
 // Name implements provider.Provider.
 func (p *Provider) Name() string { return Name }
 
+func (p *Provider) ops() (*keychainOps, error) {
+	p.keysOnce.Do(func() {
+		p.keys, p.keysErr = newKeychainOps()
+	})
+	return p.keys, p.keysErr
+}
+
 // LoadAccounts implements provider.Provider.
-func (p *Provider) LoadAccounts(ctx context.Context) ([]provider.Account, error) {
+//
+// Stub: Phase 2 daemon layer constructs Account values from SQLite. The
+// Provider's responsibility here is mostly to declare its provider name
+// and let the storage layer enumerate. We'll revisit if the API turns
+// out to need more.
+func (p *Provider) LoadAccounts(_ context.Context) ([]provider.Account, error) {
 	return nil, ErrNotImplemented
 }
 
 // EstimateSessionUsage implements provider.Provider.
-func (p *Provider) EstimateSessionUsage(ctx context.Context, acct provider.Account) (provider.Usage, error) {
+//
+// Stub: the JSONL parser + watcher exist in this package and in
+// internal/daemon, but plumbing them into a per-account session-window
+// number lives in the daemon. We'll fill this in when the daemon's
+// usage aggregator lands.
+func (p *Provider) EstimateSessionUsage(_ context.Context, _ provider.Account) (provider.Usage, error) {
 	return provider.Usage{}, ErrNotImplemented
 }
 
-// ProbeServerSide implements provider.Provider.
-func (p *Provider) ProbeServerSide(ctx context.Context, acct provider.Account) (provider.RateLimit, error) {
+// ProbeServerSide implements provider.Provider — Phase 3.
+func (p *Provider) ProbeServerSide(_ context.Context, _ provider.Account) (provider.RateLimit, error) {
 	return provider.RateLimit{}, ErrNotImplemented
 }
 
 // ActiveCredential implements provider.Provider.
 func (p *Provider) ActiveCredential(ctx context.Context) (provider.Credential, error) {
-	return provider.Credential{}, ErrNotImplemented
+	k, err := p.ops()
+	if err != nil {
+		return provider.Credential{}, err
+	}
+	return k.readActive(ctx)
 }
 
 // SetActiveCredential implements provider.Provider.
 func (p *Provider) SetActiveCredential(ctx context.Context, cred provider.Credential) error {
-	return ErrNotImplemented
+	k, err := p.ops()
+	if err != nil {
+		return err
+	}
+	return k.writeActive(ctx, cred)
 }
 
 // OnboardingFlow implements provider.Provider.
 func (p *Provider) OnboardingFlow(ctx context.Context) (provider.Credential, error) {
-	return provider.Credential{}, ErrNotImplemented
+	k, err := p.ops()
+	if err != nil {
+		return provider.Credential{}, err
+	}
+	return runOnboarding(ctx, onboardingDeps{
+		keys:  k,
+		login: runClaudeLogin,
+	})
 }
 
 func init() {
