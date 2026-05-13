@@ -39,3 +39,23 @@ jobs:
       - uses: golangci/golangci-lint-action@v9.2.0
         with:
           version: v2.12.2
+
+  swift:
+    name: swift build (macos-14)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - name: swift --version
+        run: swift --version
+      - name: swift build (release)
+        working-directory: ui/macos
+        run: swift build -c release
+      - name: confirm LSUIElement embedded
+        working-directory: ui/macos
+        # otool -P dumps the __TEXT __info_plist section. Grep guard
+        # keeps a silent regression from sneaking through if the
+        # linker flag goes missing.
+        run: |
+          otool -P .build/release/AIMonitor | tee /tmp/info.plist
+          grep -q 'LSUIElement' /tmp/info.plist
+          grep -q '<true/>' /tmp/info.plist
