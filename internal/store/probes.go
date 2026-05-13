@@ -68,10 +68,12 @@ func (s *Store) PutProbeResult(ctx context.Context, accountID int64, rl provider
 	return nil
 }
 
-// ErrProbeNotFound: no row yet for this account.
+// ErrProbeNotFound is returned by GetProbeResult when no row exists yet
+// for the requested account.
 var ErrProbeNotFound = errors.New("store: no probe result for account")
 
-// ErrProbeStale: row exists but older than ProbeCacheTTL. The returned
-// RateLimit is still populated — callers can choose to use it as a hint
-// while the auto-switcher reissues a fresh probe.
+// ErrProbeStale is returned by GetProbeResult when the cached row is
+// older than ProbeCacheTTL. The returned RateLimit is still populated —
+// callers can choose to use it as a hint while the auto-switcher
+// reissues a fresh probe.
 var ErrProbeStale = errors.New("store: probe result is stale")
