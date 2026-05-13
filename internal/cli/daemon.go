@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/signal"
 	"syscall"
@@ -84,7 +85,7 @@ func runDaemon(cmd *cobra.Command) error {
 	defer stop()
 
 	fmt.Fprintln(cmd.OutOrStdout(), "aimonitor daemon running; Ctrl-C to stop")
-	if err := srv.Run(ctx); err != nil && err != context.Canceled {
+	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")

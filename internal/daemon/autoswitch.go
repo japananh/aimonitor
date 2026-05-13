@@ -39,14 +39,12 @@ type AutoSwitcher struct {
 	cfg      config.Config
 	clock    func() time.Time
 
-	mu                  sync.Mutex
-	activeAccountID     int64
-	cachedActiveBytes   []byte
-	usageSinceReset     int64
-	observedBudget      int64
-	lastPercent         float64
-	lastSwitchAt        time.Time
-	lastTripwireFired   int
+	mu                sync.Mutex
+	usageSinceReset   int64
+	observedBudget    int64
+	lastPercent       float64
+	lastSwitchAt      time.Time
+	lastTripwireFired int
 }
 
 // AutoSwitcherConfig wires the engine. clock is optional (defaults to
@@ -204,7 +202,7 @@ func (a *AutoSwitcher) evaluateAndSwitch(ctx context.Context, tripwire int) erro
 	// 4. Probe each candidate + the current account. Best-by-remaining wins.
 	currentProbe, _ := a.probeAccount(ctx, *current) // tolerate probe errors here
 	var best *store.Account
-	var bestRemaining int64 = currentProbe.TokensRemaining
+	bestRemaining := currentProbe.TokensRemaining
 	for i := range candidates {
 		rl, err := a.probeAccount(ctx, candidates[i])
 		if err != nil {
