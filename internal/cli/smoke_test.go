@@ -13,14 +13,13 @@ import (
 // panicking or exiting cleanly. Once a subcommand grows a real
 // implementation, drop it from this table.
 func TestStubsReturnNotImplemented(t *testing.T) {
+	// add, list, switch, status are now wired (Phase 2). The remaining
+	// subcommands below still return errNotImplemented — drop a row from
+	// this list when its real implementation lands.
 	cases := []struct {
 		name string
 		args []string
 	}{
-		{"add", []string{"add"}},
-		{"list", []string{"list"}},
-		{"switch", []string{"switch", "foo"}},
-		{"status", []string{"status"}},
 		{"config-get", []string{"config", "get", "autoswitch"}},
 		{"config-set", []string{"config", "set", "autoswitch", "true"}},
 		{"probe", []string{"probe", "foo"}},
