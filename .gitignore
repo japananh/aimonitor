@@ -1,0 +1,37 @@
+# Binaries
+/bin/
+/dist/
+/aimonitor
+/aimonitor.exe
+
+# Go build/test artifacts
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Xcode
+ui/macos/build/
+ui/macos/DerivedData/
+ui/macos/**/xcuserdata/
+ui/macos/**/*.xcuserstate
+
+# Local environment
+.env
+.env.local
+
+# Local data (in case anyone runs the daemon from the repo)
+*.db
+*.db-wal
+*.db-shm
+*.sock
+
+# Goreleaser artifacts
+.goreleaser-tmp/
