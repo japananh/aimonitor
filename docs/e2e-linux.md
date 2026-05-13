@@ -23,25 +23,36 @@ curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/l
 - [ ] `aimonitor --version` prints `v1.0.0-beta.1`.
 - [ ] `systemctl --user is-enabled aimonitor.service` returns `enabled`.
 
-## 2. First-account import
+## 2. First-account adoption
 
 ```bash
-aimonitor add
+aimonitor add --adopt-current --label personal
 ```
 
-- [ ] Prompts for a label; default is the account email.
+- [ ] Output ends with `Account "personal" added`.
 - [ ] `aimonitor list` shows the new row.
 - [ ] `secret-tool search service "Claude Code-credentials"` still
       returns the original entry untouched.
 
-## 3. Second account
+## 3. Second account (poll-the-slot capture)
 
 ```bash
-aimonitor add
+aimonitor add --label work
 ```
 
-- [ ] `claude login` opens a browser (or prints the URL on a headless box).
-- [ ] After completion, `aimonitor list` shows two accounts.
+aimonitor will stash the current slot, print instructions, and poll
+the keychain. In another terminal:
+
+```bash
+claude
+/login    # complete OAuth in the browser
+```
+
+- [ ] aimonitor prints `✓ Detected new credential.` within 2–4 s of
+      OAuth completion.
+- [ ] `aimonitor list` shows two accounts.
+- [ ] Original `Claude Code-credentials` is restored — `claude` in a
+      fresh terminal still resolves to `personal`.
 - [ ] Cancel a third `aimonitor add` mid-flow with Ctrl-C — the stash
       is restored to its previous value.
 
