@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 
+	// Registers the "sqlite" driver with database/sql. Pure-Go, no CGO.
 	_ "modernc.org/sqlite"
 )
 

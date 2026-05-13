@@ -1,3 +1,6 @@
+// Package cli implements the aimonitor CLI subcommands (add, list, switch,
+// status, config, probe, log, daemon, doctor, uninstall). Subcommands are
+// thin wrappers that talk to the aimonitor daemon over a Unix socket.
 package cli
 
 import (

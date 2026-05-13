@@ -5,6 +5,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// NewRootCmd returns the top-level cobra command with every aimonitor
+// subcommand attached. main() wires it up and calls Execute().
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:     "aimonitor",
