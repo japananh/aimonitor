@@ -1,18 +1,10 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
-// Package install — non-darwin stubs. Linux gets a real systemd-unit
-// writer in Phase 5; for now we no-op so the package compiles on the
-// Linux CI runner without a build-tag scope mismatch.
+// Package install — stubs for platforms we don't ship to. macOS and
+// Linux each have their own implementations; everything else returns
+// ErrAutostartUnsupported so the package still compiles for
+// developers running e.g. Windows or FreeBSD.
 package install
-
-import (
-	"errors"
-	"runtime"
-)
-
-// ErrAutostartUnsupported is returned on platforms where we haven't
-// shipped an autostart helper yet.
-var ErrAutostartUnsupported = errors.New("autostart not supported on " + runtime.GOOS)
 
 // LaunchAgentPath returns ErrAutostartUnsupported on non-darwin.
 func LaunchAgentPath() (string, error) { return "", ErrAutostartUnsupported }
