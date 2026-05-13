@@ -1,3 +1,6 @@
+// Package config holds aimonitor's user-facing configuration: thresholds
+// for the auto-switch tripwires, autoswitch on/off, cool-down, etc. Values
+// live on disk in a YAML file; this package validates and parses them.
 package config
 
 import (

@@ -14,6 +14,14 @@ linters:
     - errorlint       # idiomatic errors.Is / errors.As wrapping checks
     - misspell        # commonly misspelled words
     - revive          # successor to golint, mild style rules
+  exclusions:
+    rules:
+      # Cobra RunE handlers take (cmd, args) by signature even when neither
+      # is used, and provider stub methods carry ctx that will be used once
+      # the real implementation lands. Renaming to `_` everywhere would just
+      # be churn.
+      - linters: [revive]
+        text: "unused-parameter"
 
 run:
   timeout: 5m
