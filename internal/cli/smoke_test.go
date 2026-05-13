@@ -20,12 +20,13 @@ func TestStubsReturnNotImplemented(t *testing.T) {
 		name string
 		args []string
 	}{
-		// daemon start/stop/status are still stubs (Phase 4 will add
-		// launchd/systemd lifecycle management). `daemon run` is wired.
+		// daemon start/stop/status remain stubs — Phase 5 leaves them
+		// alone because launchd/systemd are the production lifecycle
+		// manager (via `aimonitor config set autostart true`). The
+		// stubs exist so users have something to discover via `--help`.
 		{"daemon-start", []string{"daemon", "start"}},
 		{"daemon-stop", []string{"daemon", "stop"}},
 		{"daemon-status", []string{"daemon", "status"}},
-		{"uninstall", []string{"uninstall"}},
 	}
 
 	for _, tc := range cases {
