@@ -20,6 +20,8 @@ func TestStubsReturnNotImplemented(t *testing.T) {
 		name string
 		args []string
 	}{
+		// daemon start/stop/status are still stubs (Phase 4 will add
+		// launchd/systemd lifecycle management). `daemon run` is wired.
 		{"daemon-start", []string{"daemon", "start"}},
 		{"daemon-stop", []string{"daemon", "stop"}},
 		{"daemon-status", []string{"daemon", "status"}},
