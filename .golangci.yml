@@ -14,6 +14,17 @@ linters:
     - errorlint       # idiomatic errors.Is / errors.As wrapping checks
     - misspell        # commonly misspelled words
     - revive          # successor to golint, mild style rules
+  settings:
+    errcheck:
+      # The fmt.Fp* family writes to stdout/stderr in the CLI, where the
+      # writer effectively never errors (a closed pipe is the only case
+      # and we can't recover usefully anyway). Checking each call clutters
+      # user-facing output code. We intentionally do NOT exclude io.Writer.Write
+      # broadly — that would mask real bugs in non-stdio writers.
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
   exclusions:
     rules:
       # Cobra RunE handlers take (cmd, args) by signature even when neither
