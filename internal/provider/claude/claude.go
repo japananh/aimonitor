@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/japananh/aimonitor/internal/provider"
@@ -108,16 +109,12 @@ func (p *Provider) SetActiveCredential(ctx context.Context, cred provider.Creden
 	return k.writeActive(ctx, cred)
 }
 
-// OnboardingFlow implements provider.Provider.
+// OnboardingFlow implements provider.Provider. Routes to CaptureNew,
+// the poll-the-keychain multi-account capture flow. Output goes to
+// stderr so callers driving us programmatically (tests, automation)
+// can still read structured output on stdout.
 func (p *Provider) OnboardingFlow(ctx context.Context) (provider.Credential, error) {
-	k, err := p.ops()
-	if err != nil {
-		return provider.Credential{}, err
-	}
-	return runOnboarding(ctx, onboardingDeps{
-		keys:  k,
-		login: runClaudeLogin,
-	})
+	return CaptureNew(ctx, os.Stderr, CaptureOpts{})
 }
 
 func init() {

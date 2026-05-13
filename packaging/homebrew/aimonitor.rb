@@ -16,7 +16,7 @@
 #     brew install --cask ./packaging/homebrew/aimonitor.rb
 
 cask "aimonitor" do
-  version "1.0.0-beta.1"
+  version "1.0.0-beta.2"
   sha256 :no_check
 
   url "https://github.com/japananh/aimonitor/releases/download/v#{version}/aimonitor_#{version}_darwin_universal.tar.gz"

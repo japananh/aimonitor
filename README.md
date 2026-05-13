@@ -98,29 +98,36 @@ Your original `Claude Code-credentials` keyring entry is **never touched** by ai
 ## Quick start
 
 ```sh
-# First run adopts your existing Claude Code credentials.
-aimonitor
+# 1. Adopt your existing Claude Code login as the first aimonitor account.
+#    Use --adopt-current because Claude Code 2.x has no `claude login`
+#    subcommand — /login is a slash command inside the interactive session.
+aimonitor add --adopt-current --label personal
 
-# Add a second account (opens Claude Code's OAuth flow, then stashes the result).
-aimonitor add
+# 2. Start the daemon at login so the menu bar widget shows live data.
+aimonitor config set autostart true
 
-# See what aimonitor knows about.
+# 3. Add a second account. aimonitor stashes your current credential,
+#    prints instructions, and polls the keychain. You drive the login
+#    in another terminal: run `claude` then type /login.
+aimonitor add --label work
+
+# 4. See what aimonitor knows about.
 aimonitor list
 
-# Switch the active credential for the next `claude` invocation.
+# 5. Switch the active credential for the next `claude` invocation.
 aimonitor switch work
 
-# Check the true server-side remaining quota for an account.
+# 6. Check the true server-side remaining quota for an account.
 aimonitor probe personal
 
-# Enable auto-switch (default off).
+# 7. Enable auto-switch (default off).
 aimonitor config set autoswitch true
 aimonitor config set thresholds 40,60,100
 
-# Audit log of every switch.
+# 8. Audit log of every switch.
 aimonitor log
 
-# Quick health check.
+# 9. Quick health check.
 aimonitor doctor
 ```
 

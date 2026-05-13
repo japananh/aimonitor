@@ -31,28 +31,51 @@ open /Applications/AIMonitor.app
 - [ ] The chart-bar icon appears in the menu bar (no Dock icon).
 - [ ] Clicking the icon shows the popover with a "Daemon not running" hint.
 
-## 3. Daemon import / first account
+## 3. First account — adopt your existing login
+
+Claude Code 2.x doesn't expose `claude login` as a CLI subcommand
+(it's a `/login` slash command inside an interactive session). So for
+the first account, use the fast `--adopt-current` path:
 
 ```bash
-aimonitor add
+aimonitor add --adopt-current --label personal
 ```
 
-- [ ] Prompts for a label; defaults to the existing account's email.
-- [ ] After confirming, `aimonitor list` shows the account.
+- [ ] Output ends with `Account "personal" added (id=1). Use \`aimonitor switch personal\` to make it active.`
+- [ ] `aimonitor list` shows the account.
 - [ ] `Claude Code-credentials` Keychain entry is **unchanged**
       (verify in Keychain Access — same modification date).
 
-## 4. Add a second account
+## 4. Add a second account (poll-the-slot multi-account capture)
 
 ```bash
-aimonitor add
+aimonitor add --label work
 ```
 
-- [ ] `claude login` opens a browser tab; complete the flow with a
-      different account.
-- [ ] After it completes, `aimonitor list` shows two rows.
-- [ ] Cancel mid-flow (try a third `aimonitor add` then Ctrl-C the
-      browser tab) — the stash is restored, no half-state.
+aimonitor will:
+1. Stash your current `Claude Code-credentials` in memory.
+2. Print instructions telling you to log into the new account from
+   another terminal.
+3. Poll the keychain every 2 s for a byte change.
+
+Then, in **another Terminal window**, drive the login yourself:
+
+```bash
+claude          # starts an interactive session
+/login          # type this inside the session; complete OAuth in the browser
+```
+
+Switch back to the first Terminal. Within 2-4 s after the OAuth
+completes:
+
+- [ ] aimonitor prints `✓ Detected new credential.`
+- [ ] `aimonitor list` shows two rows.
+- [ ] `Claude Code-credentials` Keychain entry is **restored** to the
+      original (personal) credential — verify by running `claude` again
+      and confirming you're still on `personal`.
+- [ ] Cancel test: `aimonitor add --label cancel-me` then Ctrl-C
+      before doing the login. Confirms no orphan keyring entries and
+      `aimonitor list` is unchanged.
 
 ## 5. Switch
 
