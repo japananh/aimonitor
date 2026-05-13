@@ -1,0 +1,150 @@
+# goreleaser config for aimonitor v1 — see goreleaser.com/customization.
+#
+# What this produces on `goreleaser release`:
+#   - aimonitor_<version>_darwin_universal.tar.gz   (CLI + AIMonitor.app)
+#   - aimonitor_<version>_linux_amd64.tar.gz        (CLI)
+#   - aimonitor_<version>_linux_arm64.tar.gz        (CLI)
+#   - A GitHub Release on japananh/aimonitor with the above attached
+#   - A pushed update to japananh/homebrew-tap with the cask formula
+#
+# We intentionally do NOT notarize the macOS binary in v1 — that's a
+# v1.1 deliverable. Users do the right-click → Open dance on first
+# launch (documented in docs/unsigned-app.md).
+
+version: 2
+
+project_name: aimonitor
+
+before:
+  hooks:
+    # Pull deps once for reproducibility (mainly catches broken modules).
+    - go mod tidy
+    # Build the Swift menu bar binary + wrap it into AIMonitor.app.
+    # macOS-only step; the script no-ops on Linux runners so a future
+    # cross-arch build doesn't break.
+    - bash scripts/bundle-app.sh
+
+builds:
+  # macOS needs CGO=1 — keybase/go-keychain links the Security
+  # framework via cgo for OAuth-token storage. Cross-compiling Mac
+  # binaries from a Linux runner would require osxcross; we sidestep
+  # that by running the whole release on macos-14 (see release.yml).
+  - id: cli-darwin
+    main: ./cmd/aimonitor
+    binary: aimonitor
+    env:
+      - CGO_ENABLED=1
+    ldflags:
+      - -s -w
+      - -X github.com/japananh/aimonitor/internal/version.Version={{.Version}}
+      - -X github.com/japananh/aimonitor/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/japananh/aimonitor/internal/version.BuildDate={{.Date}}
+    goos: [darwin]
+    goarch: [amd64, arm64]
+
+  # Linux uses zalando/go-keyring, which talks D-Bus via godbus —
+  # pure Go, no CGO. Keep CGO=0 here so we can cross-compile both
+  # Linux arches from the macos-14 runner without a sysroot.
+  - id: cli-linux
+    main: ./cmd/aimonitor
+    binary: aimonitor
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/japananh/aimonitor/internal/version.Version={{.Version}}
+      - -X github.com/japananh/aimonitor/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/japananh/aimonitor/internal/version.BuildDate={{.Date}}
+    goos: [linux]
+    goarch: [amd64, arm64]
+
+# Fuse darwin amd64 + arm64 into a single universal Mach-O so Homebrew
+# Cask installs the right code path on both Intel and Apple Silicon.
+universal_binaries:
+  - id: cli-darwin
+    replace: true
+    name_template: aimonitor
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}darwin_universal
+      {{- else }}{{ .Os }}_{{ .Arch }}{{ end }}
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+      - docs/*
+      # The macOS archive picks up AIMonitor.app from the bundle-app.sh
+      # hook (which writes to build/AIMonitor.app — separate from dist/
+      # so goreleaser's --clean doesn't wipe it). Three file entries
+      # because goreleaser's glob with **/* strips the Contents/
+      # segment; macOS won't recognize a bundle without Contents/.
+      # On Linux these globs match nothing and are silently skipped.
+      - src: build/AIMonitor.app/Contents/Info.plist
+        dst: AIMonitor.app/Contents/Info.plist
+      - src: build/AIMonitor.app/Contents/PkgInfo
+        dst: AIMonitor.app/Contents/PkgInfo
+      - src: build/AIMonitor.app/Contents/MacOS/AIMonitor
+        dst: AIMonitor.app/Contents/MacOS/AIMonitor
+        info:
+          mode: 0755
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^ci:"
+      - "^test:"
+      - Merge pull request
+
+# Publish the Homebrew Cask to japananh/homebrew-tap on every tagged
+# release. The token must have `repo` scope and be available as the
+# HOMEBREW_TAP_TOKEN secret on the aimonitor repo's release workflow.
+homebrew_casks:
+  - name: aimonitor
+    repository:
+      owner: japananh
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/japananh/aimonitor
+    description: Local-first CLI + macOS menu bar widget for managing multiple Claude OAuth accounts
+    license: MIT
+    # Cask only runs on darwin; goreleaser auto-picks the universal artifact.
+    binaries:
+      - aimonitor
+    # goreleaser's HomebrewCask schema has no `app:` field, so inject
+    # the cask DSL directly via custom_block. This causes Homebrew
+    # Cask to install AIMonitor.app into /Applications alongside the
+    # CLI binary, and enforces a minimum macOS version at install time.
+    custom_block: |
+      depends_on macos: ">= :sonoma"
+      app "AIMonitor.app"
+    # The unsigned-app first-open workaround. Documented in
+    # docs/unsigned-app.md and surfaced as the cask's `caveats:` block
+    # so users see it after `brew install`.
+    caveats: |
+      aimonitor is unsigned in this beta. macOS Gatekeeper will refuse
+      the first launch. Fix it once with:
+
+        xattr -dr com.apple.quarantine /Applications/AIMonitor.app
+
+      Then start the menu bar widget from /Applications, or run
+      `aimonitor daemon run` to start the headless watcher.
+
+release:
+  draft: true            # let humans review before publishing
+  prerelease: auto       # any tag containing "-beta" or "-rc" stays prerelease
+  github:
+    owner: japananh
+    name: aimonitor
