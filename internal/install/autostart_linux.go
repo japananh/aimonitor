@@ -111,7 +111,10 @@ func IsAutostartEnabled() (bool, error) {
 	if err != nil {
 		// is-enabled exits non-zero for disabled/missing services.
 		// Distinguish "not enabled" (clean) from systemctl missing.
-		if _, ok := err.(*exec.ExitError); ok {
+		// errors.As walks the wrap chain — robust if Go ever wraps
+		// command exit errors at a higher level.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			return false, nil
 		}
 		return false, fmt.Errorf("systemctl is-enabled: %w", err)
