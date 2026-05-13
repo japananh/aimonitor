@@ -1,0 +1,19 @@
+# golangci-lint v2 configuration.
+# Schema reference: https://golangci-lint.run/usage/configuration/
+#
+# We enable the v2 "standard" preset (errcheck, govet, ineffassign, staticcheck,
+# unused) and a couple of safety-oriented extras. Anything beyond that is
+# opt-in per file via //nolint:<name> with a justification comment.
+
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose       # ensure http.Response.Body is closed
+    - errorlint       # idiomatic errors.Is / errors.As wrapping checks
+    - misspell        # commonly misspelled words
+    - revive          # successor to golint, mild style rules
+
+run:
+  timeout: 5m
