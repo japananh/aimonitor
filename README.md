@@ -92,7 +92,7 @@ aimonitor doctor
 
 ## Building from source
 
-Requires Go 1.24+. On macOS, also requires Xcode 15+ for the menu bar widget.
+Requires Go 1.25+ (transitively required by `modernc.org/sqlite`). On macOS, also requires Xcode 15+ for the menu bar widget.
 
 ```sh
 git clone https://github.com/japananh/aimonitor
