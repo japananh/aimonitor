@@ -17,9 +17,12 @@ coverage.html
 *.swo
 .DS_Store
 
-# Xcode
+# Swift Package Manager + Xcode
+ui/macos/.build/
 ui/macos/build/
 ui/macos/DerivedData/
+ui/macos/.swiftpm/
+ui/macos/Package.resolved
 ui/macos/**/xcuserdata/
 ui/macos/**/*.xcuserstate
 

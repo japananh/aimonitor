@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>dev.aimonitor.AIMonitor</string>
+    <key>CFBundleName</key>
+    <string>AIMonitor</string>
+    <key>CFBundleDisplayName</key>
+    <string>AIMonitor</string>
+    <key>CFBundleExecutable</key>
+    <string>AIMonitor</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0-beta.1</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <!-- LSUIElement=true makes this a menu bar accessory app:
+         no Dock icon, no Cmd-Tab entry, status bar only. -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 japananh. MIT licensed.</string>
+</dict>
+</plist>

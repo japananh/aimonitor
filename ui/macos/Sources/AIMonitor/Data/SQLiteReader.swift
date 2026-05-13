@@ -1,0 +1,178 @@
+// SQLiteReader is a thin, read-only wrapper around the system libsqlite3
+// for the widget. The Go daemon owns writes; the widget only reads.
+//
+// Why direct SQLite3 and not a Swift package: SwiftPM packages like
+// stephencelis/SQLite.swift would add a dependency tree we don't need
+// for ~5 queries. The system library is always present on macOS, and
+// the C API surface used here is tiny.
+
+import Foundation
+import SQLite3
+
+// SQLITE_TRANSIENT tells SQLite to copy the parameter bytes immediately
+// rather than holding a pointer to caller-owned memory. Without this,
+// Swift strings passed to sqlite3_bind_text get invalidated as soon as
+// they go out of scope and we get garbage at query time.
+private let SQLITE_TRANSIENT = unsafeBitCast(
+    OpaquePointer(bitPattern: -1),
+    to: sqlite3_destructor_type.self
+)
+
+/// AccountRow mirrors a relevant subset of the accounts table.
+struct AccountRow: Identifiable, Hashable {
+    let id: Int64
+    let label: String
+    let email: String?
+    let lastUsedAt: Date?
+}
+
+/// ProbeRow mirrors a relevant subset of probe_results.
+struct ProbeRow: Hashable {
+    let accountID: Int64
+    let probedAt: Date
+    let tokensRemaining: Int64
+    let resetAt: Date
+    let httpStatus: Int
+}
+
+/// DaemonStatus is the JSON snapshot the Go daemon publishes to the
+/// settings table every ~2s. Field names match the Go side exactly.
+struct DaemonStatus: Codable {
+    var published_at: Date?
+    var active_label: String?
+    var usage_since_reset: Int64
+    var observed_budget: Int64
+    var session_percent: Double
+    var auto_switch_enabled: Bool
+    var last_switch_at: Date?
+}
+
+enum SQLiteReaderError: Error {
+    case openFailed(Int32, String)
+    case prepareFailed(Int32, String)
+    case decodeFailed(String)
+}
+
+final class SQLiteReader {
+    private var db: OpaquePointer?
+
+    init(path: String) throws {
+        // SQLITE_OPEN_READONLY plus the URI flag isn't strictly necessary
+        // since the daemon owns writes, but it's a belt-and-suspenders
+        // guard against accidental writes from the widget side.
+        let flags = SQLITE_OPEN_READONLY
+        let rc = sqlite3_open_v2(path, &db, flags, nil)
+        if rc != SQLITE_OK {
+            let msg = String(cString: sqlite3_errmsg(db))
+            sqlite3_close_v2(db)
+            db = nil
+            throw SQLiteReaderError.openFailed(rc, msg)
+        }
+        // Match the daemon's busy_timeout so concurrent WAL readers
+        // don't fight on writes.
+        sqlite3_busy_timeout(db, 5000)
+    }
+
+    deinit {
+        if db != nil {
+            sqlite3_close_v2(db)
+        }
+    }
+
+    /// Default DB path mirrors the Go side's DefaultPath() on macOS.
+    static func defaultPath() -> String {
+        let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first!
+        return appSupport
+            .appendingPathComponent("aimonitor")
+            .appendingPathComponent("aimonitor.db")
+            .path
+    }
+
+    func listAccounts() throws -> [AccountRow] {
+        let sql = "SELECT id, label, email, last_used_at FROM accounts ORDER BY label"
+        var stmt: OpaquePointer?
+        let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        if rc != SQLITE_OK {
+            throw SQLiteReaderError.prepareFailed(rc, String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var rows: [AccountRow] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let id = sqlite3_column_int64(stmt, 0)
+            let label = String(cString: sqlite3_column_text(stmt, 1))
+            let email: String?
+            if sqlite3_column_type(stmt, 2) == SQLITE_NULL {
+                email = nil
+            } else {
+                email = String(cString: sqlite3_column_text(stmt, 2))
+            }
+            let lastUsedAt: Date?
+            if sqlite3_column_type(stmt, 3) == SQLITE_NULL {
+                lastUsedAt = nil
+            } else {
+                let ms = sqlite3_column_int64(stmt, 3)
+                lastUsedAt = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+            }
+            rows.append(AccountRow(id: id, label: label, email: email, lastUsedAt: lastUsedAt))
+        }
+        return rows
+    }
+
+    func listProbes() throws -> [ProbeRow] {
+        let sql = """
+            SELECT account_id, probed_at, tokens_remaining, reset_at, http_status
+              FROM probe_results
+            """
+        var stmt: OpaquePointer?
+        let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        if rc != SQLITE_OK {
+            throw SQLiteReaderError.prepareFailed(rc, String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var rows: [ProbeRow] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let acct = sqlite3_column_int64(stmt, 0)
+            let probedMs = sqlite3_column_int64(stmt, 1)
+            let remaining = sqlite3_column_int64(stmt, 2)
+            let resetMs = sqlite3_column_int64(stmt, 3)
+            let status = Int(sqlite3_column_int(stmt, 4))
+            rows.append(ProbeRow(
+                accountID: acct,
+                probedAt: Date(timeIntervalSince1970: TimeInterval(probedMs) / 1000.0),
+                tokensRemaining: remaining,
+                resetAt: Date(timeIntervalSince1970: TimeInterval(resetMs) / 1000.0),
+                httpStatus: status
+            ))
+        }
+        return rows
+    }
+
+    /// Returns nil when the daemon has never published — the bar shows
+    /// a "daemon not running" placeholder in that case.
+    func daemonStatus() throws -> DaemonStatus? {
+        let sql = "SELECT value FROM settings WHERE key = ?"
+        var stmt: OpaquePointer?
+        let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        if rc != SQLITE_OK {
+            throw SQLiteReaderError.prepareFailed(rc, String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, "daemon_status", -1, SQLITE_TRANSIENT)
+
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        let jsonStr = String(cString: sqlite3_column_text(stmt, 0))
+        guard let data = jsonStr.data(using: .utf8) else { return nil }
+
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        do {
+            return try dec.decode(DaemonStatus.self, from: data)
+        } catch {
+            throw SQLiteReaderError.decodeFailed("\(error)")
+        }
+    }
+}
