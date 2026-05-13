@@ -14,6 +14,7 @@ package claude
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/japananh/aimonitor/internal/provider"
@@ -71,9 +72,22 @@ func (p *Provider) EstimateSessionUsage(_ context.Context, _ provider.Account) (
 	return provider.Usage{}, ErrNotImplemented
 }
 
-// ProbeServerSide implements provider.Provider — Phase 3.
-func (p *Provider) ProbeServerSide(_ context.Context, _ provider.Account) (provider.RateLimit, error) {
-	return provider.RateLimit{}, ErrNotImplemented
+// ProbeServerSide implements provider.Provider.
+//
+// It reads the account's stash, asks the production Prober to issue a
+// 1-token request against Anthropic's API, and returns the parsed
+// rate-limit-header truth. Callers that want caching should use the
+// store's probe_results table around this call.
+func (p *Provider) ProbeServerSide(ctx context.Context, acct provider.Account) (provider.RateLimit, error) {
+	cred, err := RetrieveStash(ctx, acct.KeyringRef)
+	if err != nil {
+		return provider.RateLimit{}, fmt.Errorf("probe: read stash for %q: %w", acct.Label, err)
+	}
+	defer cred.Zero()
+
+	rl, err := NewProber().Probe(ctx, cred)
+	rl.AccountID = acct.ID
+	return rl, err
 }
 
 // ActiveCredential implements provider.Provider.

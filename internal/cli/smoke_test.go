@@ -22,7 +22,6 @@ func TestStubsReturnNotImplemented(t *testing.T) {
 	}{
 		{"config-get", []string{"config", "get", "autoswitch"}},
 		{"config-set", []string{"config", "set", "autoswitch", "true"}},
-		{"probe", []string{"probe", "foo"}},
 		{"log", []string{"log"}},
 		{"daemon-start", []string{"daemon", "start"}},
 		{"daemon-stop", []string{"daemon", "stop"}},
