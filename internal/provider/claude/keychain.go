@@ -114,3 +114,33 @@ func (k *keychainOps) deleteStash(_ context.Context, accountID string) error {
 	}
 	return err
 }
+
+// StashCredential writes cred into the aimonitor-namespaced keyring slot
+// identified by ref. The CLI uses this after OnboardingFlow returns a
+// fresh credential, paired with an INSERT into the accounts table.
+func StashCredential(ctx context.Context, ref string, cred provider.Credential) error {
+	k, err := newKeychainOps()
+	if err != nil {
+		return err
+	}
+	return k.writeStash(ctx, ref, cred)
+}
+
+// RetrieveStash reads the credential previously written under ref.
+// Returns secret.ErrNotFound when missing.
+func RetrieveStash(ctx context.Context, ref string) (provider.Credential, error) {
+	k, err := newKeychainOps()
+	if err != nil {
+		return provider.Credential{}, err
+	}
+	return k.readStash(ctx, ref)
+}
+
+// DeleteStash removes the credential at ref. Idempotent on already-missing.
+func DeleteStash(ctx context.Context, ref string) error {
+	k, err := newKeychainOps()
+	if err != nil {
+		return err
+	}
+	return k.deleteStash(ctx, ref)
+}
