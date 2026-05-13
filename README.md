@@ -26,8 +26,11 @@ Claude Code's local JSONL transcripts only record tokens used on **this** machin
 
 ## Roadmap
 
-- **v1.1**: daily usage chart, cost estimation per account, weekly cap view (once an admin-API data source lands), notarized macOS app.
-- **v2.0**: Ubuntu GTK menu bar widget, OpenAI Codex / GitHub Copilot CLI provider.
+Directional, not committed. See [`ROADMAP.md`](ROADMAP.md) for gating conditions and rationale.
+
+- **v1.1**: daily usage chart, cost estimation per account, notarized macOS app.
+- **v1.2.x**: weekly cap view (gated on a server-side data source available to non-admin users).
+- **v2.0**: Ubuntu GTK menu bar widget, second `Provider` implementation (Codex or Copilot CLI).
 
 ## Installation
 
