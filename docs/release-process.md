@@ -50,24 +50,76 @@ contains `-beta`.
 
 ## After the workflow
 
-1. Open the draft Release on GitHub.
-2. Verify the changelog reads cleanly.
-3. **Manually test** the artifacts: download the Mac tarball, extract,
-   run `xattr -dr com.apple.quarantine AIMonitor.app && open AIMonitor.app`.
-4. Publish the Release.
-5. Verify the cask landed: `brew tap japananh/tap && brew install --cask aimonitor`.
+> **Gotcha to know before reading the steps below.** Goreleaser creates
+> the GitHub Release as a **draft**. Draft releases on GitHub are NOT
+> publicly downloadable — `releases/download/<tag>/<asset>` URLs return
+> 404 to unauthenticated requests. So `brew install --cask aimonitor`
+> will fail with `curl: (56) ... 404` until the draft is published, even
+> though the cask in the tap is correct and points at real URLs.
+>
+> This means **publishing happens BEFORE `brew install` can be tested**.
+> The recovery if e2e finds a bug is retag-as-`-beta.<n+1>`, not
+> "edit the draft." See the Rollback section below.
+
+1. Open the draft Release on GitHub. Verify the changelog reads cleanly;
+   edit if needed.
+
+2. (Optional) Smoke-test the artifacts *without* publishing, using the
+   `gh` CLI's authenticated download path:
+
+   ```bash
+   mkdir -p /tmp/release-smoke && cd /tmp/release-smoke
+   gh release download v1.0.0-beta.1 --repo japananh/aimonitor \
+     --pattern '*darwin_universal*'
+   tar -xzf aimonitor_*_darwin_universal.tar.gz
+   file aimonitor                         # should be: Mach-O universal (arm64 + x86_64)
+   lipo -info aimonitor                   # should list both arches
+   ls -la AIMonitor.app/Contents/         # should have Info.plist + MacOS/ + PkgInfo
+   ./aimonitor --version                  # should print v1.0.0-beta.1
+   ```
+
+   This verifies the artifact is structurally correct without exposing
+   it to the world. It does NOT test the `brew install` path — that
+   requires publish.
+
+3. **Publish the Release.** Until you do this, `brew install --cask
+   aimonitor` returns 404. After this, it works for everyone.
+
+4. Run the e2e checklists against the *published* release:
+   - `docs/e2e-macos.md` (12 steps, ~30 min on a Mac)
+   - `docs/e2e-linux.md` (9 steps, ~20 min on Ubuntu)
+
+   The macOS e2e starts with `brew tap japananh/tap && brew install
+   --cask aimonitor` — that's the install path real users will follow.
+
+5. If both checklists pass: announce. The release is done.
+
+6. If a checklist fails: see Rollback.
 
 ## Rollback
 
-If a release is bad:
+If a published release is bad:
 
-1. Mark the Release as draft (or delete it) on GitHub.
-2. Force-push the `homebrew-tap` `Casks/aimonitor.rb` back to the
-   previous good version. Cask user installs only happen on demand, so
-   no one has the bad version unless they ran `brew install` between
-   the publish and the rollback.
-3. Re-tag with a higher patch number (`v1.0.0-beta.2`) — do not reuse
-   a tag.
+1. Delete the GitHub Release (Releases page → click release → Delete).
+   This removes the public download URLs immediately.
+2. (Optional) Edit the `homebrew-tap` `Casks/aimonitor.rb` back to a
+   previous good version. Cask installs only happen on demand, so the
+   exposure window is short — anyone who didn't run `brew install`
+   between the publish and the delete is unaffected. If this is the
+   very first release, you can simply delete `Casks/aimonitor.rb`
+   from the tap; goreleaser will write a fresh one on the next release.
+3. Fix the bug on `main`. Confirm CI is green.
+4. **Retag with a higher version**, never reuse a tag:
+
+   ```bash
+   git tag -a v1.0.0-beta.2 -m "v1.0.0-beta.2"
+   git push origin v1.0.0-beta.2
+   ```
+
+   The release workflow re-runs cleanly; the new cask overwrites the
+   old one in the tap. Don't bother trying to delete the bad git tag
+   from the remote — leaving it there gives an audit trail without
+   confusing anyone (it's just an unreleased tag).
 
 ## Notarization (deferred to v1.1)
 
