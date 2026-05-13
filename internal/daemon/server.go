@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/japananh/aimonitor/internal/config"
 	"github.com/japananh/aimonitor/internal/provider"
@@ -67,9 +68,13 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}, nil
 }
 
-// Run starts the watcher + auto-switcher and blocks until ctx is
-// cancelled. Watcher errors during operation are reported via the
-// OnError callback (logged to stderr).
+// Run starts the watcher + auto-switcher + status publisher and blocks
+// until ctx is cancelled. Watcher errors during operation are reported
+// via the OnError callback (logged to stderr).
+//
+// Concurrency: the status publisher runs in a goroutine; watcher.Run is
+// the foreground loop. When ctx cancels, both unwind: the publisher's
+// ticker loop returns, and the watcher's event loop exits.
 func (s *Server) Run(ctx context.Context) error {
 	auto, err := NewAutoSwitcher(AutoSwitcherConfig{
 		Store:    s.store,
@@ -93,6 +98,14 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("watcher: %w", err)
 	}
 	s.watcher = w
+
+	pub := &StatusPublisher{
+		Store:       s.store,
+		Auto:        auto,
+		Interval:    2 * time.Second,
+		ActiveLabel: resolveActiveLabel(s),
+	}
+	go func() { _ = pub.Run(ctx) }()
 
 	return w.Run(ctx)
 }
