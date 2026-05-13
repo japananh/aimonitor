@@ -20,11 +20,9 @@ func TestStubsReturnNotImplemented(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"log", []string{"log"}},
 		{"daemon-start", []string{"daemon", "start"}},
 		{"daemon-stop", []string{"daemon", "stop"}},
 		{"daemon-status", []string{"daemon", "status"}},
-		{"doctor", []string{"doctor"}},
 		{"uninstall", []string{"uninstall"}},
 	}
 
