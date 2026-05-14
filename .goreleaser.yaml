@@ -60,10 +60,22 @@ builds:
 
 # Fuse darwin amd64 + arm64 into a single universal Mach-O so Homebrew
 # Cask installs the right code path on both Intel and Apple Silicon.
+#
+# After the lipo fuse, we re-sign the resulting fat binary with a
+# manual ad-hoc signature. Without this, Go's linker leaves the
+# binary `adhoc,linker-signed` — and macOS Sonoma+ won't persist
+# Keychain ACL grants ("Always Allow") for linker-signed binaries.
+# A proper `codesign --sign -` clears the linker-signed flag and
+# gives the binary a stable identifier that survives "Always Allow".
+# Real Developer ID signing (v1.1) replaces ad-hoc with a notarized
+# certificate.
 universal_binaries:
   - id: cli-darwin
     replace: true
     name_template: aimonitor
+    hooks:
+      post:
+        - cmd: codesign --force --sign - --identifier dev.aimonitor.aimonitor "{{ .Path }}"
 
 archives:
   - id: default
