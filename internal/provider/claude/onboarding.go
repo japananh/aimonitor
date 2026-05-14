@@ -64,7 +64,7 @@ func AdoptCurrent(ctx context.Context) (provider.Credential, error) {
 		return provider.Credential{}, fmt.Errorf("read Claude Code-credentials: %w", err)
 	}
 	if len(current.Bytes) == 0 {
-		return provider.Credential{}, errors.New("Claude Code-credentials slot is empty — log into Claude Code first (`claude` + `/login`), then re-run `aimonitor add --adopt-current`")
+		return provider.Credential{}, errors.New("no credential to adopt: the Claude Code-credentials slot is empty — log into Claude Code first (`claude` + `/login`), then re-run `aimonitor add --adopt-current`")
 	}
 	return current, nil
 }
