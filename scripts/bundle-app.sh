@@ -10,8 +10,11 @@
 #          dist/AIMonitor.app/Contents/Info.plist
 #          dist/AIMonitor.app/Contents/Resources/  (placeholder for icons)
 #
-# We deliberately don't sign the binary here; signing happens (or
-# doesn't, in v1) inside the release workflow where the secrets live.
+# We re-sign the bundle with `codesign --force --sign -` at the end.
+# Swift's build process already ad-hoc-signs the binary, but with the
+# `linker-signed` flag — and macOS Sonoma+ won't persist Keychain ACL
+# grants for linker-signed binaries. A manual ad-hoc sign clears that
+# flag without requiring a Developer ID certificate (v1.1's deliverable).
 
 set -euo pipefail
 
@@ -52,5 +55,14 @@ cp "$PLIST_IN" "$APP_OUT/Contents/Info.plist"
 # but it costs us 8 bytes.
 printf 'APPL????' > "$APP_OUT/Contents/PkgInfo"
 
+# Re-sign the bundle with a manual ad-hoc identity. Codesigning a
+# directory (the .app) walks Contents/MacOS and signs each Mach-O
+# inside it, plus the bundle structure itself. Without this, Swift's
+# linker-signed flag prevents Keychain ACL persistence on Sonoma+.
+echo "==> codesign --force --sign - (ad-hoc)"
+codesign --force --sign - --identifier dev.aimonitor.AIMonitor --deep "$APP_OUT"
+
 echo "==> wrote $APP_OUT"
 echo "==> $(du -sh "$APP_OUT" | cut -f1)"
+echo "==> signature info:"
+codesign -dv --verbose=2 "$APP_OUT" 2>&1 | grep -E '^(Identifier|Format|CodeDirectory|flags|Signature)' | sed 's/^/    /'
