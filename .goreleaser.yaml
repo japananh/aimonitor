@@ -154,6 +154,40 @@ homebrew_casks:
       Then start the menu bar widget from /Applications, or run
       `aimonitor daemon run` to start the headless watcher.
 
+      To uninstall cleanly (drop the SQLite DB + aimonitor-namespaced
+      Keychain entries too), run this BEFORE `brew uninstall --cask`:
+
+        aimonitor uninstall --purge
+
+    # uninstall: runs on every `brew uninstall --cask aimonitor`.
+    # Stops the daemon (launchctl bootout), quits the menu bar app,
+    # and clears its Login Item registration. Without these, the
+    # LaunchAgent keeps relaunching `aimonitor daemon run` on each
+    # login, which in turn prompts for Keychain access — the bug
+    # users were hitting in beta.2 and earlier.
+    uninstall:
+      launchctl:
+        - dev.aimonitor.daemon
+      quit:
+        - dev.aimonitor.AIMonitor
+      login_item:
+        - dev.aimonitor.AIMonitor
+
+    # zap: runs on `brew uninstall --zap --cask aimonitor` (and is
+    # what `brew cleanup` consults). Sweeps every user-visible file
+    # aimonitor writes to disk. Keychain entries are intentionally
+    # NOT listed here — they require account enumeration and are the
+    # job of `aimonitor uninstall --purge`. The Claude Code-credentials
+    # Keychain slot is also never touched (left to Claude Code itself).
+    zap:
+      trash:
+        - ~/Library/LaunchAgents/dev.aimonitor.daemon.plist
+        - ~/Library/Application Support/aimonitor
+        - ~/Library/Logs/aimonitor
+        - ~/Library/Caches/aimonitor
+        - ~/Library/Preferences/dev.aimonitor.AIMonitor.plist
+        - ~/.config/aimonitor
+
 release:
   draft: true            # let humans review before publishing
   prerelease: auto       # any tag containing "-beta" or "-rc" stays prerelease

@@ -5,6 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/japananh/aimonitor/internal/config"
 	"github.com/japananh/aimonitor/internal/install"
@@ -47,6 +52,19 @@ func runUninstall(cmd *cobra.Command, purge, yes bool) error {
 		fmt.Fprintf(errOut, "warning: disable autostart: %v\n", err)
 	} else {
 		fmt.Fprintln(out, "autostart disabled")
+	}
+
+	// Step 1b: belt-and-suspenders. `launchctl bootout` only stops
+	// processes launchd is currently tracking. Two things survive it:
+	//   - A daemon started manually (`aimonitor daemon run` in a
+	//     terminal), or one launchd lost track of during throttle
+	//     backoff.
+	//   - The AIMonitor.app menu-bar widget — it self-registers via
+	//     SMAppService, not via the LaunchAgent plist we manage.
+	// Both keep holding open file handles + Keychain prompts. Send
+	// SIGTERM to each, then wait briefly to let them flush state.
+	if n := terminateOrphanDaemons(errOut); n > 0 {
+		fmt.Fprintf(out, "terminated %d orphan daemon process(es)\n", n)
 	}
 
 	if !purge {
@@ -111,4 +129,71 @@ func runUninstall(cmd *cobra.Command, purge, yes bool) error {
 
 	fmt.Fprintln(out, "Done. Claude Code-credentials keyring slot left untouched.")
 	return nil
+}
+
+// terminateOrphanDaemons SIGTERMs any `aimonitor daemon` process AND
+// any running AIMonitor.app menu-bar process that the current
+// uninstall didn't manage to stop via launchctl. Returns the number
+// of processes signaled. Skips this process's own PID so we don't
+// kill the uninstall command mid-flight.
+//
+// Two patterns:
+//   - "aimonitor daemon" — the headless CLI watcher, normally
+//     managed by launchctl. Survives bootout if started manually or
+//     if launchd lost track of it during throttle backoff.
+//   - "AIMonitor.app/Contents/MacOS/AIMonitor" — the Swift menu-bar
+//     widget. Not under launchctl (it self-registers via
+//     SMAppService), so the launchctl bootout step in
+//     install.DisableAutostart cannot stop it.
+//
+// pgrep rather than /proc parsing because Darwin has no procfs.
+func terminateOrphanDaemons(errOut interface{ Write([]byte) (int, error) }) int {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		return 0
+	}
+
+	patterns := []string{"aimonitor daemon"}
+	if runtime.GOOS == "darwin" {
+		patterns = append(patterns, "AIMonitor.app/Contents/MacOS/AIMonitor")
+	}
+
+	self := os.Getpid()
+	count := 0
+	for _, pattern := range patterns {
+		output, err := exec.Command("pgrep", "-f", pattern).Output()
+		if err != nil {
+			// pgrep exit 1 = no match; treat as success.
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+			if line == "" {
+				continue
+			}
+			var pid int
+			if _, err := fmt.Sscanf(line, "%d", &pid); err != nil || pid <= 0 || pid == self {
+				continue
+			}
+			proc, err := os.FindProcess(pid)
+			if err != nil {
+				continue
+			}
+			if err := proc.Signal(syscall.SIGTERM); err != nil {
+				// On macOS FindProcess always succeeds; Signal fails
+				// if the PID belongs to another user or vanished.
+				// Either way, not fatal — log and move on.
+				fmt.Fprintf(errOut, "warning: signal pid %d: %v\n", pid, err)
+				continue
+			}
+			count++
+		}
+	}
+
+	// Give signaled processes a moment to actually exit before the
+	// caller reports success. 500ms is enough for our daemon's
+	// signal handler to flush + close DB, and short enough not to
+	// be annoying when run interactively.
+	if count > 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	return count
 }

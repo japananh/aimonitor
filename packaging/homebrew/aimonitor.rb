@@ -51,11 +51,20 @@ cask "aimonitor" do
       aimonitor uninstall --purge
   EOS
 
-  uninstall launchctl: "dev.aimonitor.daemon"
+  # Order matters: brew runs `uninstall` first, then deletes files,
+  # then runs `zap` only if --zap was passed. quit + login_item make
+  # sure the menu bar app stops AND its SMAppService login-item
+  # registration is cleared — otherwise macOS keeps a dangling
+  # Login Item pointing at a non-existent /Applications/AIMonitor.app.
+  uninstall launchctl:  "dev.aimonitor.daemon",
+            quit:       "dev.aimonitor.AIMonitor",
+            login_item: "dev.aimonitor.AIMonitor"
 
   zap trash: [
     "~/Library/Application Support/aimonitor",
     "~/Library/Logs/aimonitor",
+    "~/Library/Caches/aimonitor",
+    "~/Library/Preferences/dev.aimonitor.AIMonitor.plist",
     "~/Library/LaunchAgents/dev.aimonitor.daemon.plist",
     "~/.config/aimonitor",
   ]
