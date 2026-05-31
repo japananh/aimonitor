@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 
 	"github.com/japananh/aimonitor/internal/provider"
 )
@@ -30,15 +29,14 @@ var ErrNotImplemented = errors.New("claude provider: not implemented in v1.0.0-b
 
 // Provider is the Claude implementation of provider.Provider.
 //
-// The keychainOps backend is constructed lazily on first use so that
-// merely importing the package (e.g. for init-time registration) doesn't
-// touch the OS keyring or fail when libsecret/Keychain isn't available
-// in a constrained context like a test or a `--help` invocation.
-type Provider struct {
-	keysOnce sync.Once
-	keys     *keychainOps
-	keysErr  error
-}
+// The keychainOps backend is constructed lazily on first use (via the
+// package-level sharedOps singleton) so that merely importing the package
+// (e.g. for init-time registration) doesn't touch the OS keyring or fail
+// when libsecret/Keychain isn't available in a constrained context like a
+// test or a `--help` invocation. Routing through sharedOps also means the
+// credential cache amortises across both Provider method calls and the
+// package-level helpers (RetrieveStash / StashCredential / DeleteStash).
+type Provider struct{}
 
 // New returns a fresh Claude provider instance.
 func New() *Provider { return &Provider{} }
@@ -47,10 +45,7 @@ func New() *Provider { return &Provider{} }
 func (p *Provider) Name() string { return Name }
 
 func (p *Provider) ops() (*keychainOps, error) {
-	p.keysOnce.Do(func() {
-		p.keys, p.keysErr = newKeychainOps()
-	})
-	return p.keys, p.keysErr
+	return sharedOps()
 }
 
 // LoadAccounts implements provider.Provider.

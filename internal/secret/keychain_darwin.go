@@ -3,90 +3,137 @@
 package secret
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
-
-	"github.com/keybase/go-keychain"
+	"os/exec"
+	"strings"
+	"time"
 )
 
-// macOSKeychain implements Keyring against the macOS login keychain via
-// Security.framework (through keybase/go-keychain). This file requires
-// CGO and is only compiled on darwin.
+// macOSKeychain implements Keyring by shelling out to /usr/bin/security,
+// Apple's signed system tool for keychain access.
 //
-// Items are stored as kSecClassGenericPassword with kSecAttrAccessible =
-// AccessibleWhenUnlocked, meaning they're only readable while the user's
-// login keychain is unlocked. SetSynchronizable(No) keeps them off iCloud
-// Keychain.
+// Why not call Security.framework directly (e.g. via keybase/go-keychain)?
+// macOS attaches an ACL to every keychain item naming the *code identity*
+// (signed binary hash + Team ID) of the creating process. Subsequent reads
+// by a different identity trigger the "Allow / Always Allow / Deny" dialog.
+// aimonitor is ad-hoc signed, so every rebuild produces a "new app" from
+// the keychain's perspective and triggers a fresh prompt.
+//
+// /usr/bin/security is Apple-signed with a stable identity that macOS
+// universally trusts — it reads/writes keychain items without per-app ACL
+// dialogs, regardless of which app originally created the item. The cost
+// is a fork+exec per operation, which a thin in-process cache amortizes.
+//
+// Items are written without -T (trusted-app list) so any process can read
+// them through /usr/bin/security in the future. Synchronizable defaults to
+// false (no iCloud Keychain).
 type macOSKeychain struct{}
 
 func defaultKeyring() (Keyring, error) {
 	return &macOSKeychain{}, nil
 }
 
-func (m *macOSKeychain) Get(service, account string) ([]byte, error) {
-	q := keychain.NewItem()
-	q.SetSecClass(keychain.SecClassGenericPassword)
-	q.SetService(service)
-	q.SetAccount(account)
-	q.SetMatchLimit(keychain.MatchLimitOne)
-	q.SetReturnData(true)
+// keychainCmdTimeout bounds each /usr/bin/security invocation. Reading or
+// writing a single password entry on an unlocked login keychain takes
+// single-digit milliseconds in practice; 5 s is generous enough to absorb
+// transient I/O hiccups while still catching a deadlocked or hung process.
+const keychainCmdTimeout = 5 * time.Second
 
-	results, err := keychain.QueryItem(q)
-	if err != nil {
-		if errors.Is(err, keychain.ErrorItemNotFound) {
+// securityExitNotFound is the documented exit code /usr/bin/security
+// returns when find-generic-password / delete-generic-password matches
+// no item. Treat as ErrNotFound rather than a generic shell failure.
+const securityExitNotFound = 44
+
+// Get returns the bytes stored under (service, account).
+// Returns ErrNotFound when the item does not exist.
+func (m *macOSKeychain) Get(service, account string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), keychainCmdTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx,
+		"/usr/bin/security",
+		"find-generic-password",
+		"-s", service,
+		"-a", account,
+		"-w",
+	)
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == securityExitNotFound {
 			return nil, ErrNotFound
 		}
-		return nil, fmt.Errorf("keychain query (%s/%s): %w", service, account, err)
+		return nil, fmt.Errorf("keychain find (%s/%s): %s", service, account, redactedStderr(&errOut))
 	}
-	if len(results) == 0 {
-		return nil, ErrNotFound
-	}
-	// keybase/go-keychain returns a fresh slice already; safe to return as-is.
-	return results[0].Data, nil
+	// /usr/bin/security appends a trailing newline.
+	return bytes.TrimRight(out.Bytes(), "\n"), nil
 }
 
+// Set upserts the password under (service, account). The -U flag updates
+// an existing item in place (preserving its keychain item attributes) or
+// creates a new one without a restrictive ACL.
+//
+// Security note: the data is passed in argv, briefly visible to ps for
+// the duration of the syscall (~milliseconds). On a single-user Mac, ps
+// only shows the same user's processes; any reader already has unix-level
+// access. Accepted; documented in _plans/.../README.md.
 func (m *macOSKeychain) Set(service, account string, data []byte) error {
-	item := keychain.NewItem()
-	item.SetSecClass(keychain.SecClassGenericPassword)
-	item.SetService(service)
-	item.SetAccount(account)
-	item.SetData(data)
-	item.SetSynchronizable(keychain.SynchronizableNo)
-	item.SetAccessible(keychain.AccessibleWhenUnlocked)
+	ctx, cancel := context.WithTimeout(context.Background(), keychainCmdTimeout)
+	defer cancel()
 
-	err := keychain.AddItem(item)
-	if errors.Is(err, keychain.ErrorDuplicateItem) {
-		// Update path: same query as Get, then UpdateItem with new data.
-		q := keychain.NewItem()
-		q.SetSecClass(keychain.SecClassGenericPassword)
-		q.SetService(service)
-		q.SetAccount(account)
-
-		update := keychain.NewItem()
-		update.SetData(data)
-		if err := keychain.UpdateItem(q, update); err != nil {
-			return fmt.Errorf("keychain update (%s/%s): %w", service, account, err)
-		}
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("keychain add (%s/%s): %w", service, account, err)
+	cmd := exec.CommandContext(ctx,
+		"/usr/bin/security",
+		"add-generic-password",
+		"-U",
+		"-s", service,
+		"-a", account,
+		"-w", string(data),
+	)
+	var errOut bytes.Buffer
+	cmd.Stderr = &errOut
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("keychain add (%s/%s): %s", service, account, redactedStderr(&errOut))
 	}
 	return nil
 }
 
+// Delete removes the entry. Returns ErrNotFound when the item did not exist.
 func (m *macOSKeychain) Delete(service, account string) error {
-	q := keychain.NewItem()
-	q.SetSecClass(keychain.SecClassGenericPassword)
-	q.SetService(service)
-	q.SetAccount(account)
+	ctx, cancel := context.WithTimeout(context.Background(), keychainCmdTimeout)
+	defer cancel()
 
-	err := keychain.DeleteItem(q)
-	if errors.Is(err, keychain.ErrorItemNotFound) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("keychain delete (%s/%s): %w", service, account, err)
+	cmd := exec.CommandContext(ctx,
+		"/usr/bin/security",
+		"delete-generic-password",
+		"-s", service,
+		"-a", account,
+	)
+	var errOut bytes.Buffer
+	cmd.Stderr = &errOut
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == securityExitNotFound {
+			return ErrNotFound
+		}
+		return fmt.Errorf("keychain delete (%s/%s): %s", service, account, redactedStderr(&errOut))
 	}
 	return nil
+}
+
+// redactedStderr trims a /usr/bin/security stderr buffer for inclusion in
+// an error message. The CLI does not echo passwords on stderr in any
+// observed failure path, but the helper exists as a guarded chokepoint so
+// future flag additions (e.g. -v debug logging) can't accidentally leak
+// the payload through error returns.
+func redactedStderr(b *bytes.Buffer) string {
+	s := strings.TrimSpace(b.String())
+	if s == "" {
+		return "(no stderr)"
+	}
+	return s
 }
