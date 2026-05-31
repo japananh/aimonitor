@@ -111,11 +111,30 @@ func (s *Server) Run(ctx context.Context) error {
 	// UsageScheduler is Claude-specific in v1 (only Claude has an OAuth
 	// usage endpoint we know about). When v2 adds a second provider the
 	// scheduler will move behind a Provider interface method.
+	//
+	// We construct the chain: PostSwap -> Switcher -> AutoSwapper ->
+	// UsageScheduler. Each component is stateless w.r.t. the others
+	// beyond the function-pointer wires established here.
 	if _, ok := s.provider.(*claude.Provider); ok {
+		post := &PostSwap{}
+		switcher := NewSwitcher(s.store, s.provider)
+		switcher.PostSwapHook = post.Run
+
+		autoSwap := &AutoSwapper{
+			Store:    s.store,
+			Provider: s.provider,
+			Switcher: switcher,
+		}
+
 		usage := &UsageScheduler{
 			Store:    s.store,
 			Provider: s.provider,
 			Fetcher:  claude.NewUsageFetcher(),
+			AfterFetch: func(ctx context.Context, label string) {
+				if _, err := autoSwap.MaybeSwap(ctx, label); err != nil {
+					fmt.Fprintf(os.Stderr, "auto-swap: %v\n", err)
+				}
+			},
 		}
 		go func() { _ = usage.Run(ctx) }()
 	}

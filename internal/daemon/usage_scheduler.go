@@ -77,6 +77,11 @@ type UsageScheduler struct {
 	// deterministic version that does not touch the keychain.
 	ResolveActive func(ctx context.Context) (store.Account, bool, error)
 
+	// AfterFetch is invoked after each successful fetch with the active
+	// account's label and freshly-persisted Limits. Used to trigger the
+	// AutoSwapper decision. Nil disables the hook.
+	AfterFetch func(ctx context.Context, activeLabel string)
+
 	// rand is seeded per-scheduler so tests can substitute a deterministic
 	// source. Default uses the package math/rand/v2 global source.
 	rand *rand.Rand
@@ -190,6 +195,12 @@ func (u *UsageScheduler) tickOnce(ctx context.Context) error {
 	limits.AccountID = acct.ID
 	if err := u.Store.PutLimits(ctx, acct.ID, limits); err != nil {
 		return fmt.Errorf("put limits: %w", err)
+	}
+	if u.AfterFetch != nil {
+		// Run synchronously inside the tick — auto-swap should fire
+		// before the next interval is scheduled so the next tick can
+		// see the new active account.
+		u.AfterFetch(ctx, acct.Label)
 	}
 	return nil
 }
