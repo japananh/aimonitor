@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -142,7 +143,8 @@ func enumerateClaudePIDs(ctx context.Context) ([]int, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		// pgrep exits 1 when no processes match — not a real error.
-		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("pgrep: %w", err)

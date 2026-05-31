@@ -271,11 +271,13 @@ func (u *UsageScheduler) jittered(base time.Duration) time.Duration {
 	return out
 }
 
-// doubleCapped returns min(d*2, cap). Used by exponential backoff.
-func doubleCapped(d, cap time.Duration) time.Duration {
+// doubleCapped returns min(d*2, maxDur). Used by exponential backoff.
+// Named maxDur instead of `cap` because `cap` is a built-in identifier
+// and revive's redefines-builtin-id catches the shadowing.
+func doubleCapped(d, maxDur time.Duration) time.Duration {
 	doubled := d * 2
-	if doubled > cap {
-		return cap
+	if doubled > maxDur {
+		return maxDur
 	}
 	return doubled
 }
