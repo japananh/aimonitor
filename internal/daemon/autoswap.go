@@ -27,6 +27,15 @@ const (
 	defaultAutoSwapThreshold = 80.0
 )
 
+// accountSwitcher is the narrow surface AutoSwapper needs from
+// daemon.Switcher. Defining it here (the consumer) instead of on
+// *Switcher itself keeps the production type concrete and gives
+// tests a small interface to fake — strictly tighter than passing
+// the full *Switcher around.
+type accountSwitcher interface {
+	Switch(ctx context.Context, label string) error
+}
+
 // AutoSwapper is the Limits-driven account-rotation engine. When the
 // active account's 5-hour utilization rises to or above the configured
 // threshold, it picks the least-utilized non-active account and
@@ -39,7 +48,7 @@ const (
 type AutoSwapper struct {
 	Store    *store.Store
 	Provider provider.Provider
-	Switcher *Switcher
+	Switcher accountSwitcher
 
 	// Stderr surfaces operational messages ("auto-swap: A -> B because
 	// A hit 80%"). Nil → os.Stderr.
@@ -200,4 +209,3 @@ func (a *AutoSwapper) stderr() io.Writer {
 	}
 	return os.Stderr
 }
-
