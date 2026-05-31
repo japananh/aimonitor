@@ -25,15 +25,16 @@ before:
     - bash scripts/bundle-app.sh
 
 builds:
-  # macOS needs CGO=1 — keybase/go-keychain links the Security
-  # framework via cgo for OAuth-token storage. Cross-compiling Mac
-  # binaries from a Linux runner would require osxcross; we sidestep
-  # that by running the whole release on macos-14 (see release.yml).
+  # macOS is pure Go since the v1.0.0 keychain rewrite — credential
+  # storage shells out to /usr/bin/security instead of linking the
+  # Security framework via cgo. We still build the release on macos-14
+  # (see release.yml) because bundle-app.sh wraps a Swift menu-bar
+  # binary, not for CGO reasons.
   - id: cli-darwin
     main: ./cmd/aimonitor
     binary: aimonitor
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     ldflags:
       - -s -w
       - -X github.com/japananh/aimonitor/internal/version.Version={{.Version}}

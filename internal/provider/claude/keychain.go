@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os/user"
+	"sync"
+	"time"
 
 	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/secret"
@@ -21,6 +23,15 @@ const ClaudeCodeService = "Claude Code-credentials"
 // The full service name is AimonitorServicePrefix + accountID (a UUID).
 const AimonitorServicePrefix = "aimonitor-"
 
+// credCacheTTL bounds how long readActive / readStash will serve an
+// in-memory copy of a previously-read credential blob without re-shelling
+// to /usr/bin/security. Five seconds covers the 2-second daemon poll and
+// the multi-account label-resolution sweep that runs on the same tick,
+// while keeping post-switch staleness imperceptible (switch invalidates
+// the relevant key immediately; the worst case is ~5 s lag for an
+// externally-initiated rotation that bypasses this process).
+const credCacheTTL = 5 * time.Second
+
 // keychainOps is the slice of provider behaviour that needs the OS
 // keyring. It exists as its own type so tests can drive a fake.
 type keychainOps struct {
@@ -28,6 +39,10 @@ type keychainOps struct {
 	// user is the OS-level account name used in keychain entries. Tests
 	// override this; production reads from os/user.Current().
 	user string
+	// cache amortises the fork+exec cost of /usr/bin/security across the
+	// daemon's 2-second status poll. Reads consult the cache; writes
+	// invalidate the affected key (or insert the fresh value).
+	cache *credCache
 }
 
 // newKeychainOps constructs the production keychain backend. Returns an
@@ -41,7 +56,30 @@ func newKeychainOps() (*keychainOps, error) {
 	if err != nil {
 		return nil, fmt.Errorf("os user: %w", err)
 	}
-	return &keychainOps{ring: ring, user: u.Username}, nil
+	return &keychainOps{
+		ring:  ring,
+		user:  u.Username,
+		cache: newCredCache(credCacheTTL),
+	}, nil
+}
+
+// sharedOps returns a process-wide *keychainOps. Constructed on first call;
+// reused for all subsequent calls. Required so that the cache amortises
+// across both the Provider's lifecycle and the package-level helpers
+// (RetrieveStash / StashCredential / DeleteStash) — without a single
+// instance every helper would build a fresh cache and the daemon's hot
+// poll loop would still fork /usr/bin/security on every tick.
+var (
+	sharedOpsOnce sync.Once
+	sharedOpsVal  *keychainOps
+	sharedOpsErr  error
+)
+
+func sharedOps() (*keychainOps, error) {
+	sharedOpsOnce.Do(func() {
+		sharedOpsVal, sharedOpsErr = newKeychainOps()
+	})
+	return sharedOpsVal, sharedOpsErr
 }
 
 // readActive returns the bytes currently stored in Claude Code's slot.
@@ -49,6 +87,10 @@ func newKeychainOps() (*keychainOps, error) {
 // slot is empty — first-run onboarding needs to distinguish "no slot
 // yet" from "real error reading slot."
 func (k *keychainOps) readActive(_ context.Context) (provider.Credential, error) {
+	key := cacheKey(ClaudeCodeService, k.user)
+	if data, ok := k.cache.get(key); ok {
+		return provider.Credential{Bytes: cloneBytes(data)}, nil
+	}
 	data, err := k.ring.Get(ClaudeCodeService, k.user)
 	if errors.Is(err, secret.ErrNotFound) {
 		return provider.Credential{}, nil
@@ -56,7 +98,8 @@ func (k *keychainOps) readActive(_ context.Context) (provider.Credential, error)
 	if err != nil {
 		return provider.Credential{}, fmt.Errorf("read %s/%s: %w", ClaudeCodeService, k.user, err)
 	}
-	return provider.Credential{Bytes: data}, nil
+	k.cache.put(key, data)
+	return provider.Credential{Bytes: cloneBytes(data)}, nil
 }
 
 // writeActive overwrites Claude Code's slot. Empty Bytes is rejected —
@@ -68,6 +111,7 @@ func (k *keychainOps) writeActive(_ context.Context, cred provider.Credential) e
 	if err := k.ring.Set(ClaudeCodeService, k.user, cred.Bytes); err != nil {
 		return fmt.Errorf("write %s/%s: %w", ClaudeCodeService, k.user, err)
 	}
+	k.cache.put(cacheKey(ClaudeCodeService, k.user), cred.Bytes)
 	return nil
 }
 
@@ -78,11 +122,17 @@ func (k *keychainOps) readStash(_ context.Context, accountID string) (provider.C
 	if accountID == "" {
 		return provider.Credential{}, errors.New("readStash: empty account ID")
 	}
-	data, err := k.ring.Get(AimonitorServicePrefix+accountID, k.user)
+	service := AimonitorServicePrefix + accountID
+	key := cacheKey(service, k.user)
+	if data, ok := k.cache.get(key); ok {
+		return provider.Credential{Bytes: cloneBytes(data)}, nil
+	}
+	data, err := k.ring.Get(service, k.user)
 	if err != nil {
 		return provider.Credential{}, err
 	}
-	return provider.Credential{Bytes: data}, nil
+	k.cache.put(key, data)
+	return provider.Credential{Bytes: cloneBytes(data)}, nil
 }
 
 // writeStash saves a credential blob into aimonitor's namespace under
@@ -95,9 +145,11 @@ func (k *keychainOps) writeStash(_ context.Context, accountID string, cred provi
 	if len(cred.Bytes) == 0 {
 		return errors.New("writeStash: empty credential bytes")
 	}
-	if err := k.ring.Set(AimonitorServicePrefix+accountID, k.user, cred.Bytes); err != nil {
+	service := AimonitorServicePrefix + accountID
+	if err := k.ring.Set(service, k.user, cred.Bytes); err != nil {
 		return fmt.Errorf("write stash %s: %w", accountID, err)
 	}
+	k.cache.put(cacheKey(service, k.user), cred.Bytes)
 	return nil
 }
 
@@ -108,7 +160,9 @@ func (k *keychainOps) deleteStash(_ context.Context, accountID string) error {
 	if accountID == "" {
 		return errors.New("deleteStash: empty account ID")
 	}
-	err := k.ring.Delete(AimonitorServicePrefix+accountID, k.user)
+	service := AimonitorServicePrefix + accountID
+	err := k.ring.Delete(service, k.user)
+	k.cache.invalidate(cacheKey(service, k.user))
 	if errors.Is(err, secret.ErrNotFound) {
 		return nil
 	}
@@ -119,7 +173,7 @@ func (k *keychainOps) deleteStash(_ context.Context, accountID string) error {
 // identified by ref. The CLI uses this after OnboardingFlow returns a
 // fresh credential, paired with an INSERT into the accounts table.
 func StashCredential(ctx context.Context, ref string, cred provider.Credential) error {
-	k, err := newKeychainOps()
+	k, err := sharedOps()
 	if err != nil {
 		return err
 	}
@@ -129,7 +183,7 @@ func StashCredential(ctx context.Context, ref string, cred provider.Credential) 
 // RetrieveStash reads the credential previously written under ref.
 // Returns secret.ErrNotFound when missing.
 func RetrieveStash(ctx context.Context, ref string) (provider.Credential, error) {
-	k, err := newKeychainOps()
+	k, err := sharedOps()
 	if err != nil {
 		return provider.Credential{}, err
 	}
@@ -138,9 +192,21 @@ func RetrieveStash(ctx context.Context, ref string) (provider.Credential, error)
 
 // DeleteStash removes the credential at ref. Idempotent on already-missing.
 func DeleteStash(ctx context.Context, ref string) error {
-	k, err := newKeychainOps()
+	k, err := sharedOps()
 	if err != nil {
 		return err
 	}
 	return k.deleteStash(ctx, ref)
+}
+
+// cloneBytes returns a fresh slice with the same contents. Used so the
+// cache's interior bytes never escape to a caller that might mutate or
+// Zero them.
+func cloneBytes(b []byte) []byte {
+	if b == nil {
+		return nil
+	}
+	out := make([]byte, len(b))
+	copy(out, b)
+	return out
 }

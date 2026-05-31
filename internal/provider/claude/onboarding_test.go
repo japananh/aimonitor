@@ -51,7 +51,7 @@ func (f *fakeKeyring) Delete(s, a string) error {
 func newTestKeychainOps(t *testing.T) (*keychainOps, *fakeKeyring) {
 	t.Helper()
 	fr := newFakeKeyring()
-	return &keychainOps{ring: fr, user: "tester"}, fr
+	return &keychainOps{ring: fr, user: "tester", cache: newCredCache(credCacheTTL)}, fr
 }
 
 func TestKeychainOps_RoundTrip(t *testing.T) {
