@@ -84,7 +84,20 @@ func (a *AutoSwitcher) SetConfig(cfg config.Config) {
 	a.cfg = cfg
 }
 
-// OnSample is the watcher callback. Idempotent on missing accounts table.
+// OnSample is the watcher callback. Accumulates per-sample tokens into
+// the local-estimate counters that drive SessionBarView.
+//
+// Historical note: this used to also fire probe-driven account switches
+// on tripwire crossings via evaluateAndSwitch. That path consumed real
+// tokens (each probe was a 1-token /v1/messages call) and looked
+// machine-generated to Anthropic's abuse classifiers. The new
+// AutoSwapper (autoswap.go) supersedes it — it makes the same kind of
+// decision using OAuth /api/oauth/usage data, which is server-side
+// truth and doesn't consume tokens.
+//
+// The tripwire-and-probe path lives on as dead code in evaluateAndSwitch
+// + probeAccount + probe.go pending a full retirement commit; OnSample
+// no longer calls into it.
 func (a *AutoSwitcher) OnSample(ev SampleEvent) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -99,33 +112,8 @@ func (a *AutoSwitcher) OnSample(ev SampleEvent) {
 		a.observedBudget = a.usageSinceReset
 	}
 
-	if !a.cfg.AutoSwitch {
-		return
-	}
-
 	pct := float64(a.usageSinceReset) / float64(a.observedBudget) * 100.0
-	tripwire := crossedTripwire(a.lastPercent, pct, a.cfg.Thresholds)
 	a.lastPercent = pct
-	if tripwire == 0 {
-		return
-	}
-	if tripwire == a.lastTripwireFired {
-		return
-	}
-	if a.clock().Sub(a.lastSwitchAt) < a.cfg.CooldownDuration() {
-		return
-	}
-
-	// Release the lock during the probe + switch dance; those are slow
-	// (HTTP + keychain) and we don't want to block sample delivery.
-	a.mu.Unlock()
-	err := a.evaluateAndSwitch(context.Background(), tripwire)
-	a.mu.Lock()
-
-	a.lastTripwireFired = tripwire
-	if err == nil {
-		a.lastSwitchAt = a.clock()
-	}
 }
 
 // crossedTripwire returns the just-crossed threshold value, or 0 when no
