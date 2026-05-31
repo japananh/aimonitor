@@ -10,6 +10,7 @@ import (
 
 	"github.com/japananh/aimonitor/internal/config"
 	"github.com/japananh/aimonitor/internal/provider"
+	"github.com/japananh/aimonitor/internal/provider/claude"
 	"github.com/japananh/aimonitor/internal/store"
 )
 
@@ -106,6 +107,18 @@ func (s *Server) Run(ctx context.Context) error {
 		ActiveLabel: resolveActiveLabel(s),
 	}
 	go func() { _ = pub.Run(ctx) }()
+
+	// UsageScheduler is Claude-specific in v1 (only Claude has an OAuth
+	// usage endpoint we know about). When v2 adds a second provider the
+	// scheduler will move behind a Provider interface method.
+	if _, ok := s.provider.(*claude.Provider); ok {
+		usage := &UsageScheduler{
+			Store:    s.store,
+			Provider: s.provider,
+			Fetcher:  claude.NewUsageFetcher(),
+		}
+		go func() { _ = usage.Run(ctx) }()
+	}
 
 	return w.Run(ctx)
 }
