@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/japananh/aimonitor/internal/provider/claude"
@@ -44,6 +46,23 @@ type Status struct {
 	// LastSwitchAt is when the auto-switcher last fired (zero if
 	// never). Used to render the cool-down countdown.
 	LastSwitchAt time.Time `json:"last_switch_at,omitempty"`
+
+	// FiveHourPct / SevenDayPct are the active account's OAuth-introspected
+	// utilization, fetched on the UsageScheduler's cadence (~300 s with
+	// jitter). Zero values mean "no data yet" — the Swift widget hides the
+	// bars in that case rather than rendering 0%.
+	FiveHourPct float64 `json:"five_hour_pct,omitempty"`
+	SevenDayPct float64 `json:"seven_day_pct,omitempty"`
+
+	// FiveHourResetAt / SevenDayResetAt mirror the above for the reset
+	// countdowns. Zero when unknown.
+	FiveHourResetAt time.Time `json:"five_hour_reset_at,omitempty"`
+	SevenDayResetAt time.Time `json:"seven_day_reset_at,omitempty"`
+
+	// LimitsFetchedAt is when the UsageScheduler last persisted limits for
+	// the active account. Widget shows a "~" stale indicator if older
+	// than ~2× the baseline interval.
+	LimitsFetchedAt time.Time `json:"limits_fetched_at,omitempty"`
 }
 
 // snapshot reads AutoSwitcher fields under its lock so we don't race
@@ -107,6 +126,26 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 		label = p.ActiveLabel(ctx)
 	}
 	st := p.Auto.snapshot(label)
+	if label != "" {
+		// Look up the active account's persisted limits and attach
+		// them to the snapshot. Best-effort: any failure (no account
+		// row yet, no limits row yet) leaves the corresponding fields
+		// zero — the widget hides bars without data, which is the
+		// right "no data" state.
+		if acct, err := p.Store.GetAccountByLabel(ctx, label); err == nil {
+			if l, err := p.Store.GetLimits(ctx, acct.ID); err == nil {
+				st.FiveHourPct = l.FiveHourPct
+				st.SevenDayPct = l.SevenDayPct
+				st.FiveHourResetAt = l.FiveHourResetAt
+				st.SevenDayResetAt = l.SevenDayResetAt
+				st.LimitsFetchedAt = l.FetchedAt
+			} else if !errors.Is(err, store.ErrLimitsNotFound) {
+				// Real I/O error (not just "no row yet"): surface
+				// to stderr but keep publishing without limits.
+				fmt.Fprintf(os.Stderr, "status: read limits for %q: %v\n", label, err)
+			}
+		}
+	}
 	b, err := json.Marshal(st)
 	if err != nil {
 		return
