@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,30 +43,6 @@ func NewProber() *Prober {
 		BaseURL: AnthropicAPIBase,
 		HTTP:    &http.Client{Timeout: 10 * time.Second},
 	}
-}
-
-type oauthBlob struct {
-	ClaudeAiOauth struct {
-		AccessToken string `json:"accessToken"`
-	} `json:"claudeAiOauth"`
-}
-
-// extractAccessToken pulls the OAuth access token out of a Claude Code
-// credential blob. Returns a clear error when the blob is the wrong shape
-// — most likely cause is a corrupted Keychain entry or a future
-// Claude Code release that changed the schema.
-func extractAccessToken(cred provider.Credential) (string, error) {
-	if len(cred.Bytes) == 0 {
-		return "", errors.New("extractAccessToken: empty credential")
-	}
-	var b oauthBlob
-	if err := json.Unmarshal(cred.Bytes, &b); err != nil {
-		return "", fmt.Errorf("extractAccessToken: parse credential JSON: %w", err)
-	}
-	if b.ClaudeAiOauth.AccessToken == "" {
-		return "", errors.New("extractAccessToken: credential has no claudeAiOauth.accessToken field")
-	}
-	return b.ClaudeAiOauth.AccessToken, nil
 }
 
 // Probe sends one tiny request and parses the rate-limit headers. The
