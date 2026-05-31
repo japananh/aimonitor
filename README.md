@@ -10,8 +10,10 @@
 
 </div>
 
-<!-- TODO: replace with a real screenshot of the menu bar popover -->
-> _Screenshot placeholder: menu bar popover showing the active account, 5-hour bar, 7-day bar, and per-account switch buttons._
+<p align="center">
+  <!-- TODO: replace src with the real path once the PNG is committed (e.g. docs/screenshot.png) -->
+  <img src="docs/screenshot.png" alt="aimonitor menu bar popover with 5-hour and 7-day usage bars" width="420" />
+</p>
 
 ## Features
 
@@ -42,6 +44,14 @@ curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/l
 ```
 
 CLI only on Linux; the GTK menu bar widget is a v2.0 deliverable.
+
+### Via `go install` (CLI only, any platform)
+
+```sh
+go install github.com/japananh/aimonitor/cmd/aimonitor@latest
+```
+
+Lands `aimonitor` in `$GOBIN`. No `.app`, no autostart service — useful if you only need the CLI for switching accounts from a terminal, or you don't want to add a Homebrew tap.
 
 ## Quick start
 
@@ -171,9 +181,21 @@ make release-snapshot   # full goreleaser dry-run (no publish; needs goreleaser 
 
 On macOS the menu bar widget needs the Swift toolchain (`xcode-select --install`). Full Xcode is not required; the widget builds headlessly via Swift Package Manager.
 
-## Inspirations
+## Documentation
 
-- [ncthanhngo/claude-bar](https://github.com/ncthanhngo/claude-bar) — sibling macOS menu-bar app for Claude Code.
+| Topic | Where |
+|---|---|
+| Architecture (daemon, store, widget) | [`docs/architecture.md`](docs/architecture.md) |
+| Threat model + scrubbing rules | [`docs/security.md`](docs/security.md) |
+| Why the macOS `.app` is unsigned in v1.0.0-beta | [`docs/unsigned-app.md`](docs/unsigned-app.md) |
+| User stories shipped in v1 | [`USER_STORIES.md`](USER_STORIES.md) |
+
+## See also
+
+Related tools in the Claude-Code-ergonomics space:
+
+- [ncthanhngo/claude-bar](https://github.com/ncthanhngo/claude-bar) — sibling macOS menu-bar app and the source of patterns aimonitor learned from (keychain shell-out, OAuth refresh flow, post-swap SIGINT).
+- [ryoppippi/ccusage](https://github.com/ryoppippi/ccusage) — pure-CLI usage analyzer; parses local Claude transcripts for per-day / per-session breakdowns. Read-only, no credential management.
 
 ## License
 
