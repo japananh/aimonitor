@@ -1,163 +1,181 @@
+<div align="center">
+
 # aimonitor
 
-Multi-account Claude Code session monitor and account switcher for macOS & Linux.
+**Multi-account Claude Code session monitor and silent account switcher for macOS & Linux.**
 
-> **Status**: v1.0.0-beta (in development).
-> **Repository**: <https://github.com/japananh/aimonitor>
+[![CI](https://github.com/japananh/aimonitor/actions/workflows/ci.yml/badge.svg)](https://github.com/japananh/aimonitor/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/japananh/aimonitor?include_prereleases&sort=semver)](https://github.com/japananh/aimonitor/releases)
+[![Go report](https://goreportcard.com/badge/github.com/japananh/aimonitor)](https://goreportcard.com/report/github.com/japananh/aimonitor)
 
-`aimonitor` solves one problem: when several teammates share Anthropic Claude Team seats, one heavy user can drain a session quota and block everyone else. `aimonitor` lets you (1) see live session usage in your macOS menu bar, (2) keep multiple Claude OAuth credentials stashed in your OS keyring, and (3) switch — manually or automatically — to whichever account still has server-side headroom.
+</div>
 
-It is local-first. It has no telemetry. It never phones home.
+<!-- TODO: replace with a real screenshot of the menu bar popover -->
+> _Screenshot placeholder: menu bar popover showing the active account, 5-hour bar, 7-day bar, and per-account switch buttons._
 
-## Why "server-side headroom"?
+## Features
 
-Claude Code's local JSONL transcripts only record tokens used on **this** machine. The Anthropic rate-limit counter is **per-account, across all devices**. If a teammate burned Account A on their laptop this morning, your Mac sees "Account A: 0% used" and would happily switch you onto an exhausted account.
+- 🔍 **Live 5-hour and 7-day usage bars** in your menu bar — server-side truth, polled from Anthropic's `/api/oauth/usage` introspection endpoint. No tokens consumed.
+- 🔀 **Silent account switching** — `aimonitor switch <label>` refreshes the OAuth access token via Anthropic's token endpoint and writes the live credential. No terminal hop, no `claude /login`.
+- 🤖 **Auto-swap** at 80 % utilization (configurable). Picks the account with the most headroom; optionally SIGINTs running `claude` REPLs so they restart against the new credential.
+- 🔐 **OS-keyring credential storage** (macOS Keychain via `/usr/bin/security`, Linux libsecret). SQLite holds references; tokens never leave the keyring.
+- 📡 **Local-first.** No telemetry. No phone-home.
 
-`aimonitor` defeats this by reading the `anthropic-ratelimit-tokens-remaining` HTTP response header before any auto-switch. The local estimate is a fast first-pass filter; the server-side probe is the gate.
-
-## Features (v1.0.0-beta)
-
-- macOS Sonoma 14+ menu bar widget (native Swift/SwiftUI) showing live session-bar.
-- CLI for macOS Sonoma 14+ and Ubuntu 22.04+.
-- Multi-account Claude OAuth credential management via macOS Keychain / libsecret.
-- Manual `aimonitor switch <label>` between accounts.
-- Opt-in auto-switch (default off) with configurable thresholds, gated by a server-side rate-limit probe.
-- Single-binary Go daemon; widget reads state from a shared SQLite snapshot and mutates via the `aimonitor` CLI (no separate IPC server to manage).
-
-## Roadmap
-
-Directional, not committed. See [`ROADMAP.md`](ROADMAP.md) for gating conditions and rationale.
-
-- **v1.1**: daily usage chart, cost estimation per account, notarized macOS app.
-- **v1.2.x**: weekly cap view (gated on a server-side data source available to non-admin users).
-- **v2.0**: Ubuntu GTK menu bar widget, second `Provider` implementation (Codex or Copilot CLI).
-
-## Installation
+## Install
 
 ### macOS (Sonoma 14+)
-
-`aimonitor` lives in a third-party Homebrew tap (`japananh/homebrew-tap`) because it's a new project that hasn't been submitted to `homebrew/core`. Two equivalent install paths:
-
-**One-liner** (taps + installs in a single command):
 
 ```sh
 brew install --cask japananh/tap/aimonitor
 ```
 
-**Or tap once, install short-form forever** (preferred if you expect to install other things from this tap later):
+> **First launch:** the `.app` is unsigned in v1.0.0-beta (notarization is a v1.1 deliverable). Clear the Gatekeeper quarantine once:
+> ```sh
+> xattr -dr com.apple.quarantine /Applications/AIMonitor.app
+> ```
+> Or right-click → Open → confirm. See [`docs/unsigned-app.md`](docs/unsigned-app.md).
 
-```sh
-brew tap japananh/tap
-brew install --cask aimonitor
-```
-
-Either way you get the CLI binary `aimonitor` on your `$PATH` and `AIMonitor.app` in `/Applications`.
-
-**First launch — clear the unsigned-binary quarantine**: the `.app` is unsigned in v1.0.0-beta (notarization is a v1.1 deliverable). macOS Gatekeeper will refuse to open it on the first try. Workaround:
-
-```sh
-xattr -dr com.apple.quarantine /Applications/AIMonitor.app
-open /Applications/AIMonitor.app
-```
-
-Or right-click the app in Finder → Open → confirm the Gatekeeper prompt. You only need to do this once. See [`docs/unsigned-app.md`](docs/unsigned-app.md) for the full explanation.
-
-**Upgrading later**:
-
-```sh
-brew update              # picks up new versions from every tapped repo
-brew upgrade --cask aimonitor
-```
-
-### Ubuntu 22.04+
+### Linux (Ubuntu 22.04+)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/linux/install.sh | sh
 ```
 
-The script installs `aimonitor` to `/usr/local/bin`, registers a `systemd --user` unit, and verifies that `libsecret` is present. The menu bar widget on Linux is deferred to v2.0; the CLI is fully functional.
-
-Re-running the script upgrades in place (idempotent). To pin a specific version, set `AIMONITOR_VERSION=v1.0.0-beta.1` before piping.
-
-### Uninstall
-
-```sh
-aimonitor uninstall              # disables autostart; preserves your data
-aimonitor uninstall --purge      # also drops the SQLite DB, config, and aimonitor keyring entries
-```
-
-Then on macOS:
-
-```sh
-brew uninstall --cask aimonitor
-brew untap japananh/tap          # optional: forget the tap entirely
-```
-
-Your original `Claude Code-credentials` keyring entry is **never touched** by aimonitor's uninstall — existing `claude` CLI logins keep working.
+CLI only on Linux; the GTK menu bar widget is a v2.0 deliverable.
 
 ## Quick start
 
 ```sh
-# 1. Adopt your existing Claude Code login as the first aimonitor account.
-#    Use --adopt-current because Claude Code 2.x has no `claude login`
-#    subcommand — /login is a slash command inside the interactive session.
+# 1. Register your current Claude Code login as the first aimonitor account.
+#    --adopt-current adopts the credential already in your keychain instead
+#    of driving a fresh OAuth flow.
 aimonitor add --adopt-current --label personal
 
-# 2. Start the daemon at login so the menu bar widget shows live data.
-aimonitor config set autostart true
-
-# 3. Add a second account. aimonitor stashes your current credential,
-#    prints instructions, and polls the keychain. You drive the login
-#    in another terminal: run `claude` then type /login.
+# 2. Add a second account. aimonitor stashes the current credential, prints
+#    instructions, polls the keychain. You drive `claude` + `/login` in
+#    another terminal.
 aimonitor add --label work
 
-# 4. See what aimonitor knows about.
-aimonitor list
-
-# 5. Switch the active credential for the next `claude` invocation.
+# 3. Switch silently — no terminal, no /login.
 aimonitor switch work
 
-# 6. Check the true server-side remaining quota for an account.
-aimonitor probe personal
+# 4. See live 5h / 7d usage per account.
+aimonitor list
 
-# 7. Enable auto-switch (default off).
-aimonitor config set autoswitch true
-aimonitor config set thresholds 40,60,100
-
-# 8. Audit log of every switch.
-aimonitor log
-
-# 9. Quick health check.
+# 5. Health check.
 aimonitor doctor
 ```
 
-## Privacy
+Auto-swap is on by default at 80 % 5-hour utilization. Nothing else to configure for the common case.
+
+## Configuration
+
+```sh
+aimonitor config set auto_swap.enabled true       # default true
+aimonitor config set auto_swap.threshold_pct 80   # default 80
+aimonitor config set autostart true                # daemon at login
+```
+
+<details>
+<summary><b>Full config keys</b></summary>
+
+| Key | Default | Description |
+|---|---|---|
+| `auto_swap.enabled` | `true` | Master toggle for the OAuth-limits-driven auto-swap |
+| `auto_swap.threshold_pct` | `80` | 5-hour utilization (%) at which to auto-swap |
+| `autostart` | `false` | Start the daemon at login |
+| `autoswitch` | `false` | (Legacy) tripwire-driven JSONL accumulator. Disabled in v1.0.0-beta.4 — the new `auto_swap.*` keys supersede it. |
+
+</details>
+
+## How it works
+
+When the active account hits the configured 5-hour utilization threshold, aimonitor finds the next-lowest-utilization account and silently swaps:
+
+```
+                      polled every 5 min ± 30 s jitter
+                ┌─────────────────────────────────────────┐
+                │  GET  api.anthropic.com/api/oauth/usage │
+                │       → 5h % + 7d % + reset times       │
+                └─────────────────────────────────────────┘
+                                   │
+              5h utilization ≥ threshold?
+                          │
+                          ▼  yes — pick lowest-utilization account
+   ┌──────────────────┐   POST platform.claude.com/v1/oauth/token
+   │ target account   │ ──────────────────────────────────────────▶
+   │ refresh_token    │   grant_type=refresh_token
+   └──────────────────┘                  │
+                                         ▼ fresh access_token
+                          ┌───────────────────────────┐
+                          │ Claude Code-credentials   │
+                          │   (macOS Keychain slot)   │
+                          └───────────────────────────┘
+                                         │
+                                         ▼
+                            next `claude` invocation
+                            uses the new account
+                            — no /login required
+```
+
+See [`docs/architecture.md`](docs/architecture.md) for the full daemon / store / widget breakdown.
+
+## Privacy & security
 
 - **No telemetry. No phone-home.** Anywhere.
-- OAuth tokens live only in the OS keyring (Keychain on macOS, libsecret on Linux). SQLite holds references, never secrets.
+- OAuth tokens live only in the OS keyring. SQLite holds references, never secrets.
 - Token bytes are never logged, even at `--debug` level. Log scrubbing matches `sk-ant-(oat|ort)…`.
-- Probe requests (~10 tokens each) are the only network traffic aimonitor initiates; response bodies are discarded after the rate-limit headers are read.
+- **The only outbound traffic** aimonitor initiates is to two Anthropic OAuth surfaces:
+  - `GET https://api.anthropic.com/api/oauth/usage` — introspection-only, ~5 KB per call. Consumes no tokens. Background interval: 5 min ± 30 s jitter for the active account, with exponential backoff on errors (capped at 1 h). Inactive accounts are fetched only when you open the popover.
+  - `POST https://platform.claude.com/v1/oauth/token` — only on account switches when the cached access token is near or past expiry. Silent (no browser).
+- The legacy `aimonitor probe` CLI subcommand fires a real `/v1/messages` request and is deprecated. The daemon no longer uses it.
 
-## Building from source
+See [`docs/security.md`](docs/security.md) for the full threat model.
 
-Requires Go 1.25+ (transitively required by `modernc.org/sqlite`). On macOS, also requires the Swift toolchain (ships with the Xcode Command Line Tools — `xcode-select --install`) for the menu bar widget. Full Xcode is **not** required; the widget is built via Swift Package Manager headlessly.
+## Roadmap
+
+Directional, not committed.
+
+- **v1.1:** daily usage chart, cost estimation per account, notarized macOS app.
+- **v2.0:** Ubuntu GTK menu bar widget, second `Provider` implementation (Codex or Copilot CLI).
+
+## Uninstall
+
+```sh
+aimonitor uninstall              # disable autostart; keep your data
+aimonitor uninstall --purge      # also drop SQLite DB, config, aimonitor keyring entries
+
+# macOS
+brew uninstall --cask aimonitor
+brew untap japananh/tap          # optional
+
+# Linux
+systemctl --user disable aimonitor.service
+sudo rm /usr/local/bin/aimonitor
+```
+
+Your original `Claude Code-credentials` keyring entry is **never touched** by aimonitor's uninstall — existing `claude` CLI logins keep working.
+
+## Build from source
+
+Requires Go 1.25+. Pure Go on all platforms — `CGO_ENABLED=0` works on macOS too since v1.0.0-beta.4 (keychain access shells out to `/usr/bin/security` instead of linking the Security framework via cgo).
 
 ```sh
 git clone https://github.com/japananh/aimonitor
 cd aimonitor
-make build              # builds the Go CLI binary
-make test               # runs unit tests
-make widget             # builds AIMonitor.app via SPM (macOS only)
+make build              # Go CLI binary
+make test               # unit tests
+make widget             # AIMonitor.app via Swift Package Manager (macOS only)
 make release-snapshot   # full goreleaser dry-run (no publish; needs goreleaser installed)
 ```
+
+On macOS the menu bar widget needs the Swift toolchain (`xcode-select --install`). Full Xcode is not required; the widget builds headlessly via Swift Package Manager.
+
+## Inspirations
+
+- [ncthanhngo/claude-bar](https://github.com/ncthanhngo/claude-bar) — sibling macOS menu-bar app for Claude Code.
 
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
-
-## See also
-
-- [`USER_STORIES.md`](USER_STORIES.md) — what v1 ships
-- [`docs/architecture.md`](docs/architecture.md) — daemon, IPC, storage
-- [`docs/thresholds.md`](docs/thresholds.md) — exactly how the tripwire-and-probe logic decides
-- [`docs/security.md`](docs/security.md) — keyring boundaries, scrubbing rules, threat model
