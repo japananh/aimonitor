@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/japananh/aimonitor/internal/provider"
@@ -25,25 +27,21 @@ func (f *fakeSwitcher) Switch(_ context.Context, label string) error {
 	return nil
 }
 
-// withAutoSwapStubs replaces the Switcher field with a thin adapter
-// matching the *Switcher type's Switch method. AutoSwapper holds a
-// *Switcher concretely (no interface), so we wrap fakeSwitcher in a
-// real *Switcher that delegates SetActiveCredential → no-op via the
-// fakeProvider already in this package.
+// withAutoSwapStubs returns an AutoSwapper backed by a fakeSwitcher so
+// tests can assert which labels were chosen as candidates without
+// touching the real keychain or OAuth endpoint.
 //
-// Returns the fake we can assert against.
-func withAutoSwapStubs(t *testing.T, s *store.Store) (*AutoSwapper, *fakeProvider) {
+// Returns the fakeSwitcher (for assertions) and the fakeProvider (for
+// setting active credential bytes).
+func withAutoSwapStubs(t *testing.T, s *store.Store) (*AutoSwapper, *fakeSwitcher, *fakeProvider) {
 	t.Helper()
 	fp := &fakeProvider{}
-	sw := NewSwitcher(s, fp)
-	// Override the file-lock path to a temp file so tests don't fight
-	// over the shared ~/.aimonitor-lock.
-	sw.LockPath = t.TempDir() + "/lock"
+	fsw := &fakeSwitcher{}
 	return &AutoSwapper{
 		Store:    s,
 		Provider: fp,
-		Switcher: sw,
-	}, fp
+		Switcher: fsw,
+	}, fsw, fp
 }
 
 func TestAutoSwap_BelowThreshold_NoSwap(t *testing.T) {
@@ -52,7 +50,7 @@ func TestAutoSwap_BelowThreshold_NoSwap(t *testing.T) {
 	acct, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref"})
 	_ = s.PutLimits(ctx, acct.ID, provider.Limits{FiveHourPct: 50})
 
-	a, _ := withAutoSwapStubs(t, s)
+	a, _, _ := withAutoSwapStubs(t, s)
 	swapped, err := a.MaybeSwap(ctx, "active")
 	if err != nil {
 		t.Fatalf("MaybeSwap: %v", err)
@@ -72,17 +70,16 @@ func TestAutoSwap_AboveThreshold_PicksLowest(t *testing.T) {
 	_ = s.PutLimits(ctx, low.ID, provider.Limits{FiveHourPct: 10})
 	_ = s.PutLimits(ctx, mid.ID, provider.Limits{FiveHourPct: 40})
 
-	a, _ := withAutoSwapStubs(t, s)
-	// Verify candidate selection directly. (MaybeSwap would fail at
-	// Switcher.Switch because the fakeProvider has no credential
-	// bytes — testing that integration belongs in a separate test
-	// with stubbed Switcher.)
-	cand, found, err := a.pickCandidate(ctx, active.ID, defaultAutoSwapThreshold)
-	if err != nil || !found {
-		t.Fatalf("pickCandidate: found=%v err=%v", found, err)
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
 	}
-	if cand.Label != "low" {
-		t.Errorf("pickCandidate = %q, want low (10%% beats mid 40%%)", cand.Label)
+	if !swapped {
+		t.Fatalf("expected swap (active 95%% > 80%% threshold)")
+	}
+	if len(fsw.switched) != 1 || fsw.switched[0] != "low" {
+		t.Errorf("Switcher.Switch called with %v, want [\"low\"]", fsw.switched)
 	}
 }
 
@@ -94,7 +91,7 @@ func TestAutoSwap_AllNearLimit_NoSwap(t *testing.T) {
 	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 90})
 	_ = s.PutLimits(ctx, other.ID, provider.Limits{FiveHourPct: 85})
 
-	a, _ := withAutoSwapStubs(t, s)
+	a, _, _ := withAutoSwapStubs(t, s)
 	swapped, err := a.MaybeSwap(ctx, "active")
 	if err != nil {
 		t.Fatalf("MaybeSwap: %v", err)
@@ -111,7 +108,7 @@ func TestAutoSwap_Disabled(t *testing.T) {
 	_ = s.PutLimits(ctx, acct.ID, provider.Limits{FiveHourPct: 99})
 	_ = s.PutSetting(ctx, SettingsKeyAutoSwapEnabled, "false")
 
-	a, _ := withAutoSwapStubs(t, s)
+	a, _, _ := withAutoSwapStubs(t, s)
 	swapped, err := a.MaybeSwap(ctx, "active")
 	if err != nil {
 		t.Fatalf("MaybeSwap: %v", err)
@@ -130,7 +127,7 @@ func TestAutoSwap_CustomThreshold(t *testing.T) {
 	_ = s.PutLimits(ctx, other.ID, provider.Limits{FiveHourPct: 10})
 	_ = s.PutSetting(ctx, SettingsKeyAutoSwapThreshold, "50")
 
-	a, _ := withAutoSwapStubs(t, s)
+	a, _, _ := withAutoSwapStubs(t, s)
 	cand, found, _ := a.pickCandidate(ctx, active.ID, 50)
 	if !found || cand.Label != "other" {
 		t.Errorf("pickCandidate with threshold 50: found=%v cand=%v want other", found, cand)
@@ -151,6 +148,30 @@ func TestAutoSwap_CustomThreshold(t *testing.T) {
 	}
 }
 
+// TestAutoSwap_SwitcherErrorPropagates verifies that a Switcher failure
+// surfaces from MaybeSwap as an error and is not silently swallowed.
+// Important because the daemon logs MaybeSwap errors via stderr —
+// swallowing them would hide token-refresh failures from the operator.
+func TestAutoSwap_SwitcherErrorPropagates(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	other, _ := s.CreateAccount(ctx, store.Account{Label: "other", KeyringRef: "ref-o"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95})
+	_ = s.PutLimits(ctx, other.ID, provider.Limits{FiveHourPct: 10})
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	fsw.err = errors.New("boom")
+
+	_, err := a.MaybeSwap(ctx, "active")
+	if err == nil {
+		t.Fatalf("expected error from MaybeSwap when Switcher fails")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Errorf("error %v should wrap Switcher's error", err)
+	}
+}
+
 // Parsing-edge test: bad values fall back to defaults silently.
 func TestAutoSwap_BadConfigValues(t *testing.T) {
 	s := openStore(t)
@@ -158,7 +179,7 @@ func TestAutoSwap_BadConfigValues(t *testing.T) {
 	_ = s.PutSetting(ctx, SettingsKeyAutoSwapEnabled, "notabool")
 	_ = s.PutSetting(ctx, SettingsKeyAutoSwapThreshold, "999")
 
-	a, _ := withAutoSwapStubs(t, s)
+	a, _, _ := withAutoSwapStubs(t, s)
 	enabled, threshold, err := a.config(ctx)
 	if err != nil {
 		t.Fatalf("config: %v", err)

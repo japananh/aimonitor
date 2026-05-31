@@ -7,9 +7,10 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/store"
-	"github.com/spf13/cobra"
 )
 
 func newProbeCmd() *cobra.Command {
@@ -17,14 +18,23 @@ func newProbeCmd() *cobra.Command {
 	var refresh bool
 	cmd := &cobra.Command{
 		Use:   "probe [label]",
-		Short: "Issue a server-side rate-limit probe and report true remaining tokens",
-		Long: `Probe an account's true server-side rate-limit state by issuing one
-tiny request against the Anthropic API and parsing the rate-limit
-response headers (anthropic-ratelimit-tokens-remaining / -reset).
+		Short: "[DEPRECATED] Issue a server-side rate-limit probe",
+		Long: `[DEPRECATED — kept for manual debugging only.]
+
+Probe an account's server-side rate-limit state by issuing one tiny
+request against the Anthropic API and parsing the rate-limit response
+headers (anthropic-ratelimit-tokens-remaining / -reset).
+
+WARNING: each probe is a real /v1/messages call. It consumes a small
+amount of quota and looks machine-generated to Anthropic's abuse
+classifiers. The daemon no longer fires probes automatically; for live
+usage data, the daemon now uses /api/oauth/usage (see 'aimonitor list')
+which is introspection-only and consumes no tokens.
 
 Probe results are cached for 30 seconds; pass --refresh to skip the cache.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.ErrOrStderr(), "warning: `aimonitor probe` is deprecated — each invocation sends a real model API call. Prefer the daemon's automatic /api/oauth/usage fetch.")
 			return withRuntime(cmd.Context(), func(ctx context.Context, s *store.Store, p provider.Provider) error {
 				return runProbe(ctx, cmd, s, p, args, all, refresh)
 			})

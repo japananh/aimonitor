@@ -37,15 +37,12 @@ type Switcher struct {
 	// $HOME/.aimonitor-lock when zero.
 	LockPath string
 
-	// PostSwapHook (optional) runs after a successful swap. Used by
-	// the daemon to fire SIGINT to running `claude` processes. Errors
-	// are logged but do not roll back the swap — the credential has
-	// already moved.
+	// PostSwapHook (optional) runs after a successful, non-trivial swap.
+	// Used by the daemon to fire SIGINT to running `claude` processes
+	// so they re-read the freshly-promoted credential on restart.
+	// Errors are logged but do not roll back the swap — the credential
+	// has already moved. Not fired when from == to (no-op swap).
 	PostSwapHook func(ctx context.Context, from, to string)
-
-	// OnSwap (optional) is called immediately after a successful swap
-	// with the from/to labels. Useful for tests that want a barrier.
-	OnSwap func(from, to string)
 
 	// Stderr receives operational messages (e.g. "refreshing X's
 	// token...", "warning: post-swap hook failed"). Nil sends them to
@@ -115,10 +112,12 @@ func (s *Switcher) Switch(ctx context.Context, label string) error {
 		fmt.Fprintf(s.stderr(), "warning: switch ok but UpdateLastUsed failed: %v\n", err)
 	}
 
-	if s.OnSwap != nil {
-		s.OnSwap(fromLabel, label)
-	}
-	if s.PostSwapHook != nil {
+	// Fire PostSwapHook only on a real swap. Switching to the
+	// already-active account is a no-op from the user's perspective —
+	// no running `claude` process needs to be SIGINT'd, no IDE needs
+	// reloading. Suppressing the hook here avoids killing processes
+	// that don't need killing.
+	if s.PostSwapHook != nil && fromLabel != label {
 		// Run on a fresh goroutine so a long-running hook (e.g. SIGINT
 		// broadcast + sleep) doesn't block the caller.
 		go s.PostSwapHook(context.Background(), fromLabel, label)
@@ -204,4 +203,3 @@ func (s *Switcher) stderr() io.Writer {
 	}
 	return os.Stderr
 }
-
