@@ -45,6 +45,16 @@ struct DaemonStatus: Codable {
     var session_percent: Double
     var auto_switch_enabled: Bool
     var last_switch_at: Date?
+
+    // OAuth-introspected utilization for the active account, written by
+    // the daemon's UsageScheduler on a ~5-minute jittered cadence. Optional
+    // because old daemon builds (and brand-new installs before the first
+    // fetch) won't populate them — the UI hides the bars in that case.
+    var five_hour_pct: Double?
+    var seven_day_pct: Double?
+    var five_hour_reset_at: Date?
+    var seven_day_reset_at: Date?
+    var limits_fetched_at: Date?
 }
 
 enum SQLiteReaderError: Error {

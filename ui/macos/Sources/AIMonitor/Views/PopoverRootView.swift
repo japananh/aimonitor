@@ -12,6 +12,14 @@ struct PopoverRootView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SessionBarView(model: model)
+            // Rate-limit utilization bars (5h / 7d). UsageBarsView hides
+            // itself when the daemon hasn't published any limits yet, so
+            // no Divider here would orphan if the bars are absent.
+            if let st = model.status,
+               st.five_hour_pct != nil || st.seven_day_pct != nil {
+                Divider()
+                UsageBarsView(model: model)
+            }
             if model.showAccountPanel {
                 Divider()
                 AccountTableView(model: model)
