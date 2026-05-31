@@ -7,7 +7,6 @@
 [![CI](https://github.com/japananh/aimonitor/actions/workflows/ci.yml/badge.svg)](https://github.com/japananh/aimonitor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/japananh/aimonitor?include_prereleases&sort=semver)](https://github.com/japananh/aimonitor/releases)
-[![Go report](https://goreportcard.com/badge/github.com/japananh/aimonitor)](https://goreportcard.com/report/github.com/japananh/aimonitor)
 
 </div>
 
