@@ -211,11 +211,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startInstall(latest: String, url: String) {
         do {
             try CLIBridge.installUpdate()
-            let done = NSAlert()
-            done.messageText = "Updating to \(latest)"
-            done.informativeText = "The update is downloading in the background. AIMonitor will quit and relaunch automatically when it finishes."
-            done.addButton(withTitle: "OK")
-            done.runModal()
+            // Deliberately NON-blocking: the detached `brew upgrade` quits
+            // this app within seconds, and sitting in a modal run loop while
+            // something else terminates us is a deadlock risk. The quit +
+            // relaunch is itself the feedback; a banner just sets expectation.
+            postNotification(title: "Updating to \(latest)",
+                             body: "Downloading in the background. AIMonitor will quit and relaunch when it finishes.")
         } catch {
             // Homebrew missing or spawn failed — fall back to the releases page.
             let a = NSAlert()
@@ -243,6 +244,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         a.informativeText = err.localizedDescription
         a.addButton(withTitle: "OK")
         a.runModal()
+    }
+
+    // postNotification shows a non-blocking Notification Center banner via
+    // osascript (no authorization prompt, works for an accessory app).
+    // Best-effort; used where a modal would be unsafe (e.g. right before the
+    // updater quits us). Fields are escaped for the AppleScript string.
+    private func postNotification(title: String, body: String) {
+        func esc(_ s: String) -> String {
+            s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+        }
+        let script = "display notification \"\(esc(body))\" with title \"\(esc(title))\""
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        p.arguments = ["-e", script]
+        try? p.run()
     }
 
     private func isSkipped(_ version: String) -> Bool {
