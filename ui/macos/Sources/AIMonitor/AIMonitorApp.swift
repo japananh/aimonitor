@@ -73,7 +73,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // so they see up-to-date numbers without waiting for the
             // 2-second timer tick.
             Task { @MainActor in await model.refresh() }
+            // Activate first. For an .accessory (LSUIElement) app that is
+            // not the frontmost app, the status item's window frame isn't
+            // finalized at click time, so NSPopover falls back to a default
+            // position (screen centre / top-left) instead of anchoring to
+            // the button. Activating realises the window geometry so
+            // show(relativeTo:) lands directly beneath the menu-bar icon.
+            NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            // Keep the popover key so click-outside dismiss + keyboard work
+            // even though the app has no regular window.
+            popover.contentViewController?.view.window?.makeKey()
         }
     }
 

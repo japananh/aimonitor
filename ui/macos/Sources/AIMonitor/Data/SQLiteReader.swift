@@ -23,6 +23,7 @@ struct AccountRow: Identifiable, Hashable {
     let id: Int64
     let label: String
     let email: String?
+    let organizationName: String?
     let lastUsedAt: Date?
 }
 
@@ -101,7 +102,7 @@ final class SQLiteReader {
     }
 
     func listAccounts() throws -> [AccountRow] {
-        let sql = "SELECT id, label, email, last_used_at FROM accounts ORDER BY label"
+        let sql = "SELECT id, label, email, organization_name, last_used_at FROM accounts ORDER BY label"
         var stmt: OpaquePointer?
         let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
         if rc != SQLITE_OK {
@@ -113,22 +114,28 @@ final class SQLiteReader {
         while sqlite3_step(stmt) == SQLITE_ROW {
             let id = sqlite3_column_int64(stmt, 0)
             let label = String(cString: sqlite3_column_text(stmt, 1))
-            let email: String?
-            if sqlite3_column_type(stmt, 2) == SQLITE_NULL {
-                email = nil
-            } else {
-                email = String(cString: sqlite3_column_text(stmt, 2))
-            }
+            let email = Self.optText(stmt, 2)
+            let org = Self.optText(stmt, 3)
             let lastUsedAt: Date?
-            if sqlite3_column_type(stmt, 3) == SQLITE_NULL {
+            if sqlite3_column_type(stmt, 4) == SQLITE_NULL {
                 lastUsedAt = nil
             } else {
-                let ms = sqlite3_column_int64(stmt, 3)
+                let ms = sqlite3_column_int64(stmt, 4)
                 lastUsedAt = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
             }
-            rows.append(AccountRow(id: id, label: label, email: email, lastUsedAt: lastUsedAt))
+            rows.append(AccountRow(id: id, label: label, email: email, organizationName: org, lastUsedAt: lastUsedAt))
         }
         return rows
+    }
+
+    /// Returns the column as a String, or nil for SQL NULL *or* the empty
+    /// string. The Go side stores '' for absent identity (migration 0003
+    /// columns are NOT NULL DEFAULT ''), so '' means "not set" — collapse
+    /// it to nil so the UI hides the row rather than showing a blank line.
+    private static func optText(_ stmt: OpaquePointer?, _ col: Int32) -> String? {
+        if sqlite3_column_type(stmt, col) == SQLITE_NULL { return nil }
+        let s = String(cString: sqlite3_column_text(stmt, col))
+        return s.isEmpty ? nil : s
     }
 
     func listProbes() throws -> [ProbeRow] {

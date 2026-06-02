@@ -33,7 +33,6 @@ struct AccountTableView: View {
 
     @ViewBuilder
     private func rowView(_ acct: AccountRow) -> some View {
-        let probe = model.probes.first(where: { $0.accountID == acct.id })
         let isActive = (model.status?.active_label == acct.label)
 
         HStack {
@@ -46,7 +45,10 @@ struct AccountTableView: View {
                     }
                     Text(acct.label).font(.subheadline)
                 }
-                Text(probeCaption(probe)).font(.caption2).foregroundStyle(.secondary)
+                Text(identityCaption(acct))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
             Spacer()
             if !isActive {
@@ -60,13 +62,20 @@ struct AccountTableView: View {
         .padding(.vertical, 4)
     }
 
-    private func probeCaption(_ probe: ProbeRow?) -> String {
-        guard let probe else { return "no probe yet" }
-        let age = Date().timeIntervalSince(probe.probedAt)
-        let stale = age > 30 ? " (stale)" : ""
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        let remaining = f.string(from: NSNumber(value: probe.tokensRemaining)) ?? "\(probe.tokensRemaining)"
-        return "\(remaining) tokens left · HTTP \(probe.httpStatus)\(stale)"
+    // identityCaption is the account's Claude identity line: email and,
+    // when known, the organization. Empty/absent identity (legacy rows
+    // added before identity capture) prompts a re-add rather than showing
+    // a blank line.
+    private func identityCaption(_ acct: AccountRow) -> String {
+        switch (acct.email, acct.organizationName) {
+        case let (email?, org?):
+            return "\(email) · \(org)"
+        case let (email?, nil):
+            return email
+        case let (nil, org?):
+            return org
+        default:
+            return "identity not captured — re-run `aimonitor add`"
+        }
     }
 }
