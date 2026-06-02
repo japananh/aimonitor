@@ -147,6 +147,7 @@ See [`docs/security.md`](docs/security.md) for the full threat model.
 Directional, not committed.
 
 - **v1.1:** daily usage chart, cost estimation per account, notarized macOS app.
+- **v1.2 (contingent on v1.1 notarization):** submit to `homebrew/cask` so `brew install aimonitor` works without tapping a third-party repo.
 - **v2.0:** Ubuntu GTK menu bar widget, second `Provider` implementation (Codex or Copilot CLI).
 
 ## Uninstall
