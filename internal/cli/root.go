@@ -1,8 +1,9 @@
 package cli
 
 import (
-	"github.com/japananh/aimonitor/internal/version"
 	"github.com/spf13/cobra"
+
+	"github.com/japananh/aimonitor/internal/version"
 )
 
 // NewRootCmd returns the top-level cobra command with every aimonitor
@@ -21,6 +22,7 @@ It is local-first, has no telemetry, and never phones home.`,
 
 	root.AddCommand(
 		newAddCmd(),
+		newRemoveCmd(),
 		newListCmd(),
 		newSwitchCmd(),
 		newStatusCmd(),
