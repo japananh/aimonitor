@@ -8,10 +8,12 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/spf13/cobra"
+
+	"github.com/japananh/aimonitor/internal/claudeconfig"
 	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/provider/claude"
 	"github.com/japananh/aimonitor/internal/store"
-	"github.com/spf13/cobra"
 )
 
 func newAddCmd() *cobra.Command {
@@ -73,21 +75,69 @@ func runAdd(ctx context.Context, cmd *cobra.Command, s *store.Store, p provider.
 		return err
 	}
 
+	// cc reads/writes ~/.claude.json so we can capture the new account's
+	// identity (email/org) and keep the live file consistent. Best-effort:
+	// a setup without ~/.claude.json (headless, unusual install) still adds
+	// the account, just with empty identity until a later switch backfills.
+	cc, ccErr := claudeconfig.New()
+
 	var cred provider.Credential
+	var ident store.Account // carries Email / OrganizationUUID / OrganizationName
 	var err error
+
 	if adoptCurrent {
 		fmt.Fprintf(cmd.OutOrStdout(), "Adopting current Claude Code-credentials as %q…\n", label)
 		cred, err = claude.AdoptCurrent(ctx)
+		if err != nil {
+			return err
+		}
+		// The live claude.json identity IS the account being adopted.
+		ident = resolveIdentity(ctx, cmd, cc, ccErr, email)
 	} else {
+		// Snapshot the previously-active identity BEFORE the user logs in,
+		// so we can restore ~/.claude.json afterward (add must leave the
+		// live account untouched).
+		var prevOA *claudeconfig.OAuthAccount
+		if ccErr == nil {
+			prevOA, _ = cc.ReadOAuthAccount(ctx)
+		}
+
 		// p.OnboardingFlow is the legacy entry point and is no-op now
-		// (Claude Code 2.x dropped `claude login` as a subcommand).
-		// Use the new poll-the-slot capture flow instead.
+		// (Claude Code 2.x dropped `claude login` as a subcommand). Use the
+		// poll-the-slot capture flow instead. On return the keychain is
+		// already restored to the previous account; ~/.claude.json still
+		// reflects the just-logged-in (new) account.
 		cred, err = claude.CaptureNew(ctx, cmd.OutOrStdout(), claude.CaptureOpts{NewLabel: label})
-	}
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
+
+		// Read the new account's identity, then restore the previous
+		// identity so the live account is fully back to where it started.
+		ident = resolveIdentity(ctx, cmd, cc, ccErr, email)
+		if ccErr == nil && prevOA != nil {
+			if restoreErr := cc.WriteOAuthAccount(ctx, *prevOA); restoreErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: restore previous ~/.claude.json identity: %v\n", restoreErr)
+			}
+		}
 	}
 	defer cred.Zero()
+
+	// Identity-level dedup: if this Claude account (email+org) is already
+	// registered under another label, refresh that entry's credential +
+	// identity instead of creating a duplicate. Mirrors claude-bar.
+	if ident.Email != "" {
+		if existing, dErr := s.GetAccountByIdentity(ctx, ident.Email, ident.OrganizationUUID); dErr == nil {
+			if err := claude.StashCredential(ctx, existing.KeyringRef, cred); err != nil {
+				return fmt.Errorf("refresh stash for existing account %q: %w", existing.Label, err)
+			}
+			_ = s.UpdateAccountIdentity(ctx, existing.ID, ident.Email, ident.OrganizationUUID, ident.OrganizationName)
+			fmt.Fprintf(cmd.OutOrStdout(), "Account %s is already registered as %q — refreshed its credentials.\n", ident.Email, existing.Label)
+			return nil
+		} else if !errors.Is(dErr, store.ErrAccountNotFound) {
+			return dErr
+		}
+	}
 
 	ref := uuid.NewString()
 	if err := claude.StashCredential(ctx, ref, cred); err != nil {
@@ -95,9 +145,11 @@ func runAdd(ctx context.Context, cmd *cobra.Command, s *store.Store, p provider.
 	}
 
 	acct, err := s.CreateAccount(ctx, store.Account{
-		Label:      label,
-		Email:      email,
-		KeyringRef: ref,
+		Label:            label,
+		Email:            ident.Email,
+		OrganizationUUID: ident.OrganizationUUID,
+		OrganizationName: ident.OrganizationName,
+		KeyringRef:       ref,
 	})
 	if err != nil {
 		// Roll back the stash so we don't leak orphan keyring entries.
@@ -105,12 +157,35 @@ func runAdd(ctx context.Context, cmd *cobra.Command, s *store.Store, p provider.
 		return fmt.Errorf("create account row: %w", err)
 	}
 
-	// Silence the unused-import lint when --adopt-current is the only path
-	// hit in tests (provider is fetched via withRuntime but not used here).
+	// Silence the unused-parameter lint when --adopt-current is the only
+	// path hit in tests (provider is fetched via withRuntime but not used).
 	_ = p
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Account %q added (id=%d). Use `aimonitor switch %s` to make it active.\n", acct.Label, acct.ID, acct.Label)
 	return nil
+}
+
+// resolveIdentity reads the active account identity from ~/.claude.json,
+// falling back to the --email flag when the file has no oauthAccount (or
+// can't be read). Returns a partially-filled store.Account carrying just
+// the identity fields. Never errors — identity is best-effort metadata.
+func resolveIdentity(ctx context.Context, cmd *cobra.Command, cc *claudeconfig.Store, ccErr error, emailFlag string) store.Account {
+	if ccErr != nil {
+		return store.Account{Email: emailFlag}
+	}
+	oa, err := cc.ReadOAuthAccount(ctx)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: read ~/.claude.json identity: %v\n", err)
+		return store.Account{Email: emailFlag}
+	}
+	if oa == nil || oa.EmailAddress == "" {
+		return store.Account{Email: emailFlag}
+	}
+	return store.Account{
+		Email:            oa.EmailAddress,
+		OrganizationUUID: oa.OrganizationUUID,
+		OrganizationName: oa.OrganizationName,
+	}
 }
 
 func promptLine(cmd *cobra.Command, prompt string) (string, error) {
