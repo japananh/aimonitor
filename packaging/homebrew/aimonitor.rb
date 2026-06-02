@@ -16,7 +16,7 @@
 #     brew install --cask ./packaging/homebrew/aimonitor.rb
 
 cask "aimonitor" do
-  version "1.0.0-beta.3"
+  version "1.0.0-beta.4"
   sha256 :no_check
 
   url "https://github.com/japananh/aimonitor/releases/download/v#{version}/aimonitor_#{version}_darwin_universal.tar.gz"
@@ -30,23 +30,30 @@ cask "aimonitor" do
   binary "aimonitor"
   app "AIMonitor.app"
 
+  # Register the daemon to start at login during install so the menu bar
+  # shows live data immediately. must_succeed:false keeps a headless or
+  # quarantine-blocked install from failing — the user can run the same
+  # command from the caveats. Re-runs on every `brew upgrade`, so the
+  # LaunchAgent's recorded binary path self-heals across versions.
+  postflight do
+    system_command "#{staged_path}/aimonitor",
+                   args: ["config", "set", "autostart", "true"],
+                   must_succeed: false
+  end
+
   caveats <<~EOS
-    aimonitor is unsigned in this beta. macOS Gatekeeper will refuse the
-    first launch. Clear the quarantine attribute once with:
+    The aimonitor daemon is registered to start at login during install,
+    so the menu bar shows live data right away. Opt out any time with:
+
+      aimonitor config set autostart false
+
+    The menu bar app is unsigned in this beta — macOS Gatekeeper blocks
+    the first GUI launch. Clear it once:
 
       xattr -dr com.apple.quarantine /Applications/AIMonitor.app
 
-    Then start the menu bar widget from /Applications, or run
-
-      aimonitor daemon run
-
-    to start the headless watcher (useful for SSH / headless setups).
-    Enable autostart at login with:
-
-      aimonitor config set autostart true
-
-    Uninstall removes the LaunchAgent + binary. To also drop the
-    SQLite DB and aimonitor keyring entries, run BEFORE `brew uninstall`:
+    For COMPLETE removal — including saved logins in your Keychain, the
+    database, and config — run this BEFORE `brew uninstall`:
 
       aimonitor uninstall --purge
   EOS
@@ -60,6 +67,8 @@ cask "aimonitor" do
             quit:       "dev.aimonitor.AIMonitor",
             login_item: "dev.aimonitor.AIMonitor"
 
+  # Sweeps every user-visible FILE. Keychain stashes aren't here — a cask
+  # can't enumerate them; `aimonitor uninstall --purge` handles those.
   zap trash: [
     "~/Library/Application Support/aimonitor",
     "~/Library/Logs/aimonitor",
@@ -67,5 +76,7 @@ cask "aimonitor" do
     "~/Library/Preferences/dev.aimonitor.AIMonitor.plist",
     "~/Library/LaunchAgents/dev.aimonitor.daemon.plist",
     "~/.config/aimonitor",
+    "~/.aimonitor",
+    "~/.aimonitor-lock",
   ]
 end

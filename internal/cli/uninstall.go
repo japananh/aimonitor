@@ -6,16 +6,18 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/japananh/aimonitor/internal/config"
 	"github.com/japananh/aimonitor/internal/install"
 	"github.com/japananh/aimonitor/internal/provider/claude"
 	"github.com/japananh/aimonitor/internal/store"
-	"github.com/spf13/cobra"
 )
 
 func newUninstallCmd() *cobra.Command {
@@ -127,8 +129,42 @@ func runUninstall(cmd *cobra.Command, purge, yes bool) error {
 		fmt.Fprintln(out, "config YAML removed")
 	}
 
+	// Step 5: drop the stray runtime files aimonitor scatters outside the
+	// DB/config — the switch file lock, the post-swap log dir, and (on
+	// macOS) the daemon log dir + the widget's UserDefaults plist. This
+	// makes `aimonitor uninstall --purge` a complete superset of what the
+	// Homebrew cask `zap` removes, so either path leaves nothing behind.
+	for _, p := range purgeExtraPaths() {
+		if err := os.RemoveAll(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(errOut, "warning: remove %s: %v\n", p, err)
+		}
+	}
+	fmt.Fprintln(out, "runtime files removed")
+
 	fmt.Fprintln(out, "Done. Claude Code-credentials keyring slot left untouched.")
 	return nil
+}
+
+// purgeExtraPaths lists the stray files/dirs aimonitor creates outside
+// its DB + config, for --purge to remove. Missing entries are fine —
+// the caller tolerates os.ErrNotExist. The shared Claude Code-credentials
+// keychain slot is deliberately NOT included.
+func purgeExtraPaths() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	paths := []string{
+		filepath.Join(home, ".aimonitor-lock"), // switch file lock
+		filepath.Join(home, ".aimonitor"),      // post-swap.log + dir
+	}
+	if runtime.GOOS == "darwin" {
+		paths = append(paths,
+			filepath.Join(home, "Library", "Logs", "aimonitor"),
+			filepath.Join(home, "Library", "Preferences", "dev.aimonitor.AIMonitor.plist"),
+		)
+	}
+	return paths
 }
 
 // terminateOrphanDaemons SIGTERMs any `aimonitor daemon` process AND
