@@ -34,16 +34,20 @@ import (
 //     jittered) only while the active account's 5-hour utilization is
 //     ≥ 90 %. Below that the user has nothing they need to react to in
 //     under five minutes.
-//   - **Exponential backoff on errors, capped at 1 hour.** Any 4xx (other
-//     than 401, which is a re-auth event surfaced separately) or 5xx
+//   - **Exponential backoff on errors, capped at 1 hour.** Any 4xx or 5xx
 //     doubles the next interval. A buggy build cannot accidentally
 //     hammer the API; the worst case is one fetch per hour.
 //
-// 401 (UsageAuthError) and 429 (UsageThrottledError) are reserved
-// classifications that the scheduler treats differently:
-//   - 401 stops further fetches for the affected credential until the
-//     daemon restarts (re-auth needed).
-//   - 429 forces the backoff to its maximum immediately.
+// Token-auth outcomes are handled without ever permanently halting:
+//   - **401 triggers a refresh, not a halt.** An expired access token is
+//     refreshed in place via the account's refresh token (under the switch
+//     lock, after a cache-bypassed re-read so we defer to whatever Claude
+//     Code or another tool last wrote) and the fetch is retried. Only a
+//     401 that survives a fresh access token, or a rejected *refresh*
+//     token, backs the schedule off to the 1-hour cap — and even then it
+//     keeps retrying hourly, so usage self-heals once a valid token
+//     reappears (the user re-runs `claude`, or re-adds the account).
+//   - **429 forces the backoff to its maximum immediately.**
 type UsageScheduler struct {
 	Store    *store.Store
 	Provider provider.Provider
@@ -81,6 +85,14 @@ type UsageScheduler struct {
 	// account's label and freshly-persisted Limits. Used to trigger the
 	// AutoSwapper decision. Nil disables the hook.
 	AfterFetch func(ctx context.Context, activeLabel string)
+
+	// RefreshActive, when set, ensures the live credential holds a valid
+	// access token before each fetch — refreshing it under the switch lock
+	// when expired (force=false) or after a 401 (force=true) — and returns
+	// the credential now in the live slot, so the fetch uses exactly that
+	// blob. Nil disables refresh (tests, or a provider with no token
+	// endpoint); tickOnce then reads the live credential directly.
+	RefreshActive func(ctx context.Context, acct store.Account, force bool) (provider.Credential, error)
 
 	// rand is seeded per-scheduler so tests can substitute a deterministic
 	// source. Default uses the package math/rand/v2 global source.
@@ -138,25 +150,34 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 	defer timer.Stop()
 
 	currentBackoff := u.Baseline
-	authDenied := false
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-timer.C:
-			// 401 latches: stop hitting Anthropic until restart.
-			if authDenied {
-				timer.Reset(u.MaxBackoff)
-				continue
-			}
 			err := u.tickOnce(ctx)
 			next := u.Baseline
 			switch {
-			case claude.IsAuthError(err):
-				authDenied = true
+			case claude.IsRefreshExpired(err):
+				// The refresh token was rejected. This is either a genuinely
+				// dead token (user must re-login via `aimonitor add`) or a
+				// transient cross-tool rotation race — Claude Code or a second
+				// menu-bar app refreshed first, invalidating the token we held.
+				// One failure can't tell them apart, so back off to the cap and
+				// keep retrying hourly rather than permanently halting: usage
+				// self-heals once a valid token reappears, and an hourly retry
+				// never looks like abuse.
+				currentBackoff = u.MaxBackoff
 				next = u.MaxBackoff
-				fmt.Fprintf(os.Stderr, "usage: auth denied, halting background fetches: %v\n", err)
+				fmt.Fprintf(os.Stderr, "usage: token refresh rejected; retrying in %v (re-login with `aimonitor add` if usage stays blank): %v\n", next, err)
+			case claude.IsAuthError(err):
+				// A 401 that survived a forced token refresh — the account
+				// looks deauthorized server-side. Back off hard and retry
+				// hourly; do not latch.
+				currentBackoff = u.MaxBackoff
+				next = u.MaxBackoff
+				fmt.Fprintf(os.Stderr, "usage: auth rejected after refresh; retrying in %v: %v\n", next, err)
 			case claude.IsThrottledError(err):
 				// A 429 is often a transient burst limit (e.g. another tool
 				// — or claude-bar — polling the same /api/oauth/usage
@@ -201,16 +222,34 @@ func (u *UsageScheduler) tickOnce(ctx context.Context) error {
 		return nil
 	}
 
-	cred, err := u.Provider.ActiveCredential(ctx)
+	cred, err := u.liveCredential(ctx, acct, false)
 	if err != nil {
 		return fmt.Errorf("active credential: %w", err)
 	}
-	defer cred.Zero()
+	// Closure form so the deferred zero covers whatever cred points at when
+	// tickOnce returns, including a credential swapped in by the 401 retry.
+	defer func() { cred.Zero() }()
 	if len(cred.Bytes) == 0 {
 		return nil
 	}
 
 	limits, err := u.Fetcher.FetchLimits(ctx, cred)
+	if claude.IsAuthError(err) && u.RefreshActive != nil {
+		// The live token was rejected even though we didn't refresh it (it
+		// looked unexpired, or expiresAt was absent). Force one refresh and
+		// retry — recovers a revoked token or a blob with a wrong expiry,
+		// without the permanent halt the old code applied on any 401.
+		fresh, rerr := u.RefreshActive(ctx, acct, true)
+		if rerr != nil {
+			return rerr
+		}
+		cred.Zero()
+		cred = fresh
+		if len(cred.Bytes) == 0 {
+			return nil
+		}
+		limits, err = u.Fetcher.FetchLimits(ctx, cred)
+	}
 	if err != nil {
 		return err
 	}
@@ -225,6 +264,17 @@ func (u *UsageScheduler) tickOnce(ctx context.Context) error {
 		u.AfterFetch(ctx, acct.Label)
 	}
 	return nil
+}
+
+// liveCredential returns the live credential for acct with a valid access
+// token. When RefreshActive is wired it refreshes-if-expired under the
+// switch lock (force passed through); otherwise it falls back to a direct
+// read of the live slot (tests / providers with no token endpoint).
+func (u *UsageScheduler) liveCredential(ctx context.Context, acct store.Account, force bool) (provider.Credential, error) {
+	if u.RefreshActive != nil {
+		return u.RefreshActive(ctx, acct, force)
+	}
+	return u.Provider.ActiveCredential(ctx)
 }
 
 // activeAccount finds the account row whose stashed credential bytes
