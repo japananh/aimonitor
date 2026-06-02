@@ -8,6 +8,7 @@
 // content panel with a progress bar + table. NSPopover is well-trodden.
 
 import AppKit
+import Combine
 import SwiftUI
 
 @main
@@ -31,10 +32,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private var preferencesWindow: NSWindow?
     private let model = AppModel()
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupPopover()
+        // Keep the menu-bar title in sync with the active account. status
+        // carries active_label and accounts carries the identity, so the
+        // title (icon + account name) recomputes whenever either changes.
+        model.$status.combineLatest(model.$accounts)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _, _ in self?.updateStatusTitle() }
+            .store(in: &cancellables)
         Task { @MainActor in self.model.start() }
     }
 
@@ -47,9 +56,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.image = NSImage(systemSymbolName: "chart.bar.fill",
                                    accessibilityDescription: "AIMonitor")
             button.image?.isTemplate = true
+            // Keep the icon to the left of the title text (account name).
+            button.imagePosition = .imageLeading
             button.action = #selector(togglePopover(_:))
             button.target = self
         }
+    }
+
+    // updateStatusTitle shows the active account name to the right of the
+    // menu-bar icon. Empty title → icon only (no active account, or the
+    // daemon hasn't published yet). A leading space separates the glyph
+    // from the text since imagePosition gives no built-in padding.
+    private func updateStatusTitle() {
+        guard let button = statusItem.button else { return }
+        let name = model.activeDisplayName
+        button.title = name.isEmpty ? "" : " \(name)"
     }
 
     private func setupPopover() {

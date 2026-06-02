@@ -17,6 +17,15 @@ struct SessionBarView: View {
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            // Claude identity of the active account: email (and the label
+            // is the headline above). Hidden when identity isn't captured
+            // so the header doesn't grow a blank line.
+            if let email = model.activeEmail {
+                Text(email)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
             ProgressView(value: clampedPercent / 100.0)
                 .tint(barColor)
                 .progressViewStyle(.linear)

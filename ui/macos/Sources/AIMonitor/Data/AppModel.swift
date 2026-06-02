@@ -24,6 +24,25 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// activeEmail is the Claude email of the currently-active account,
+    /// resolved by joining the daemon's active_label against the accounts
+    /// table. nil when there's no active account or its identity hasn't
+    /// been captured yet (legacy rows added before identity capture).
+    var activeEmail: String? {
+        guard let label = status?.active_label, !label.isEmpty else { return nil }
+        guard let acct = accounts.first(where: { $0.label == label }) else { return nil }
+        if let email = acct.email, !email.isEmpty { return email }
+        return nil
+    }
+
+    /// activeDisplayName is what the menu-bar title and popover header show
+    /// for the active account: its email when known, else the label. Empty
+    /// only when no account is active.
+    var activeDisplayName: String {
+        guard let label = status?.active_label, !label.isEmpty else { return "" }
+        return activeEmail ?? label
+    }
+
     private let dbPath: String
     private var timer: AnyCancellable?
     private let workQueue = DispatchQueue(label: "dev.aimonitor.dbpoll", qos: .utility)
