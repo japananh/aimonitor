@@ -127,9 +127,10 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 
 		usage := &UsageScheduler{
-			Store:    s.store,
-			Provider: s.provider,
-			Fetcher:  claude.NewUsageFetcher(),
+			Store:         s.store,
+			Provider:      s.provider,
+			Fetcher:       claude.NewUsageFetcher(),
+			RefreshActive: switcher.RefreshActive,
 			AfterFetch: func(ctx context.Context, label string) {
 				if _, err := autoSwap.MaybeSwap(ctx, label); err != nil {
 					fmt.Fprintf(os.Stderr, "auto-swap: %v\n", err)

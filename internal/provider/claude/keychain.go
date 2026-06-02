@@ -180,6 +180,21 @@ func StashCredential(ctx context.Context, ref string, cred provider.Credential) 
 	return k.writeStash(ctx, ref, cred)
 }
 
+// ReadActiveFresh reads Claude Code's live credential slot, bypassing the
+// in-memory cache so the caller sees any token another process — Claude
+// Code itself, or a second credential manager on the same account — has
+// written since our last cached read. Used before a token refresh so we
+// don't spend a refresh-endpoint call (and risk a refresh-token rotation
+// race) when a still-valid token already sits in the slot.
+func ReadActiveFresh(ctx context.Context) (provider.Credential, error) {
+	k, err := sharedOps()
+	if err != nil {
+		return provider.Credential{}, err
+	}
+	k.cache.invalidate(cacheKey(ClaudeCodeService, k.user))
+	return k.readActive(ctx)
+}
+
 // RetrieveStash reads the credential previously written under ref.
 // Returns secret.ErrNotFound when missing.
 func RetrieveStash(ctx context.Context, ref string) (provider.Credential, error) {

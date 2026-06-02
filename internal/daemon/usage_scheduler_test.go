@@ -110,6 +110,95 @@ func TestUsageScheduler_TickOnce_AuthError(t *testing.T) {
 	}
 }
 
+// When RefreshActive is wired, a 401 on the first fetch must trigger a
+// forced refresh and a retry rather than failing the tick — the recovery
+// path that replaces the old permanent halt. The fake server 401s once
+// then succeeds, standing in for "stale access token → refresh → valid".
+func TestUsageScheduler_TickOnce_AuthError_RefreshRecovers(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			http.Error(w, "expired", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"five_hour": {"utilization": 33.0, "resets_at": "2026-05-31T23:00:00Z"},
+			"seven_day": {"utilization": 10.0, "resets_at": "2026-06-07T00:00:00Z"}
+		}`))
+	}))
+	defer srv.Close()
+
+	st := openStore(t)
+	acct, _ := st.CreateAccount(context.Background(), store.Account{Label: "p", KeyringRef: "ref"})
+	fp := &fakeProvider{}
+	fp.active = provider.Credential{Bytes: append([]byte(nil), goodCred...)}
+
+	var forcedRefresh bool
+	u := &UsageScheduler{
+		Store:    st,
+		Provider: fp,
+		Fetcher:  &claude.UsageFetcher{BaseURL: srv.URL, HTTP: srv.Client()},
+		ResolveActive: func(_ context.Context) (store.Account, bool, error) {
+			return acct, true, nil
+		},
+		RefreshActive: func(_ context.Context, _ store.Account, force bool) (provider.Credential, error) {
+			if force {
+				forcedRefresh = true
+			}
+			return provider.Credential{Bytes: append([]byte(nil), goodCred...)}, nil
+		},
+	}
+	if err := u.tickOnce(context.Background()); err != nil {
+		t.Fatalf("tickOnce should recover via refresh, got: %v", err)
+	}
+	if !forcedRefresh {
+		t.Errorf("expected a forced refresh (force=true) after the 401")
+	}
+	got, err := st.GetLimits(context.Background(), acct.ID)
+	if err != nil {
+		t.Fatalf("GetLimits: %v", err)
+	}
+	if got.FiveHourPct != 33.0 {
+		t.Errorf("limits after recovery = %+v, want 5h=33", got)
+	}
+}
+
+// A dead refresh token surfaces as TokenRefreshExpiredError from the
+// refresh attempt, which tickOnce must propagate unchanged so Run can
+// classify it (back off hourly, never latch).
+func TestUsageScheduler_TickOnce_RefreshExpired(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "expired", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	st := openStore(t)
+	acct, _ := st.CreateAccount(context.Background(), store.Account{Label: "p", KeyringRef: "ref"})
+	fp := &fakeProvider{}
+	fp.active = provider.Credential{Bytes: append([]byte(nil), goodCred...)}
+
+	u := &UsageScheduler{
+		Store:    st,
+		Provider: fp,
+		Fetcher:  &claude.UsageFetcher{BaseURL: srv.URL, HTTP: srv.Client()},
+		ResolveActive: func(_ context.Context) (store.Account, bool, error) {
+			return acct, true, nil
+		},
+		RefreshActive: func(_ context.Context, _ store.Account, force bool) (provider.Credential, error) {
+			if force {
+				return provider.Credential{}, &claude.TokenRefreshExpiredError{Status: http.StatusUnauthorized}
+			}
+			// Proactive read returns the (stale) live credential unchanged.
+			return provider.Credential{Bytes: append([]byte(nil), goodCred...)}, nil
+		},
+	}
+	err := u.tickOnce(context.Background())
+	if !claude.IsRefreshExpired(err) {
+		t.Errorf("want TokenRefreshExpiredError, got %v", err)
+	}
+}
+
 func TestUsageScheduler_Jittered(t *testing.T) {
 	u := &UsageScheduler{Jitter: 10 * time.Second}
 	u.defaults()

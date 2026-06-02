@@ -208,6 +208,101 @@ func (s *Switcher) patchClaudeConfig(ctx context.Context, acct store.Account) er
 	})
 }
 
+// RefreshActive ensures Claude Code's live credential slot holds a
+// non-expired access token, refreshing it via the embedded refresh token
+// when needed. It is the background daemon's analogue of the just-in-time
+// refresh Switch() does for a swap target, but it operates on the already-
+// active account and runs under the same advisory lock so a background
+// refresh can never race a user-initiated or auto swap.
+//
+// acct identifies the active account (resolved by the caller) so the
+// rebuilt blob can be mirrored into that account's stash, keeping the
+// byte-match the scheduler uses to resolve "active" in sync with the slot.
+//
+// force=false (the normal path) refreshes only when the live token is at
+// or past its expiry buffer; an unexpired token returns (cred, nil) with
+// no network call. force=true refreshes unconditionally — used to recover
+// from a 401 the expiry check didn't predict (a revoked token, or a blob
+// whose expiresAt is absent or wrong).
+//
+// To avoid spending refresh-endpoint calls (and tripping Anthropic's abuse
+// classifiers) when another tool — Claude Code itself, or a second menu-bar
+// app — manages the same account, it reads the live slot fresh (cache-
+// bypassed) before refreshing, and on a refresh failure re-reads once more:
+// if a valid token has appeared meanwhile, it adopts that with no error
+// rather than reporting failure for a benign cross-tool rotation race.
+//
+// Returns the current valid live credential; the caller owns zeroing it.
+func (s *Switcher) RefreshActive(ctx context.Context, acct store.Account, force bool) (provider.Credential, error) {
+	lock, err := s.acquireLock()
+	if err != nil {
+		return provider.Credential{}, err
+	}
+	defer func() { _ = lock.Release() }()
+
+	live, err := claude.ReadActiveFresh(ctx)
+	if err != nil {
+		return provider.Credential{}, fmt.Errorf("read live credential: %w", err)
+	}
+	if len(live.Bytes) == 0 {
+		return live, nil // nothing in the slot yet
+	}
+
+	tokens, err := claude.ParseCredential(live)
+	if err != nil {
+		live.Zero()
+		return provider.Credential{}, fmt.Errorf("parse live credential: %w", err)
+	}
+	if !force && !claude.IsExpired(tokens.ExpiresAt) {
+		return live, nil // still valid — no refresh, no network call
+	}
+	if tokens.RefreshToken == "" {
+		live.Zero()
+		return provider.Credential{}, fmt.Errorf("active account %q has no refresh token in the live slot; re-login via `aimonitor add`", acct.Label)
+	}
+
+	fmt.Fprintf(s.stderr(), "usage: refreshing %q's access token...\n", acct.Label)
+	fresh, rerr := s.Refresher.Refresh(ctx, tokens.RefreshToken)
+	if rerr != nil {
+		// Another tool may have rotated the refresh token between our read
+		// and this call. Re-read the live slot: if a valid token is now
+		// present, adopt it — the refresh failed only because we lost a
+		// benign race, not because the account is broken.
+		live.Zero()
+		if relive, e := claude.ReadActiveFresh(ctx); e == nil && len(relive.Bytes) > 0 {
+			if t2, pe := claude.ParseCredential(relive); pe == nil && !claude.IsExpired(t2.ExpiresAt) {
+				return relive, nil
+			}
+			relive.Zero()
+		}
+		return provider.Credential{}, rerr
+	}
+
+	rebuilt, err := claude.ReplaceTokens(live, fresh)
+	live.Zero()
+	if err != nil {
+		return provider.Credential{}, fmt.Errorf("rebuild live credential: %w", err)
+	}
+
+	// Mirror into the active account's stash BEFORE writing the live slot.
+	// The scheduler resolves "active" by byte-matching the live blob against
+	// each stash; if we wrote live first and the stash write then failed,
+	// the two would disagree and resolution would silently break. Writing
+	// the stash first means a failure here aborts before we touch the live
+	// slot, leaving both at their previous (consistent) value to retry.
+	if acct.KeyringRef != "" {
+		if err := claude.StashCredential(ctx, acct.KeyringRef, rebuilt); err != nil {
+			rebuilt.Zero()
+			return provider.Credential{}, fmt.Errorf("mirror refreshed tokens to %q stash: %w", acct.Label, err)
+		}
+	}
+	if err := s.Provider.SetActiveCredential(ctx, rebuilt); err != nil {
+		rebuilt.Zero()
+		return provider.Credential{}, fmt.Errorf("write refreshed live credential: %w", err)
+	}
+	return rebuilt, nil
+}
+
 // ensureFreshTokens returns a credential whose access token is valid for
 // at least the refresh-buffer window. May refresh and rotate.
 func (s *Switcher) ensureFreshTokens(ctx context.Context, acct store.Account, stashed provider.Credential) (provider.Credential, error) {
