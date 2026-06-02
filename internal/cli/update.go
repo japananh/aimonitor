@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -98,7 +99,7 @@ func findBrew() (string, error) {
 	if p, err := exec.LookPath("brew"); err == nil {
 		return p, nil
 	}
-	return "", fmt.Errorf("Homebrew not found (looked in /opt/homebrew/bin, /usr/local/bin, PATH)")
+	return "", errors.New("could not find Homebrew (looked in /opt/homebrew/bin, /usr/local/bin, and PATH)")
 }
 
 func updateLogPath() (string, error) {
