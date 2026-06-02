@@ -45,6 +45,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _, _ in self?.updateStatusTitle() }
             .store(in: &cancellables)
         Task { @MainActor in self.model.start() }
+        // Auto-check for updates shortly after launch when enabled. Silent
+        // (no alert) unless an update is available and not skipped. The delay
+        // keeps startup snappy and lets the daemon settle first.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            self?.checkForUpdates(userInitiated: false)
+        }
+    }
+
+    private func showPreferences() {
+        popover.performClose(nil)
+        if preferencesWindow == nil {
+            let view = PreferencesView(
+                model: model,
+                checkForUpdates: { [weak self] in self?.checkForUpdates(userInitiated: true) }
+            )
+            let host = NSHostingController(rootView: view)
+            let win = NSWindow(contentViewController: host)
+            win.title = "AIMonitor Preferences"
+            win.styleMask = [.titled, .closable]
+            win.isReleasedWhenClosed = false
+            preferencesWindow = win
+        }
+        preferencesWindow?.center()
+        preferencesWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func setupStatusItem() {
@@ -80,7 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let root = PopoverRootView(
             model: model,
             openPreferences: { [weak self] in self?.showPreferences() },
-            quit: { NSApplication.shared.terminate(nil) }
+            quit: { NSApplication.shared.terminate(nil) },
+            renameAccount: { [weak self] label in self?.promptRename(currentLabel: label) }
         )
         popover.contentViewController = NSHostingController(rootView: root)
     }
@@ -108,20 +134,123 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func showPreferences() {
+    // promptRename shows a modal text field pre-filled with the current
+    // label and renames on confirm. NSAlert is used (rather than a SwiftUI
+    // alert inside the popover) because the transient popover dismisses as
+    // soon as the modal takes focus, which would tear down a SwiftUI alert.
+    private func promptRename(currentLabel: String) {
         popover.performClose(nil)
-        if preferencesWindow == nil {
-            let view = PreferencesView(model: model)
-            let host = NSHostingController(rootView: view)
-            let win = NSWindow(contentViewController: host)
-            win.title = "AIMonitor Preferences"
-            win.styleMask = [.titled, .closable]
-            win.isReleasedWhenClosed = false
-            preferencesWindow = win
-        }
-        preferencesWindow?.center()
-        preferencesWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "Rename account"
+        alert.informativeText = "New name for “\(currentLabel)”:"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = currentLabel
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let newLabel = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !newLabel.isEmpty, newLabel != currentLabel {
+                model.rename(label: currentLabel, to: newLabel)
+            }
+        }
+    }
+
+    // checkForUpdates queries GitHub via the CLI on a background queue, then
+    // prompts on the main thread. userInitiated=true also reports "up to
+    // date" and errors; the automatic (launch) check is silent unless a new,
+    // non-skipped version is available.
+    private func checkForUpdates(userInitiated: Bool) {
+        DispatchQueue.global(qos: .utility).async {
+            let result = Result { try CLIBridge.checkUpdate() }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch result {
+                case .failure(let err):
+                    if userInitiated { self.presentUpdateError(err) }
+                case .success(let info):
+                    if !info.available {
+                        if userInitiated { self.presentUpToDate(info.current) }
+                        return
+                    }
+                    if !userInitiated, self.isSkipped(info.latest) { return }
+                    self.presentUpdate(info)
+                }
+            }
+        }
+    }
+
+    private func presentUpdate(_ info: CLIBridge.UpdateCheck) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Update available"
+        var body = "A new version of AIMonitor is available.\n\nInstalled: \(info.current)\nLatest: \(info.latest)"
+        if let notes = info.notes, !notes.isEmpty {
+            body += "\n\n\(notes.prefix(400))"
+        }
+        alert.informativeText = body
+        alert.addButton(withTitle: "Install")          // .alertFirstButtonReturn
+        alert.addButton(withTitle: "Later")             // .alertSecondButtonReturn
+        alert.addButton(withTitle: "Skip This Version") // .alertThirdButtonReturn
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            self.startInstall(latest: info.latest, url: info.url)
+        case .alertThirdButtonReturn:
+            self.setSkipped(info.latest)
+        default:
+            break // Later: do nothing
+        }
+    }
+
+    private func startInstall(latest: String, url: String) {
+        do {
+            try CLIBridge.installUpdate()
+            let done = NSAlert()
+            done.messageText = "Updating to \(latest)"
+            done.informativeText = "The update is downloading in the background. AIMonitor will quit and relaunch automatically when it finishes."
+            done.addButton(withTitle: "OK")
+            done.runModal()
+        } catch {
+            // Homebrew missing or spawn failed — fall back to the releases page.
+            let a = NSAlert()
+            a.messageText = "Couldn’t start the update"
+            a.informativeText = "\(error.localizedDescription)\n\nOpening the releases page so you can update manually."
+            a.addButton(withTitle: "Open Releases")
+            a.addButton(withTitle: "Cancel")
+            if a.runModal() == .alertFirstButtonReturn, let u = URL(string: url) {
+                NSWorkspace.shared.open(u)
+            }
+        }
+    }
+
+    private func presentUpToDate(_ current: String) {
+        let a = NSAlert()
+        a.messageText = "You’re up to date"
+        a.informativeText = "AIMonitor \(current) is the latest version."
+        a.addButton(withTitle: "OK")
+        a.runModal()
+    }
+
+    private func presentUpdateError(_ err: Error) {
+        let a = NSAlert()
+        a.messageText = "Couldn’t check for updates"
+        a.informativeText = err.localizedDescription
+        a.addButton(withTitle: "OK")
+        a.runModal()
+    }
+
+    private func isSkipped(_ version: String) -> Bool {
+        (try? CLIBridge.configGet("update.skipped_version")) == version
+    }
+
+    private func setSkipped(_ version: String) {
+        try? CLIBridge.configSet("update.skipped_version", version)
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -35,12 +35,15 @@ final class AppModel: ObservableObject {
         return nil
     }
 
-    /// activeDisplayName is what the menu-bar title and popover header show
-    /// for the active account: its email when known, else the label. Empty
-    /// only when no account is active.
+    /// activeDisplayName is the active account's NAME for the menu-bar title
+    /// (e.g. "Gem 2") — the user-facing label, which is more legible beside
+    /// the icon than the full email. The popover header still shows the
+    /// email via activeEmail. Empty only when no account is active. Updates
+    /// on a switch (active_label changes) and on a rename (the daemon
+    /// republishes the new label within a tick).
     var activeDisplayName: String {
         guard let label = status?.active_label, !label.isEmpty else { return "" }
-        return activeEmail ?? label
+        return label
     }
 
     private let dbPath: String
@@ -106,6 +109,20 @@ final class AppModel: ObservableObject {
         q.async {
             do {
                 try CLIBridge.switchTo(label: label)
+                Task { @MainActor in await self.refresh() }
+            } catch {
+                Task { @MainActor in self.lastError = "\(error)" }
+            }
+        }
+    }
+
+    /// Renames an account on a background queue, then refreshes so the row
+    /// (and the menu-bar title, if this was the active account) updates.
+    func rename(label: String, to newLabel: String) {
+        let q = workQueue
+        q.async {
+            do {
+                try CLIBridge.rename(from: label, to: newLabel)
                 Task { @MainActor in await self.refresh() }
             } catch {
                 Task { @MainActor in self.lastError = "\(error)" }

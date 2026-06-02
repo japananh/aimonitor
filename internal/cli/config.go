@@ -23,17 +23,36 @@ func applyAutostart(enable bool) error {
 	return install.DisableAutostart()
 }
 
+// Update-related settings, SQLite-backed like the auto_swap.* family. The
+// menu-bar widget reads/writes these to gate its update checks; the daemon
+// does not consume them.
+const (
+	// SettingsKeyAutoUpdateEnabled gates the widget's automatic update
+	// checks (check-and-notify; never an unattended install).
+	SettingsKeyAutoUpdateEnabled = "auto_update.enabled"
+	// SettingsKeyUpdateSkippedVersion records a release the user chose to
+	// skip, so the widget stops prompting for that one version.
+	SettingsKeyUpdateSkippedVersion = "update.skipped_version"
+)
+
+// defaultAutoUpdateEnabled is the fallback when auto_update.enabled is
+// unset: checking for updates is safe (no install), so default it on.
+const defaultAutoUpdateEnabled = true
+
 // configKeys is the canonical set of keys `aimonitor config` exposes.
 // Two storage backends sit behind them:
 //   - autostart lives in the YAML config (and drives the LaunchAgent).
-//   - the auto_swap.* keys live in the SQLite settings table, which is
-//     where the daemon's AutoSwapper actually reads them — so a `config
-//     set` takes effect on the running daemon's next tick, no restart.
+//   - the auto_swap.* / auto_update.* / update.* keys live in the SQLite
+//     settings table, which is where the daemon's AutoSwapper and the
+//     menu-bar widget read them — so a `config set` takes effect without a
+//     restart.
 var configKeys = []string{
 	"autostart",
 	daemon.SettingsKeyAutoSwapEnabled,
 	daemon.SettingsKeyAutoSwapThreshold,
 	daemon.SettingsKeyAutoSwapGrace,
+	SettingsKeyAutoUpdateEnabled,
+	SettingsKeyUpdateSkippedVersion,
 }
 
 // deprecatedKeys maps retired keys to their replacement. They drove the
@@ -52,7 +71,9 @@ func isStoreKey(key string) bool {
 	switch key {
 	case daemon.SettingsKeyAutoSwapEnabled,
 		daemon.SettingsKeyAutoSwapThreshold,
-		daemon.SettingsKeyAutoSwapGrace:
+		daemon.SettingsKeyAutoSwapGrace,
+		SettingsKeyAutoUpdateEnabled,
+		SettingsKeyUpdateSkippedVersion:
 		return true
 	}
 	return false
@@ -226,6 +247,16 @@ func validateStoreValue(key, value string) (string, error) {
 			return "", fmt.Errorf("%s: must be >= 0, got %d", key, n)
 		}
 		return strconv.Itoa(n), nil
+	case SettingsKeyAutoUpdateEnabled:
+		b, err := parseBool(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.FormatBool(b), nil
+	case SettingsKeyUpdateSkippedVersion:
+		// A version tag the widget should stop prompting for. Free-form
+		// (a tag string); empty clears it.
+		return strings.TrimSpace(value), nil
 	}
 	return "", unknownConfigKey(key)
 }
@@ -238,6 +269,10 @@ func storeKeyDefault(key string) string {
 		return strconv.FormatFloat(daemon.DefaultAutoSwapThreshold, 'f', -1, 64)
 	case daemon.SettingsKeyAutoSwapGrace:
 		return strconv.Itoa(daemon.DefaultAutoSwapGraceSec)
+	case SettingsKeyAutoUpdateEnabled:
+		return strconv.FormatBool(defaultAutoUpdateEnabled)
+	case SettingsKeyUpdateSkippedVersion:
+		return ""
 	}
 	return ""
 }

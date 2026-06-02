@@ -8,6 +8,9 @@ struct PopoverRootView: View {
     @ObservedObject var model: AppModel
     let openPreferences: () -> Void
     let quit: () -> Void
+    // Invoked with an account's label to start a rename (app delegate shows
+    // the modal prompt). nil hides the rename affordance.
+    var renameAccount: ((String) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,7 +25,7 @@ struct PopoverRootView: View {
             }
             if model.showAccountPanel {
                 Divider()
-                AccountTableView(model: model)
+                AccountTableView(model: model, renameAccount: renameAccount)
             }
             Divider()
             HStack {
