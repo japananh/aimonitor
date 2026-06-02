@@ -254,7 +254,13 @@ func (s *Switcher) RefreshActive(ctx context.Context, acct store.Account, force 
 		return provider.Credential{}, fmt.Errorf("parse live credential: %w", err)
 	}
 	if !force && !claude.IsExpired(tokens.ExpiresAt) {
-		return live, nil // still valid — no refresh, no network call
+		// Live token is valid and we're not forcing a refresh. If the active
+		// account's stash has drifted from the live blob (Claude Code or
+		// another tool rotated the live token), re-mirror it so byte-match
+		// resolution recovers and the stash keeps a current refresh token
+		// for a future switch back. No network call either way.
+		s.healStash(ctx, acct, live)
+		return live, nil // still valid — no refresh
 	}
 	if tokens.RefreshToken == "" {
 		live.Zero()
@@ -301,6 +307,27 @@ func (s *Switcher) RefreshActive(ctx context.Context, acct store.Account, force 
 		return provider.Credential{}, fmt.Errorf("write refreshed live credential: %w", err)
 	}
 	return rebuilt, nil
+}
+
+// healStash re-mirrors the live blob into acct's stash when the two have
+// drifted apart — keeping byte-match resolution working and the stash's
+// refresh token current for a future switch back. Best-effort: a read or
+// write failure is logged and ignored (the live slot is untouched). No-op
+// when they already match. Caller holds the switch lock.
+func (s *Switcher) healStash(ctx context.Context, acct store.Account, live provider.Credential) {
+	if acct.KeyringRef == "" || len(live.Bytes) == 0 {
+		return
+	}
+	if stash, err := claude.RetrieveStash(ctx, acct.KeyringRef); err == nil {
+		drifted := !bytes.Equal(stash.Bytes, live.Bytes)
+		stash.Zero()
+		if !drifted {
+			return
+		}
+	}
+	if err := claude.StashCredential(ctx, acct.KeyringRef, live); err != nil {
+		fmt.Fprintf(s.stderr(), "warning: re-sync %q stash to live blob: %v\n", acct.Label, err)
+	}
 }
 
 // ensureFreshTokens returns a credential whose access token is valid for

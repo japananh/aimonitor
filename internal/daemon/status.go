@@ -9,6 +9,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/japananh/aimonitor/internal/claudeconfig"
+	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/provider/claude"
 	"github.com/japananh/aimonitor/internal/store"
 )
@@ -153,46 +155,84 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 	_ = p.Store.PutSetting(ctx, store.SettingsKeyDaemonStatus, string(b))
 }
 
-// resolveActiveLabel is the default ActiveLabel resolver: byte-match the
-// live keyring slot against known stashes. Mirrors the logic in
-// AutoSwitcher.evaluateAndSwitch but tolerates errors silently — a
-// blank label is acceptable for the widget; it just shows "—".
+// resolveActiveLabel is the default ActiveLabel resolver for the
+// StatusPublisher: it returns the label of the active account, or "" when
+// none resolves (fresh install, or an unreadable keyring). The
+// claudeconfig handle is built once here and captured, so the per-tick
+// resolver doesn't re-resolve the home dir on every 2s poll.
 func resolveActiveLabel(s *Server) func(ctx context.Context) string {
+	cc, _ := claudeconfig.New() // nil when home is unresolvable → byte-match only
 	return func(ctx context.Context) string {
-		label, err := s.activeAccountLabel(ctx)
-		if err != nil {
+		acct, found, err := resolveActiveAccount(ctx, s.store, s.provider, cc)
+		if err != nil || !found {
 			return ""
 		}
-		return label
+		return acct.Label
 	}
 }
 
-// activeAccountLabel is the byte-match helper used by the StatusPublisher.
-// Returns the empty string + nil when no stash matches (e.g. fresh install
-// before `aimonitor add`).
-func (s *Server) activeAccountLabel(ctx context.Context) (string, error) {
-	live, err := s.provider.ActiveCredential(ctx)
+// resolveActiveAccount finds the currently-active account. It is shared by
+// the StatusPublisher (for the displayed label) and the UsageScheduler (for
+// the account to fetch usage against), so both agree on "active".
+//
+// It byte-matches the live credential against each stash FIRST: an exact
+// match is authoritative — a stash equals the live blob only when they are
+// genuinely the same credential, so this never returns a wrong account.
+// Byte-match's sole failure is a false negative: when Claude Code (or
+// another tool on the same account) refreshes the live token, the live blob
+// no longer equals any stash and the match misses.
+//
+// Only then does it fall back to identity: ~/.claude.json's oauthAccount
+// email + organization, matched against the accounts table. Identity is
+// unaffected by token rotation, so it fills byte-match's false-negative gap
+// — without the false-positive risk an identity-first order would carry (a
+// stale claude.json could otherwise attribute one account's live tokens to
+// another).
+//
+// Returns (_, false, nil) when neither method resolves an account.
+func resolveActiveAccount(ctx context.Context, st *store.Store, p provider.Provider, cc *claudeconfig.Store) (store.Account, bool, error) {
+	live, err := p.ActiveCredential(ctx)
 	if err != nil {
-		return "", fmt.Errorf("active credential: %w", err)
+		return store.Account{}, false, fmt.Errorf("active credential: %w", err)
 	}
 	defer live.Zero()
-	if len(live.Bytes) == 0 {
-		return "", nil
-	}
-	accounts, err := s.store.ListAccounts(ctx)
+
+	accounts, err := st.ListAccounts(ctx)
 	if err != nil {
-		return "", fmt.Errorf("list accounts: %w", err)
+		return store.Account{}, false, fmt.Errorf("list accounts: %w", err)
 	}
-	for i := range accounts {
-		stash, err := claude.RetrieveStash(ctx, accounts[i].KeyringRef)
-		if err != nil {
-			continue
-		}
-		match := bytes.Equal(stash.Bytes, live.Bytes)
-		stash.Zero()
-		if match {
-			return accounts[i].Label, nil
+
+	// 1. Byte-match — authoritative when it hits.
+	if len(live.Bytes) > 0 {
+		for i := range accounts {
+			stash, err := claude.RetrieveStash(ctx, accounts[i].KeyringRef)
+			if err != nil {
+				continue
+			}
+			match := bytes.Equal(stash.Bytes, live.Bytes)
+			stash.Zero()
+			if match {
+				return accounts[i], true, nil
+			}
 		}
 	}
-	return "", nil
+
+	// 2. Identity fallback — survives a token rotation that desynced the
+	// live blob from every stash.
+	if cc != nil {
+		oa, err := cc.ReadOAuthAccount(ctx)
+		if err == nil && oa != nil && oa.EmailAddress != "" {
+			acct, gErr := st.GetAccountByIdentity(ctx, oa.EmailAddress, oa.OrganizationUUID)
+			switch {
+			case gErr == nil:
+				return acct, true, nil
+			case errors.Is(gErr, store.ErrAccountNotFound):
+				// neither method resolved — fall through
+			default:
+				return store.Account{}, false, gErr
+			}
+		}
+	}
+
+	return store.Account{}, false, nil
 }
