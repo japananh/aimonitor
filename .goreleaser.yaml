@@ -136,27 +136,39 @@ homebrew_casks:
     # Cask only runs on darwin; goreleaser auto-picks the universal artifact.
     binaries:
       - aimonitor
-    # goreleaser's HomebrewCask schema has no `app:` field, so inject
-    # the cask DSL directly via custom_block. This causes Homebrew
-    # Cask to install AIMonitor.app into /Applications alongside the
-    # CLI binary, and enforces a minimum macOS version at install time.
+    # goreleaser's HomebrewCask schema has no `app:`/`postflight:` field,
+    # so inject the cask DSL directly via custom_block:
+    #   - app: install AIMonitor.app into /Applications.
+    #   - depends_on: enforce the minimum macOS at install time.
+    #   - postflight: register the daemon to start at login so the menu
+    #     bar shows live data immediately, instead of every fresh install
+    #     hitting "daemon not running" until the user reads the caveats.
+    #     must_succeed:false → a headless/quarantine-blocked install still
+    #     completes; the user can run the command from the caveats. The
+    #     LaunchAgent records the staged binary path; postflight re-runs
+    #     on every `brew upgrade`, so the path self-heals across versions.
     custom_block: |
       depends_on macos: ">= :sonoma"
       app "AIMonitor.app"
-    # The unsigned-app first-open workaround. Documented in
-    # docs/unsigned-app.md and surfaced as the cask's `caveats:` block
-    # so users see it after `brew install`.
+      postflight do
+        system_command "#{staged_path}/aimonitor",
+                       args: ["config", "set", "autostart", "true"],
+                       must_succeed: false
+      end
+    # Surfaced after `brew install`. Documented in docs/unsigned-app.md.
     caveats: |
-      aimonitor is unsigned in this beta. macOS Gatekeeper will refuse
-      the first launch. Fix it once with:
+      The aimonitor daemon is registered to start at login during install,
+      so the menu bar shows live data right away. Opt out any time with:
+
+        aimonitor config set autostart false
+
+      The menu bar app is unsigned in this beta — macOS Gatekeeper blocks
+      the first GUI launch. Clear it once:
 
         xattr -dr com.apple.quarantine /Applications/AIMonitor.app
 
-      Then start the menu bar widget from /Applications, or run
-      `aimonitor daemon run` to start the headless watcher.
-
-      To uninstall cleanly (drop the SQLite DB + aimonitor-namespaced
-      Keychain entries too), run this BEFORE `brew uninstall --cask`:
+      For COMPLETE removal — including saved logins in your Keychain, the
+      database, and config — run this BEFORE `brew uninstall`:
 
         aimonitor uninstall --purge
 
@@ -175,11 +187,12 @@ homebrew_casks:
         - dev.aimonitor.AIMonitor
 
     # zap: runs on `brew uninstall --zap --cask aimonitor` (and is
-    # what `brew cleanup` consults). Sweeps every user-visible file
+    # what `brew cleanup` consults). Sweeps every user-visible FILE
     # aimonitor writes to disk. Keychain entries are intentionally
-    # NOT listed here — they require account enumeration and are the
-    # job of `aimonitor uninstall --purge`. The Claude Code-credentials
-    # Keychain slot is also never touched (left to Claude Code itself).
+    # NOT listed here — a cask can't enumerate the per-account stashes,
+    # so removing them is the job of `aimonitor uninstall --purge`
+    # (run it first for complete removal). The Claude Code-credentials
+    # Keychain slot is never touched (left to Claude Code itself).
     zap:
       trash:
         - ~/Library/LaunchAgents/dev.aimonitor.daemon.plist
@@ -188,6 +201,8 @@ homebrew_casks:
         - ~/Library/Caches/aimonitor
         - ~/Library/Preferences/dev.aimonitor.AIMonitor.plist
         - ~/.config/aimonitor
+        - ~/.aimonitor          # post-swap.log + dir
+        - ~/.aimonitor-lock     # switch file lock
 
 release:
   draft: true            # let humans review before publishing
