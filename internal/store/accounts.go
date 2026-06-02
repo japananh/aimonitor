@@ -12,15 +12,28 @@ import (
 // Account is a row in the accounts table. KeyringRef is the service name
 // the keyring entry lives under — typically `aimonitor-<uuid>` produced
 // by the provider's stash routines.
+//
+// Email + OrganizationUUID together form the account's Claude identity
+// (the same address in two orgs is two distinct accounts). They are
+// captured from ~/.claude.json's oauthAccount at add/switch time and
+// used to patch that file on a switch so Claude Code's active-account
+// metadata tracks the swapped keychain tokens.
 type Account struct {
-	ID         int64
-	Provider   string
-	Label      string
-	Email      string
-	KeyringRef string
-	CreatedAt  time.Time
-	LastUsedAt time.Time // zero value if never used
+	ID               int64
+	Provider         string
+	Label            string
+	Email            string
+	OrganizationUUID string
+	OrganizationName string
+	KeyringRef       string
+	CreatedAt        time.Time
+	LastUsedAt       time.Time // zero value if never used
 }
+
+// accountColumns is the canonical SELECT list, shared by every read so
+// the column order can't drift from the scan order. COALESCE guards the
+// nullable/added columns so pre-0003 rows scan cleanly.
+const accountColumns = `id, provider, label, COALESCE(email,''), COALESCE(organization_uuid,''), COALESCE(organization_name,''), keyring_ref, created_at, COALESCE(last_used_at, 0)`
 
 // ErrAccountNotFound is returned by GetAccountByLabel / GetAccountByID
 // when no matching row exists.
@@ -44,8 +57,9 @@ func (s *Store) CreateAccount(ctx context.Context, a Account) (Account, error) {
 	}
 
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO accounts (provider, label, email, keyring_ref, created_at) VALUES (?, ?, ?, ?, ?)`,
-		a.Provider, a.Label, a.Email, a.KeyringRef, a.CreatedAt.UnixMilli(),
+		`INSERT INTO accounts (provider, label, email, organization_uuid, organization_name, keyring_ref, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		a.Provider, a.Label, a.Email, a.OrganizationUUID, a.OrganizationName, a.KeyringRef, a.CreatedAt.UnixMilli(),
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -65,23 +79,34 @@ func (s *Store) CreateAccount(ctx context.Context, a Account) (Account, error) {
 // ErrAccountNotFound.
 func (s *Store) GetAccountByLabel(ctx context.Context, label string) (Account, error) {
 	return scanAccount(s.DB.QueryRowContext(ctx,
-		`SELECT id, provider, label, COALESCE(email,''), keyring_ref, created_at, COALESCE(last_used_at, 0)
-		 FROM accounts WHERE label = ?`, label))
+		`SELECT `+accountColumns+` FROM accounts WHERE label = ?`, label))
 }
 
 // GetAccountByID returns the account with the given ID, or
 // ErrAccountNotFound.
 func (s *Store) GetAccountByID(ctx context.Context, id int64) (Account, error) {
 	return scanAccount(s.DB.QueryRowContext(ctx,
-		`SELECT id, provider, label, COALESCE(email,''), keyring_ref, created_at, COALESCE(last_used_at, 0)
-		 FROM accounts WHERE id = ?`, id))
+		`SELECT `+accountColumns+` FROM accounts WHERE id = ?`, id))
+}
+
+// GetAccountByIdentity returns the account matching (email, organization_uuid),
+// or ErrAccountNotFound. Used to detect when an `aimonitor add` is really
+// re-adding an already-registered Claude account (same address + org).
+// An empty email never matches — identity is unknown for legacy rows that
+// predate 0003, so they don't spuriously collide.
+func (s *Store) GetAccountByIdentity(ctx context.Context, email, orgUUID string) (Account, error) {
+	if email == "" {
+		return Account{}, ErrAccountNotFound
+	}
+	return scanAccount(s.DB.QueryRowContext(ctx,
+		`SELECT `+accountColumns+` FROM accounts WHERE email = ? AND COALESCE(organization_uuid,'') = ?`,
+		email, orgUUID))
 }
 
 // ListAccounts returns every account ordered by created_at ascending.
 func (s *Store) ListAccounts(ctx context.Context) ([]Account, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, provider, label, COALESCE(email,''), keyring_ref, created_at, COALESCE(last_used_at, 0)
-		 FROM accounts ORDER BY created_at ASC`)
+		`SELECT `+accountColumns+` FROM accounts ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
@@ -89,14 +114,9 @@ func (s *Store) ListAccounts(ctx context.Context) ([]Account, error) {
 
 	var out []Account
 	for rows.Next() {
-		var a Account
-		var createdAt, lastUsedAt int64
-		if err := rows.Scan(&a.ID, &a.Provider, &a.Label, &a.Email, &a.KeyringRef, &createdAt, &lastUsedAt); err != nil {
+		a, err := scanAccountRow(rows)
+		if err != nil {
 			return nil, err
-		}
-		a.CreatedAt = time.UnixMilli(createdAt)
-		if lastUsedAt != 0 {
-			a.LastUsedAt = time.UnixMilli(lastUsedAt)
 		}
 		out = append(out, a)
 	}
@@ -158,13 +178,18 @@ func (s *Store) DeleteAccount(ctx context.Context, id int64) error {
 	return nil
 }
 
-func scanAccount(row *sql.Row) (Account, error) {
+// rowScanner is the Scan surface shared by *sql.Row and *sql.Rows, so
+// single-row and list reads decode through one place and can't drift in
+// column order.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanAccountRow decodes one row in accountColumns order.
+func scanAccountRow(r rowScanner) (Account, error) {
 	var a Account
 	var createdAt, lastUsedAt int64
-	err := row.Scan(&a.ID, &a.Provider, &a.Label, &a.Email, &a.KeyringRef, &createdAt, &lastUsedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Account{}, ErrAccountNotFound
-	}
+	err := r.Scan(&a.ID, &a.Provider, &a.Label, &a.Email, &a.OrganizationUUID, &a.OrganizationName, &a.KeyringRef, &createdAt, &lastUsedAt)
 	if err != nil {
 		return Account{}, err
 	}
@@ -173,6 +198,34 @@ func scanAccount(row *sql.Row) (Account, error) {
 		a.LastUsedAt = time.UnixMilli(lastUsedAt)
 	}
 	return a, nil
+}
+
+// scanAccount decodes a single-row query, mapping the no-rows case to
+// ErrAccountNotFound.
+func scanAccount(row *sql.Row) (Account, error) {
+	a, err := scanAccountRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Account{}, ErrAccountNotFound
+	}
+	return a, err
+}
+
+// UpdateAccountIdentity refreshes the email/org identity captured for an
+// account. Called when a re-add (or a switch that learns fresher
+// identity from ~/.claude.json) needs to backfill or correct the row.
+func (s *Store) UpdateAccountIdentity(ctx context.Context, id int64, email, orgUUID, orgName string) error {
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE accounts SET email = ?, organization_uuid = ?, organization_name = ? WHERE id = ?`,
+		email, orgUUID, orgName, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update account identity: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrAccountNotFound
+	}
+	return nil
 }
 
 // isUniqueViolation peeks at the error message to detect SQLite's UNIQUE
