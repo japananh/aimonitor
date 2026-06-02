@@ -131,6 +131,9 @@ func (s *Server) Run(ctx context.Context) error {
 			Provider:      s.provider,
 			Fetcher:       claude.NewUsageFetcher(),
 			RefreshActive: switcher.RefreshActive,
+			ResolveActive: func(ctx context.Context) (store.Account, bool, error) {
+				return resolveActiveAccount(ctx, s.store, s.provider, switcher.ClaudeConfig)
+			},
 			AfterFetch: func(ctx context.Context, label string) {
 				if _, err := autoSwap.MaybeSwap(ctx, label); err != nil {
 					fmt.Fprintf(os.Stderr, "auto-swap: %v\n", err)
