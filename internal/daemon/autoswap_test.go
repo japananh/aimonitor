@@ -160,8 +160,8 @@ func TestAutoSwap_CustomThreshold(t *testing.T) {
 	if threshold != 50 {
 		t.Errorf("threshold = %v want 50", threshold)
 	}
-	if graceSec != defaultAutoSwapGraceSec {
-		t.Errorf("graceSec = %d want default %d", graceSec, defaultAutoSwapGraceSec)
+	if graceSec != DefaultAutoSwapGraceSec {
+		t.Errorf("graceSec = %d want default %d", graceSec, DefaultAutoSwapGraceSec)
 	}
 }
 
@@ -205,13 +205,13 @@ func TestAutoSwap_BadConfigValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config: %v", err)
 	}
-	if enabled != defaultAutoSwapEnabled {
+	if enabled != DefaultAutoSwapEnabled {
 		t.Errorf("enabled fallback failed: got %v", enabled)
 	}
-	if threshold != defaultAutoSwapThreshold {
+	if threshold != DefaultAutoSwapThreshold {
 		t.Errorf("threshold fallback failed: got %v (parsed=%q)", threshold, strconv.FormatFloat(threshold, 'f', -1, 64))
 	}
-	if graceSec != defaultAutoSwapGraceSec {
+	if graceSec != DefaultAutoSwapGraceSec {
 		t.Errorf("graceSec fallback failed: got %d", graceSec)
 	}
 }
