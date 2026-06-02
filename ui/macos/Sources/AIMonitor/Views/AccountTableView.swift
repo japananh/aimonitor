@@ -7,6 +7,10 @@ import SwiftUI
 
 struct AccountTableView: View {
     @ObservedObject var model: AppModel
+    // renameAccount is invoked with a row's current label; the app delegate
+    // shows a modal text prompt (an NSAlert is reliable even though showing
+    // it dismisses the transient popover). nil disables the affordance.
+    var renameAccount: ((String) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -60,6 +64,11 @@ struct AccountTableView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
+        .contextMenu {
+            if let rename = renameAccount {
+                Button("Rename…") { rename(acct.label) }
+            }
+        }
     }
 
     // identityCaption is the account's Claude identity line: email and,

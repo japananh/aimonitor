@@ -80,6 +80,48 @@ enum CLIBridge {
     }
 
     static func setAutoSwitch(_ enabled: Bool) throws {
-        try run(["config", "set", "autoswitch", enabled ? "true" : "false"])
+        // auto_swap.enabled is the live setting the daemon's AutoSwapper
+        // reads (the old "autoswitch" key is deprecated and now errors).
+        try run(["config", "set", "auto_swap.enabled", enabled ? "true" : "false"])
+    }
+
+    /// Renames an account's label via the CLI (keychain/identity untouched).
+    static func rename(from oldLabel: String, to newLabel: String) throws {
+        try run(["rename", oldLabel, newLabel])
+    }
+
+    /// Reads a config value (trimmed). Throws on unknown key.
+    static func configGet(_ key: String) throws -> String {
+        try run(["config", "get", key]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Writes a config value.
+    static func configSet(_ key: String, _ value: String) throws {
+        try run(["config", "set", key, value])
+    }
+
+    /// Result of `aimonitor update check --json`. `notes` is omitted by the
+    /// CLI when the release body is empty, hence optional.
+    struct UpdateCheck: Decodable {
+        let available: Bool
+        let current: String
+        let latest: String
+        let url: String
+        let notes: String?
+    }
+
+    /// Checks GitHub for a newer release. Pure network read, no token cost.
+    static func checkUpdate() throws -> UpdateCheck {
+        let out = try run(["update", "check", "--json"])
+        guard let data = out.data(using: .utf8) else {
+            throw CLIBridgeError.exitNonZero(0, "update check: empty response")
+        }
+        return try JSONDecoder().decode(UpdateCheck.self, from: data)
+    }
+
+    /// Kicks off a detached Homebrew upgrade. Returns immediately; the
+    /// upgrade quits and relaunches the app when it completes.
+    static func installUpdate() throws {
+        try run(["update", "install"])
     }
 }

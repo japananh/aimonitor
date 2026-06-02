@@ -22,7 +22,9 @@ It is local-first, has no telemetry, and never phones home.`,
 
 	root.AddCommand(
 		newAddCmd(),
+		newImportCmd(),
 		newRemoveCmd(),
+		newRenameCmd(),
 		newListCmd(),
 		newSwitchCmd(),
 		newStatusCmd(),
@@ -31,6 +33,8 @@ It is local-first, has no telemetry, and never phones home.`,
 		newLogCmd(),
 		newDaemonCmd(),
 		newDoctorCmd(),
+		newUpdateCmd(),
+		newVersionCmd(),
 		newUninstallCmd(),
 	)
 
