@@ -93,6 +93,7 @@ aimonitor config set autostart true                # daemon at login
 |---|---|---|
 | `auto_swap.enabled` | `true` | Master toggle for the OAuth-limits-driven auto-swap |
 | `auto_swap.threshold_pct` | `80` | 5-hour utilization (%) at which to auto-swap |
+| `auto_swap.grace_sec` | `60` | Seconds between the "auto-swap pending" notification and the actual swap, so you can wrap up a live `claude` session. `0` swaps immediately. |
 | `autostart` | `false` | Start the daemon at login |
 | `autoswitch` | `false` | (Legacy) tripwire-driven JSONL accumulator. Disabled in v1.0.0-beta.4 — the new `auto_swap.*` keys supersede it. |
 
