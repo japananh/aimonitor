@@ -144,16 +144,19 @@ func setConfigValue(cmd *cobra.Command, key, value string) error {
 		if err != nil {
 			return err
 		}
-		prev := cfg.AutoStart
 		cfg.AutoStart = b
 		if err := config.Save("", cfg); err != nil {
 			return err
 		}
-		// Keep YAML and OS state in sync: (de)register the LaunchAgent.
-		if prev != b {
-			if err := applyAutostart(b); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: autostart %v failed: %v\n", b, err)
-			}
+		// Always (re)apply the OS-level side effect, even when the YAML
+		// value is unchanged. EnableAutostart/DisableAutostart are
+		// idempotent (bootout+bootstrap / remove), and the cask postflight
+		// depends on `config set autostart true` re-registering the
+		// LaunchAgent after an upgrade's uninstall step removed it — at
+		// that point YAML autostart is already true, so a change-gated
+		// apply would skip it and leave the daemon stopped.
+		if err := applyAutostart(b); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: autostart %v failed: %v\n", b, err)
 		}
 	default:
 		return unknownConfigKey(key)
