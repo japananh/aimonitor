@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/japananh/aimonitor/internal/config"
+	"github.com/japananh/aimonitor/internal/daemon"
 	"github.com/japananh/aimonitor/internal/install"
+	"github.com/japananh/aimonitor/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +21,41 @@ func applyAutostart(enable bool) error {
 		return install.EnableAutostart("")
 	}
 	return install.DisableAutostart()
+}
+
+// configKeys is the canonical set of keys `aimonitor config` exposes.
+// Two storage backends sit behind them:
+//   - autostart lives in the YAML config (and drives the LaunchAgent).
+//   - the auto_swap.* keys live in the SQLite settings table, which is
+//     where the daemon's AutoSwapper actually reads them — so a `config
+//     set` takes effect on the running daemon's next tick, no restart.
+var configKeys = []string{
+	"autostart",
+	daemon.SettingsKeyAutoSwapEnabled,
+	daemon.SettingsKeyAutoSwapThreshold,
+	daemon.SettingsKeyAutoSwapGrace,
+}
+
+// deprecatedKeys maps retired keys to their replacement. They drove the
+// old tripwire AutoSwitcher, which no longer runs (its sample handler was
+// gutted when the Limits-driven AutoSwapper landed). Surfacing a pointed
+// error beats silently accepting a write that does nothing.
+var deprecatedKeys = map[string]string{
+	"autoswitch":                  "auto_swap.enabled",
+	"thresholds":                  "auto_swap.threshold_pct",
+	"autoswitch_cooldown_seconds": "(removed — the auto-swap cooldown is fixed internally)",
+}
+
+// isStoreKey reports whether key is backed by the SQLite settings table
+// (the auto_swap.* family) rather than the YAML config.
+func isStoreKey(key string) bool {
+	switch key {
+	case daemon.SettingsKeyAutoSwapEnabled,
+		daemon.SettingsKeyAutoSwapThreshold,
+		daemon.SettingsKeyAutoSwapGrace:
+		return true
+	}
+	return false
 }
 
 func newConfigCmd() *cobra.Command {
@@ -31,11 +69,7 @@ func newConfigCmd() *cobra.Command {
 			Short: "Print a configuration value",
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				cfg, err := config.Load("")
-				if err != nil {
-					return err
-				}
-				v, err := getConfigField(cfg, args[0])
+				v, err := getConfigValue(cmd.Context(), args[0])
 				if err != nil {
 					return err
 				}
@@ -45,41 +79,21 @@ func newConfigCmd() *cobra.Command {
 		},
 		&cobra.Command{
 			Use:   "set <key> <value>",
-			Short: "Update a configuration value (writes ~/.config/aimonitor/config.yaml)",
+			Short: "Update a configuration value",
 			Args:  cobra.ExactArgs(2),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				cfg, err := config.Load("")
-				if err != nil {
-					return err
-				}
-				updated, err := setConfigField(cfg, args[0], args[1])
-				if err != nil {
-					return err
-				}
-				if err := config.Save("", updated); err != nil {
-					return err
-				}
-				// Side effect: flipping `autostart` (de)registers the
-				// LaunchAgent so the YAML and OS state stay in sync.
-				if args[0] == "autostart" && cfg.AutoStart != updated.AutoStart {
-					if err := applyAutostart(updated.AutoStart); err != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(), "warning: autostart %v failed: %v\n", updated.AutoStart, err)
-					}
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Set %s = %s\n", args[0], args[1])
-				return nil
+				return setConfigValue(cmd, args[0], args[1])
 			},
 		},
 		&cobra.Command{
 			Use:   "list",
 			Short: "Print every configuration key and its current value",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				cfg, err := config.Load("")
-				if err != nil {
-					return err
-				}
 				for _, k := range configKeys {
-					v, _ := getConfigField(cfg, k)
+					v, err := getConfigValue(cmd.Context(), k)
+					if err != nil {
+						v = "(error: " + err.Error() + ")"
+					}
 					fmt.Fprintf(cmd.OutOrStdout(), "%s = %s\n", k, v)
 				}
 				return nil
@@ -89,61 +103,148 @@ func newConfigCmd() *cobra.Command {
 	return cmd
 }
 
-// configKeys is the canonical set of config keys aimonitor exposes via
-// `aimonitor config`. New fields belong here AND in the get/set switches
-// below — keeping them in one slice avoids the get/set/list trio drifting.
-var configKeys = []string{
-	"autoswitch",
-	"thresholds",
-	"autoswitch_cooldown_seconds",
-	"autostart",
-}
-
-func getConfigField(c config.Config, key string) (string, error) {
+func getConfigValue(ctx context.Context, key string) (string, error) {
+	if repl, dep := deprecatedKeys[key]; dep {
+		return "", deprecatedKeyErr(key, repl)
+	}
+	if isStoreKey(key) {
+		return getStoreSetting(ctx, key)
+	}
+	cfg, err := config.Load("")
+	if err != nil {
+		return "", err
+	}
 	switch key {
-	case "autoswitch":
-		return strconv.FormatBool(c.AutoSwitch), nil
-	case "thresholds":
-		return config.FormatThresholds(c.Thresholds), nil
-	case "autoswitch_cooldown_seconds":
-		return strconv.Itoa(c.AutoSwitchCooldownSeconds), nil
 	case "autostart":
-		return strconv.FormatBool(c.AutoStart), nil
+		return strconv.FormatBool(cfg.AutoStart), nil
 	default:
 		return "", unknownConfigKey(key)
 	}
 }
 
-func setConfigField(c config.Config, key, value string) (config.Config, error) {
+func setConfigValue(cmd *cobra.Command, key, value string) error {
+	if repl, dep := deprecatedKeys[key]; dep {
+		return deprecatedKeyErr(key, repl)
+	}
+	if isStoreKey(key) {
+		if err := setStoreSetting(cmd.Context(), key, value); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Set %s = %s\n", key, value)
+		return nil
+	}
+
+	cfg, err := config.Load("")
+	if err != nil {
+		return err
+	}
 	switch key {
-	case "autoswitch":
-		b, err := parseBool(value)
-		if err != nil {
-			return c, err
-		}
-		c.AutoSwitch = b
-	case "thresholds":
-		ts, err := config.ParseThresholds(value)
-		if err != nil {
-			return c, err
-		}
-		c.Thresholds = ts
-	case "autoswitch_cooldown_seconds":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return c, fmt.Errorf("autoswitch_cooldown_seconds: not an integer: %w", err)
-		}
-		c.AutoSwitchCooldownSeconds = n
 	case "autostart":
 		b, err := parseBool(value)
 		if err != nil {
-			return c, err
+			return err
 		}
-		c.AutoStart = b
+		prev := cfg.AutoStart
+		cfg.AutoStart = b
+		if err := config.Save("", cfg); err != nil {
+			return err
+		}
+		// Keep YAML and OS state in sync: (de)register the LaunchAgent.
+		if prev != b {
+			if err := applyAutostart(b); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: autostart %v failed: %v\n", b, err)
+			}
+		}
 	default:
-		return c, unknownConfigKey(key)
+		return unknownConfigKey(key)
 	}
-	return c, nil
+	fmt.Fprintf(cmd.OutOrStdout(), "Set %s = %s\n", key, value)
+	return nil
+}
+
+// getStoreSetting reads a SQLite-backed setting, returning the daemon's
+// default when the key has never been written.
+func getStoreSetting(ctx context.Context, key string) (string, error) {
+	s, err := openConfigStore()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = s.Close() }()
+
+	v, err := s.GetSetting(ctx, key)
+	if errors.Is(err, store.ErrSettingNotFound) {
+		return storeKeyDefault(key), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
+// setStoreSetting validates value for key, then upserts it. Validation
+// normalises the stored form (e.g. bool → "true"/"false") so the daemon's
+// parser always sees a canonical value.
+func setStoreSetting(ctx context.Context, key, value string) error {
+	norm, err := validateStoreValue(key, value)
+	if err != nil {
+		return err
+	}
+	s, err := openConfigStore()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = s.Close() }()
+	return s.PutSetting(ctx, key, norm)
+}
+
+func validateStoreValue(key, value string) (string, error) {
+	switch key {
+	case daemon.SettingsKeyAutoSwapEnabled:
+		b, err := parseBool(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.FormatBool(b), nil
+	case daemon.SettingsKeyAutoSwapThreshold:
+		f, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return "", fmt.Errorf("%s: not a number: %q", key, value)
+		}
+		if f <= 0 || f > 100 {
+			return "", fmt.Errorf("%s: must be in (0, 100], got %v", key, f)
+		}
+		return strconv.FormatFloat(f, 'f', -1, 64), nil
+	case daemon.SettingsKeyAutoSwapGrace:
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("%s: not an integer: %q", key, value)
+		}
+		if n < 0 {
+			return "", fmt.Errorf("%s: must be >= 0, got %d", key, n)
+		}
+		return strconv.Itoa(n), nil
+	}
+	return "", unknownConfigKey(key)
+}
+
+func storeKeyDefault(key string) string {
+	switch key {
+	case daemon.SettingsKeyAutoSwapEnabled:
+		return strconv.FormatBool(daemon.DefaultAutoSwapEnabled)
+	case daemon.SettingsKeyAutoSwapThreshold:
+		return strconv.FormatFloat(daemon.DefaultAutoSwapThreshold, 'f', -1, 64)
+	case daemon.SettingsKeyAutoSwapGrace:
+		return strconv.Itoa(daemon.DefaultAutoSwapGraceSec)
+	}
+	return ""
+}
+
+func openConfigStore() (*store.Store, error) {
+	p, err := store.DefaultPath()
+	if err != nil {
+		return nil, err
+	}
+	return store.Open(p)
 }
 
 func parseBool(s string) (bool, error) {
@@ -158,4 +259,8 @@ func parseBool(s string) (bool, error) {
 
 func unknownConfigKey(key string) error {
 	return errors.New("unknown config key: " + key + " (try `aimonitor config list`)")
+}
+
+func deprecatedKeyErr(key, replacement string) error {
+	return fmt.Errorf("config key %q is deprecated; use %s instead", key, replacement)
 }

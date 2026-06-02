@@ -111,6 +111,18 @@ func (u *UsageScheduler) defaults() {
 	}
 }
 
+// initialDelay is the wait before the very first fetch. A small fixed
+// delay (not the jittered baseline) so the bars populate within seconds
+// of daemon start, while still not firing the instant the process comes
+// up. Never longer than the baseline.
+func (u *UsageScheduler) initialDelay() time.Duration {
+	const d = 3 * time.Second
+	if u.Baseline < d {
+		return u.Baseline
+	}
+	return d
+}
+
 // Run blocks until ctx is cancelled, fetching limits for the active
 // account on a jittered, error-aware schedule. The first fetch happens
 // after a single jittered baseline interval so the daemon doesn't spike
@@ -118,8 +130,11 @@ func (u *UsageScheduler) defaults() {
 func (u *UsageScheduler) Run(ctx context.Context) error {
 	u.defaults()
 
-	interval := u.jittered(u.Baseline)
-	timer := time.NewTimer(interval)
+	// Fetch soon after start (not after a full baseline interval) so a
+	// freshly-launched daemon populates the usage bars within seconds
+	// instead of leaving them blank for the first 5 minutes. One request
+	// for the active account at boot is not a meaningful spike.
+	timer := time.NewTimer(u.initialDelay())
 	defer timer.Stop()
 
 	currentBackoff := u.Baseline
@@ -143,9 +158,16 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 				next = u.MaxBackoff
 				fmt.Fprintf(os.Stderr, "usage: auth denied, halting background fetches: %v\n", err)
 			case claude.IsThrottledError(err):
-				currentBackoff = u.MaxBackoff
+				// A 429 is often a transient burst limit (e.g. another tool
+				// — or claude-bar — polling the same /api/oauth/usage
+				// endpoint for this account). Escalate gradually like any
+				// other error rather than jumping straight to the 1 h cap,
+				// so a brief throttle costs minutes of staleness, not an
+				// hour of blank usage bars. Sustained 429s still ramp to
+				// the cap.
+				currentBackoff = doubleCapped(currentBackoff, u.MaxBackoff)
 				next = currentBackoff
-				fmt.Fprintf(os.Stderr, "usage: throttled by Anthropic, backoff %v: %v\n", next, err)
+				fmt.Fprintf(os.Stderr, "usage: throttled by Anthropic (429), backoff %v: %v\n", next, err)
 			case err != nil:
 				currentBackoff = doubleCapped(currentBackoff, u.MaxBackoff)
 				next = currentBackoff

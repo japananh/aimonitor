@@ -26,9 +26,9 @@ const (
 )
 
 const (
-	defaultAutoSwapEnabled   = true
-	defaultAutoSwapThreshold = 80.0
-	defaultAutoSwapGraceSec  = 60
+	DefaultAutoSwapEnabled   = true
+	DefaultAutoSwapThreshold = 80.0
+	DefaultAutoSwapGraceSec  = 60
 )
 
 const (
@@ -253,9 +253,9 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, thresho
 }
 
 func (a *AutoSwapper) config(ctx context.Context) (enabled bool, threshold float64, graceSec int, err error) {
-	enabled = defaultAutoSwapEnabled
-	threshold = defaultAutoSwapThreshold
-	graceSec = defaultAutoSwapGraceSec
+	enabled = DefaultAutoSwapEnabled
+	threshold = DefaultAutoSwapThreshold
+	graceSec = DefaultAutoSwapGraceSec
 
 	if v, getErr := a.Store.GetSetting(ctx, SettingsKeyAutoSwapEnabled); getErr == nil {
 		if b, perr := strconv.ParseBool(v); perr == nil {
