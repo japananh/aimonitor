@@ -25,6 +25,9 @@ const (
 	SettingsKeyAutoSwapGrace     = "auto_swap.grace_sec"
 )
 
+// Defaults applied when the corresponding auto_swap.* setting is unset.
+// Exported so the `aimonitor config` CLI shows the same values the daemon
+// falls back to.
 const (
 	DefaultAutoSwapEnabled   = true
 	DefaultAutoSwapThreshold = 80.0
