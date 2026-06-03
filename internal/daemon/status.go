@@ -65,6 +65,11 @@ type Status struct {
 	// the active account. Widget shows a "~" stale indicator if older
 	// than ~2× the baseline interval.
 	LimitsFetchedAt time.Time `json:"limits_fetched_at,omitempty"`
+
+	// LastExternalSwitchAt is when the daemon last detected an
+	// active-account change it did not perform (another credential
+	// manager rewrote the live slot). Zero/absent when never detected.
+	LastExternalSwitchAt time.Time `json:"last_external_switch_at,omitempty"`
 }
 
 // snapshot reads AutoSwitcher fields under its lock so we don't race
@@ -100,6 +105,11 @@ type StatusPublisher struct {
 	// (provider.ActiveCredential + stash byte-equal); we don't want to
 	// duplicate it here. Empty result is fine.
 	ActiveLabel func(ctx context.Context) string
+
+	// ExternalWatch, when set, is fed every resolved label so it can
+	// detect active-account changes the daemon didn't perform. Its
+	// LastExternalAt feeds Status.LastExternalSwitchAt.
+	ExternalWatch *ExternalSwitchWatcher
 }
 
 // Run blocks until ctx is cancelled, publishing a fresh Status row on
@@ -128,6 +138,10 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 		label = p.ActiveLabel(ctx)
 	}
 	st := p.Auto.snapshot(label)
+	if p.ExternalWatch != nil {
+		p.ExternalWatch.Observe(ctx, label)
+		st.LastExternalSwitchAt = p.ExternalWatch.LastExternalAt()
+	}
 	if label != "" {
 		// Look up the active account's persisted limits and attach
 		// them to the snapshot. Best-effort: any failure (no account

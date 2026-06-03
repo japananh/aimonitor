@@ -105,6 +105,9 @@ func (s *Server) Run(ctx context.Context) error {
 		Auto:        auto,
 		Interval:    2 * time.Second,
 		ActiveLabel: resolveActiveLabel(s),
+		// Detect active-account changes the daemon didn't perform (another
+		// credential manager rewrote the live slot): notify + audit them.
+		ExternalWatch: &ExternalSwitchWatcher{Store: s.store},
 	}
 	go func() { _ = pub.Run(ctx) }()
 
