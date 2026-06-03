@@ -17,6 +17,9 @@ final class AppModel: ObservableObject {
     // Per-account rate-limit snapshots keyed by account id, for the
     // per-account 5h/7d bars. A row may be stale (see LimitsRow.fetchedAt).
     @Published var limitsByAccount: [Int64: LimitsRow] = [:]
+    // True while a manual "Refresh usage" fetch is in flight (disables the
+    // button + shows progress text).
+    @Published var refreshingUsage = false
     @Published var lastError: String? = nil
 
     // showAccountPanel is the user preference for whether the per-account
@@ -117,6 +120,25 @@ final class AppModel: ObservableObject {
                 Task { @MainActor in await self.refresh() }
             } catch {
                 Task { @MainActor in self.lastError = "\(error)" }
+            }
+        }
+    }
+
+    /// Fetches fresh usage for all inactive accounts via the CLI (the active
+    /// account is kept fresh by the daemon), then re-reads. Runs on a
+    /// background queue since the CLI does several network calls; the
+    /// refreshingUsage flag drives the button's disabled/progress state.
+    func refreshUsage() {
+        guard !refreshingUsage else { return }
+        refreshingUsage = true
+        workQueue.async {
+            let failure: String? = {
+                do { try CLIBridge.refreshUsage(); return nil } catch { return "\(error)" }
+            }()
+            Task { @MainActor in
+                await self.refresh()
+                self.refreshingUsage = false
+                if let failure { self.lastError = failure }
             }
         }
     }

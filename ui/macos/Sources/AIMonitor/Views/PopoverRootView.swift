@@ -35,11 +35,12 @@ struct PopoverRootView: View {
 
             Divider()
             HStack {
-                Button("Refresh") {
-                    Task { await model.refresh() }
+                Button(model.refreshingUsage ? "Refreshing…" : "Refresh usage") {
+                    model.refreshUsage()
                 }
+                .disabled(model.refreshingUsage)
                 .pointerCursor()
-                .help("Re-read accounts and usage from the daemon now")
+                .help("Fetch the latest 5h/7d usage for every account now")
                 Spacer()
                 Button("Preferences…", action: openPreferences)
                     .pointerCursor()
