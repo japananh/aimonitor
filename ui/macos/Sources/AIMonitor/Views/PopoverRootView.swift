@@ -50,9 +50,7 @@ struct PopoverRootView: View {
                 Divider()
             }
 
-            if model.showAccountPanel {
-                AccountTableView(model: model, renameAccount: renameAccount)
-            }
+            AccountTableView(model: model, renameAccount: renameAccount)
 
             Divider()
             HStack {

@@ -63,11 +63,19 @@ func runUsageRefreshOne(ctx context.Context, cmd *cobra.Command, s *store.Store,
 	}
 
 	cc, _ := claudeconfig.New()
-	if active, found, rErr := daemon.ResolveActiveAccount(ctx, s, p, cc); rErr == nil && found && active.ID == acct.ID {
-		return fmt.Errorf("%q is the active account — it's kept fresh by the daemon and isn't refreshed here", label)
-	}
+	active, found, _ := daemon.ResolveActiveAccount(ctx, s, p, cc)
+	isActive := found && active.ID == acct.ID
 
-	lim, err := daemon.RefreshAccountUsage(ctx, s, claude.NewUsageFetcher(), claude.NewTokenRefresher(), acct)
+	fetcher := claude.NewUsageFetcher()
+	var lim provider.Limits
+	if isActive {
+		// The active account's stash must stay in sync with the live slot,
+		// so route through the Switcher's locked live-refresh path rather
+		// than the stash-rotating RefreshAccountUsage.
+		lim, err = daemon.RefreshActiveUsage(ctx, s, daemon.NewSwitcher(s, p), fetcher, acct)
+	} else {
+		lim, err = daemon.RefreshAccountUsage(ctx, s, fetcher, claude.NewTokenRefresher(), acct)
+	}
 	if err != nil {
 		return fmt.Errorf("refresh %q: %w", label, err)
 	}
