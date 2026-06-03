@@ -57,6 +57,40 @@ func immediateSwap(t *testing.T, s *store.Store) {
 	}
 }
 
+// B: candidate selection must prefer an account with FRESH, known low usage
+// over accounts whose usage is stale or unknown — even though those would
+// look "lower" if trusted naively (stale 5% < fresh 10%, unknown = 0%). With
+// no just-in-time refresh wired, stale/unknown are last-resort only.
+func TestAutoSwap_PrefersFreshKnownCandidate(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "r0"})
+	freshLow, _ := s.CreateAccount(ctx, store.Account{Label: "fresh-low", KeyringRef: "r1"})
+	staleLow, _ := s.CreateAccount(ctx, store.Account{Label: "stale-low", KeyringRef: "r2"})
+	_, _ = s.CreateAccount(ctx, store.Account{Label: "unknown", KeyringRef: "r3"})
+
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 90})   // over threshold, fresh
+	_ = s.PutLimits(ctx, freshLow.ID, provider.Limits{FiveHourPct: 10}) // fresh, low
+	// Deceptively lower, but two hours old → must NOT be trusted over fresh-low.
+	_ = s.PutLimits(ctx, staleLow.ID, provider.Limits{FiveHourPct: 5, FetchedAt: time.Now().Add(-2 * time.Hour)})
+	// "unknown" has no limits row at all.
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	immediateSwap(t, s) // grace 0: fire on first call
+	// RefreshUsage left nil — selection must rely on stored data only.
+
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if !swapped {
+		t.Fatalf("expected a swap (active 90%% >= 80%% threshold)")
+	}
+	if len(fsw.switched) != 1 || fsw.switched[0] != "fresh-low" {
+		t.Errorf("switched to %v, want [fresh-low] — must prefer fresh-known over stale/unknown", fsw.switched)
+	}
+}
+
 func TestAutoSwap_BelowThreshold_NoSwap(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()

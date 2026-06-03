@@ -42,6 +42,15 @@ const (
 	// cooldownAfterExhausted backs off when every account is above
 	// threshold — nothing to swap to, so don't recompute every tick.
 	cooldownAfterExhausted = 10 * time.Minute
+	// candidateFreshWindow is how recent a candidate's usage snapshot must
+	// be to trust it for a swap decision. Generous enough that an account
+	// the background round-robin just polled counts as fresh (so the
+	// just-in-time refresh doesn't redundantly re-poll it).
+	candidateFreshWindow = 15 * time.Minute
+	// maxJITRefresh bounds how many stale candidates the just-in-time
+	// refresh will poll per decision, so a swap decision can't fan out into
+	// an unbounded burst of token/usage calls.
+	maxJITRefresh = 5
 )
 
 // accountSwitcher is the narrow surface AutoSwapper needs from
@@ -85,6 +94,14 @@ type AutoSwapper struct {
 	// Injectable so tests can capture without touching the OS.
 	Notify func(title, body string)
 
+	// RefreshUsage, when set, fetches fresh usage for a (non-active)
+	// candidate at decision time — refreshing its token if expired — so the
+	// swap picks an account whose headroom is actually known, not assumed.
+	// Called only when the active account is at/over threshold and only for
+	// candidates whose stored usage is stale/unknown. Nil disables the
+	// just-in-time refresh (selection then falls back to last-known data).
+	RefreshUsage func(ctx context.Context, acct store.Account) (provider.Limits, error)
+
 	mu            sync.Mutex
 	pending       *pendingSwap
 	cooldownUntil time.Time
@@ -98,6 +115,17 @@ type AutoSwapper struct {
 // The decision runs under a mutex so back-to-back ticks (e.g. after a
 // wake-from-sleep burst) can't arm or fire two swaps in parallel.
 func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, error) {
+	// Just-in-time candidate refresh (A) runs BEFORE the mutex so we never
+	// hold a.mu across token/usage network I/O. It only fires when a swap is
+	// actually imminent (auto-swap on AND active at/over threshold), and only
+	// refreshes candidates whose stored usage is stale/unknown — so a sound
+	// decision doesn't rest on optimistic "assume available" data.
+	if a.shouldRefreshCandidates(ctx, activeLabel) {
+		if active, err := a.Store.GetAccountByLabel(ctx, activeLabel); err == nil {
+			a.refreshStaleCandidates(ctx, active.ID)
+		}
+	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -177,6 +205,58 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 	return a.fireSwap(ctx, activeLabel, activeLim.FiveHourPct, cand, threshold)
 }
 
+// shouldRefreshCandidates reports whether a just-in-time candidate refresh
+// is warranted: the hook is wired, auto-swap is enabled, and the active
+// account is at/over threshold (a swap is imminent). Reads are unlocked and
+// best-effort — it deliberately does not consult the cooldown (that's the
+// locked section's job); at worst it refreshes once during a cooldown.
+func (a *AutoSwapper) shouldRefreshCandidates(ctx context.Context, activeLabel string) bool {
+	if a.RefreshUsage == nil || activeLabel == "" {
+		return false
+	}
+	enabled, threshold, _, err := a.config(ctx)
+	if err != nil || !enabled {
+		return false
+	}
+	acct, err := a.Store.GetAccountByLabel(ctx, activeLabel)
+	if err != nil {
+		return false
+	}
+	lim, err := a.Store.GetLimits(ctx, acct.ID)
+	if err != nil {
+		return false
+	}
+	return lim.FiveHourPct >= threshold
+}
+
+// refreshStaleCandidates fetches fresh usage for up to maxJITRefresh
+// non-active accounts whose stored snapshot is stale or missing, so the
+// subsequent pickCandidate ranks on known headroom. Runs WITHOUT a.mu held
+// (it does network I/O); each refresh serializes on the switch lock inside
+// RefreshAccountUsage. Best-effort — failures are logged and skipped.
+func (a *AutoSwapper) refreshStaleCandidates(ctx context.Context, activeID int64) {
+	accounts, err := a.Store.ListAccounts(ctx)
+	if err != nil {
+		return
+	}
+	done := 0
+	for _, acct := range accounts {
+		if acct.ID == activeID {
+			continue
+		}
+		if lim, err := a.Store.GetLimits(ctx, acct.ID); err == nil && a.now().Sub(lim.FetchedAt) <= candidateFreshWindow {
+			continue // already fresh enough to trust
+		}
+		if _, err := a.RefreshUsage(ctx, acct); err != nil {
+			fmt.Fprintf(a.stderr(), "auto-swap: refresh candidate %q: %v\n", acct.Label, err)
+		}
+		done++
+		if done >= maxJITRefresh {
+			break
+		}
+	}
+}
+
 // fireSwap performs the switch, records the audit row, arms the
 // post-swap cooldown, and clears the pending state. Caller holds a.mu.
 func (a *AutoSwapper) fireSwap(ctx context.Context, activeLabel string, activePct float64, cand candidate, threshold float64) (bool, error) {
@@ -218,27 +298,46 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, thresho
 	if err != nil {
 		return candidate{}, false, err
 	}
-	var pool []candidate
+	// Two pools (B): trust accounts with a FRESH, known snapshot below the
+	// threshold; fall back to uncertain (stale/unknown) accounts only when no
+	// trusted candidate exists. This avoids the old behavior of treating an
+	// account we can't see as "0% available" and preferring it — which could
+	// switch straight into an exhausted account. The just-in-time refresh
+	// (refreshStaleCandidates) normally promotes uncertain accounts to fresh
+	// before we get here; the uncertain pool is the last resort when a
+	// refresh wasn't possible (e.g. an expired refresh token).
+	now := a.now()
+	var fresh, uncertain []candidate
 	for _, acct := range accounts {
 		if acct.ID == activeID {
 			continue
 		}
 		lim, err := a.Store.GetLimits(ctx, acct.ID)
-		if err != nil {
-			// Account with no fetched limits is treated as fully
-			// available — the worst case is one fetch on the new
-			// active account in the next tick.
-			lim = provider.Limits{}
-		}
-		if lim.FiveHourPct >= threshold {
+		known := err == nil
+		isFresh := known && now.Sub(lim.FetchedAt) <= candidateFreshWindow
+		if isFresh {
+			if lim.FiveHourPct >= threshold {
+				continue // known to be over the threshold — not a candidate
+			}
+			fresh = append(fresh, candidate{
+				Label:       acct.Label,
+				FiveHourPct: lim.FiveHourPct,
+				SevenDayPct: lim.SevenDayPct,
+				LastUsedMs:  acct.LastUsedAt.UnixMilli(),
+			})
 			continue
 		}
-		pool = append(pool, candidate{
-			Label:       acct.Label,
-			FiveHourPct: lim.FiveHourPct,
-			SevenDayPct: lim.SevenDayPct,
-			LastUsedMs:  acct.LastUsedAt.UnixMilli(),
+		// Stale or unknown: we can't vouch for its headroom. Keep it as a
+		// last resort, ranked only by least-recently-used (its percentages
+		// are untrustworthy, so don't sort on them).
+		uncertain = append(uncertain, candidate{
+			Label:      acct.Label,
+			LastUsedMs: acct.LastUsedAt.UnixMilli(),
 		})
+	}
+	pool := fresh
+	if len(pool) == 0 {
+		pool = uncertain
 	}
 	if len(pool) == 0 {
 		return candidate{}, false, nil

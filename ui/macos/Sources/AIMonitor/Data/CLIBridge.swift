@@ -90,6 +90,12 @@ enum CLIBridge {
         try run(["rename", oldLabel, newLabel])
     }
 
+    /// Fetches fresh 5h/7d usage for all inactive accounts (the active one is
+    /// kept fresh by the daemon and skipped). May take a few seconds.
+    static func refreshUsage() throws {
+        try run(["usage", "refresh"])
+    }
+
     /// Reads a config value (trimmed). Throws on unknown key.
     static func configGet(_ key: String) throws -> String {
         try run(["config", "get", key]).trimmingCharacters(in: .whitespacesAndNewlines)

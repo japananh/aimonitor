@@ -119,20 +119,27 @@ func (s *Server) Run(ctx context.Context) error {
 		post := &PostSwap{}
 		switcher := NewSwitcher(s.store, s.provider)
 		switcher.PostSwapHook = post.Run
+		fetcher := claude.NewUsageFetcher()
 
 		autoSwap := &AutoSwapper{
 			Store:    s.store,
 			Provider: s.provider,
 			Switcher: switcher,
+			// Just-in-time candidate refresh at decision time (non-active
+			// accounts only; RefreshAccountUsage rotates an expired token
+			// under the switch lock).
+			RefreshUsage: func(ctx context.Context, acct store.Account) (provider.Limits, error) {
+				return RefreshAccountUsage(ctx, s.store, fetcher, switcher.Refresher, acct)
+			},
 		}
 
 		usage := &UsageScheduler{
 			Store:         s.store,
 			Provider:      s.provider,
-			Fetcher:       claude.NewUsageFetcher(),
+			Fetcher:       fetcher,
 			RefreshActive: switcher.RefreshActive,
 			ResolveActive: func(ctx context.Context) (store.Account, bool, error) {
-				return resolveActiveAccount(ctx, s.store, s.provider, switcher.ClaudeConfig)
+				return ResolveActiveAccount(ctx, s.store, s.provider, switcher.ClaudeConfig)
 			},
 			AfterFetch: func(ctx context.Context, label string) {
 				if _, err := autoSwap.MaybeSwap(ctx, label); err != nil {

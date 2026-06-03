@@ -163,7 +163,7 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 func resolveActiveLabel(s *Server) func(ctx context.Context) string {
 	cc, _ := claudeconfig.New() // nil when home is unresolvable → byte-match only
 	return func(ctx context.Context) string {
-		acct, found, err := resolveActiveAccount(ctx, s.store, s.provider, cc)
+		acct, found, err := ResolveActiveAccount(ctx, s.store, s.provider, cc)
 		if err != nil || !found {
 			return ""
 		}
@@ -171,7 +171,7 @@ func resolveActiveLabel(s *Server) func(ctx context.Context) string {
 	}
 }
 
-// resolveActiveAccount finds the currently-active account. It is shared by
+// ResolveActiveAccount finds the currently-active account. It is shared by
 // the StatusPublisher (for the displayed label) and the UsageScheduler (for
 // the account to fetch usage against), so both agree on "active".
 //
@@ -190,7 +190,7 @@ func resolveActiveLabel(s *Server) func(ctx context.Context) string {
 // another).
 //
 // Returns (_, false, nil) when neither method resolves an account.
-func resolveActiveAccount(ctx context.Context, st *store.Store, p provider.Provider, cc *claudeconfig.Store) (store.Account, bool, error) {
+func ResolveActiveAccount(ctx context.Context, st *store.Store, p provider.Provider, cc *claudeconfig.Store) (store.Account, bool, error) {
 	live, err := p.ActiveCredential(ctx)
 	if err != nil {
 		return store.Account{}, false, fmt.Errorf("active credential: %w", err)

@@ -38,7 +38,7 @@ func TestResolveActiveAccount_IdentityFallback(t *testing.T) {
 		t.Fatalf("write claude.json: %v", err)
 	}
 
-	acct, found, err := resolveActiveAccount(ctx, st, &fakeProvider{}, claudeconfig.NewAt(cfgPath))
+	acct, found, err := ResolveActiveAccount(ctx, st, &fakeProvider{}, claudeconfig.NewAt(cfgPath))
 	if err != nil {
 		t.Fatalf("resolveActiveAccount: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestResolveActiveAccount_IdentityFallback(t *testing.T) {
 func TestResolveActiveAccount_NoneResolves(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t)
-	acct, found, err := resolveActiveAccount(ctx, st, &fakeProvider{}, nil)
+	acct, found, err := ResolveActiveAccount(ctx, st, &fakeProvider{}, nil)
 	if err != nil {
 		t.Fatalf("resolveActiveAccount: %v", err)
 	}
