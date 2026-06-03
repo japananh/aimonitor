@@ -1,6 +1,6 @@
-// PopoverRootView is the SwiftUI root for the menu bar popover. It
-// composes the required SessionBarView with the optional
-// AccountTableView and surfaces the menu items below.
+// PopoverRootView is the SwiftUI root for the menu bar popover. It shows a
+// daemon-health banner (when the daemon isn't publishing), the per-account
+// list with 5h/7d usage bars, and the action footer.
 
 import SwiftUI
 
@@ -14,27 +14,39 @@ struct PopoverRootView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SessionBarView(model: model)
-            // Rate-limit utilization bars (5h / 7d). UsageBarsView hides
-            // itself when the daemon hasn't published any limits yet, so
-            // no Divider here would orphan if the bars are absent.
-            if let st = model.status,
-               st.five_hour_pct != nil || st.seven_day_pct != nil {
+            // When the daemon hasn't published recently the rows below are
+            // stale; surface that explicitly. (Dropping the old session bar
+            // removed the previous "daemon not running" hint — keep one.)
+            if daemonDown {
+                Label(
+                    "Daemon not running — usage may be stale. Enable “Launch at login” in Preferences, or run `aimonitor daemon start`.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
                 Divider()
-                UsageBarsView(model: model)
             }
+
             if model.showAccountPanel {
-                Divider()
                 AccountTableView(model: model, renameAccount: renameAccount)
             }
+
             Divider()
             HStack {
                 Button("Refresh") {
                     Task { await model.refresh() }
                 }
+                .pointerCursor()
+                .help("Re-read accounts and usage from the daemon now")
                 Spacer()
                 Button("Preferences…", action: openPreferences)
+                    .pointerCursor()
+                    .help("Auto-switch, updates, and startup settings")
                 Button("Quit", action: quit)
+                    .pointerCursor()
+                    .help("Quit the menu-bar app (the background daemon keeps running)")
             }
             .controlSize(.small)
             .padding(.horizontal, 12)
@@ -49,6 +61,14 @@ struct PopoverRootView: View {
                     .padding(.vertical, 4)
             }
         }
-        .frame(width: 340)
+        .frame(width: 360)
+    }
+
+    // daemonDown is true when no status has been published, or the last
+    // publish is older than ~15 publish intervals (the daemon publishes
+    // every ~2s). A short window avoids false alarms from a single missed tick.
+    private var daemonDown: Bool {
+        guard let pub = model.status?.published_at else { return true }
+        return Date().timeIntervalSince(pub) > 30
     }
 }

@@ -27,6 +27,19 @@ struct AccountRow: Identifiable, Hashable {
     let lastUsedAt: Date?
 }
 
+/// LimitsRow mirrors a row of oauth_usage: a per-account rate-limit
+/// snapshot. Populated for the active account every tick and for inactive
+/// accounts round-robin (valid-token-only), so a row may be stale —
+/// `fetchedAt` is how the UI tells.
+struct LimitsRow: Hashable {
+    let accountID: Int64
+    let fiveHourPct: Double
+    let sevenDayPct: Double
+    let fiveHourResetAt: Date?
+    let sevenDayResetAt: Date?
+    let fetchedAt: Date
+}
+
 /// ProbeRow mirrors a relevant subset of probe_results.
 struct ProbeRow: Hashable {
     let accountID: Int64
@@ -166,6 +179,43 @@ final class SQLiteReader {
             ))
         }
         return rows
+    }
+
+    /// Returns the latest rate-limit snapshot per account, keyed by
+    /// account id. Accounts with no row yet are simply absent from the map.
+    func limits() throws -> [Int64: LimitsRow] {
+        let sql = """
+            SELECT account_id, five_hour_pct, five_hour_reset_at,
+                   seven_day_pct, seven_day_reset_at, fetched_at
+              FROM oauth_usage
+            """
+        var stmt: OpaquePointer?
+        let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        if rc != SQLITE_OK {
+            throw SQLiteReaderError.prepareFailed(rc, String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        func optMsDate(_ col: Int32) -> Date? {
+            if sqlite3_column_type(stmt, col) == SQLITE_NULL { return nil }
+            let ms = sqlite3_column_int64(stmt, col)
+            return Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        }
+
+        var out: [Int64: LimitsRow] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let acct = sqlite3_column_int64(stmt, 0)
+            let row = LimitsRow(
+                accountID: acct,
+                fiveHourPct: sqlite3_column_double(stmt, 1),
+                sevenDayPct: sqlite3_column_double(stmt, 3),
+                fiveHourResetAt: optMsDate(2),
+                sevenDayResetAt: optMsDate(4),
+                fetchedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 5)) / 1000.0)
+            )
+            out[acct] = row
+        }
+        return out
     }
 
     /// Returns nil when the daemon has never published — the bar shows

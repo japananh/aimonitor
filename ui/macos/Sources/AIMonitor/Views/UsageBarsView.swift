@@ -1,73 +1,52 @@
-// UsageBarsView renders the active account's OAuth-introspected rate-limit
-// utilization as two horizontal bars (5-hour and 7-day) with reset-time
-// countdowns. The data is fed by the daemon's UsageScheduler on a
-// ~5-minute jittered cadence; the values arrive in DaemonStatus.
+// UsageBars renders one account's OAuth-introspected rate-limit utilization
+// as two compact horizontal bars (5-hour and 7-day) with a freshness label.
+// It's value-driven (a LimitsRow) so it can be embedded in every account
+// row, not just the active account.
 //
-// Hidden entirely when the daemon hasn't published any limits yet — a
-// blank panel beats stale or zero-defaulted bars.
+// The freshness label is load-bearing, not decoration: inactive accounts
+// are polled only while their token is valid, so a row can be hours stale.
+// "Gem 1 at 8%" is only actionable if you know whether that's 8% now or
+// this morning — the "(stale)" marker tells you.
 
 import SwiftUI
 
-struct UsageBarsView: View {
-    @ObservedObject var model: AppModel
+struct UsageBars: View {
+    let limits: LimitsRow
 
     var body: some View {
-        if let status = model.status,
-           status.five_hour_pct != nil || status.seven_day_pct != nil {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Limits")
-                        .font(.subheadline).bold()
-                    Spacer()
-                    if let fetched = status.limits_fetched_at {
-                        Text(stalenessLabel(fetched: fetched))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                if let pct = status.five_hour_pct {
-                    bar(label: "5h", pct: pct, resetAt: status.five_hour_reset_at)
-                }
-                if let pct = status.seven_day_pct {
-                    bar(label: "7d", pct: pct, resetAt: status.seven_day_reset_at)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+        VStack(alignment: .leading, spacing: 3) {
+            bar(label: "5h", pct: limits.fiveHourPct, resetAt: limits.fiveHourResetAt)
+            bar(label: "7d", pct: limits.sevenDayPct, resetAt: limits.sevenDayResetAt)
+            Text(stalenessLabel(fetched: limits.fetchedAt))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 28)
         }
     }
 
-    // bar is the single 5h-or-7d row: label + percent + linear progress +
-    // optional reset countdown.
     @ViewBuilder
     private func bar(label: String, pct: Double, resetAt: Date?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(label)
-                    .font(.caption.monospaced())
-                    .frame(width: 22, alignment: .leading)
-                ProgressView(value: min(max(pct, 0), 100) / 100.0)
-                    .tint(color(for: pct))
-                    .progressViewStyle(.linear)
-                Text(String(format: "%.0f%%", pct))
-                    .font(.caption.monospacedDigit())
-                    .frame(width: 36, alignment: .trailing)
-                    .foregroundStyle(.secondary)
-            }
-            if let resetAt {
-                Text("resets in \(resetCountdown(resetAt))")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .padding(.leading, 28)
-            }
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.caption.monospaced())
+                .frame(width: 22, alignment: .leading)
+                .foregroundStyle(.secondary)
+            ProgressView(value: min(max(pct, 0), 100) / 100.0)
+                .tint(color(for: pct))
+                .progressViewStyle(.linear)
+            Text(String(format: "%.0f%%", pct))
+                .font(.caption.monospacedDigit())
+                .frame(width: 34, alignment: .trailing)
+                .foregroundStyle(.secondary)
+            Text(resetAt.map { "· \(resetCountdown($0))" } ?? "")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .frame(width: 64, alignment: .leading)
         }
     }
 
-    // color thresholds mirror claude-bar's palette: green below 60%, amber
-    // below 85%, red at or above 85%. The Swift `SessionBarView` uses a
-    // different palette (40/60/100) because its semantics are different —
-    // that bar is session-percent-of-budget, not absolute rate-limit
-    // utilization. Don't unify; they're answering different questions.
+    // green < 60, amber < 85, red ≥ 85 — claude-bar's palette for absolute
+    // rate-limit utilization.
     private func color(for pct: Double) -> Color {
         switch pct {
         case ..<60: return .green
@@ -76,10 +55,6 @@ struct UsageBarsView: View {
         }
     }
 
-    // resetCountdown formats the duration until the reset timestamp as a
-    // human-friendly short string ("3h 12m", "47m", "2d 4h"). Never
-    // shows seconds — at 5-minute polling cadence sub-minute precision
-    // would be noise.
     private func resetCountdown(_ resetAt: Date) -> String {
         let secs = Int(resetAt.timeIntervalSinceNow)
         if secs <= 0 { return "now" }
@@ -96,18 +71,15 @@ struct UsageBarsView: View {
         }
     }
 
-    // stalenessLabel shows when the bars were last fetched, and an
-    // explicit "(stale)" suffix once the data is more than 10 minutes
-    // old (2× the baseline 5-minute scheduler interval). A user looking
-    // at a 30-minute-old number should know not to trust it for
-    // decisions.
+    // "(stale)" once data is older than ~12 minutes (2× the 5-min active
+    // baseline, with slack for the slower inactive round-robin cadence).
     private func stalenessLabel(fetched: Date) -> String {
         let age = Int(Date().timeIntervalSince(fetched))
-        let stale = age > 600 ? " (stale)" : ""
+        let stale = age > 720 ? " (stale)" : ""
         switch age {
-        case ..<60: return "just now\(stale)"
-        case ..<3600: return "\(age / 60)m ago\(stale)"
-        default: return "\(age / 3600)h ago\(stale)"
+        case ..<60: return "updated just now\(stale)"
+        case ..<3600: return "updated \(age / 60)m ago\(stale)"
+        default: return "updated \(age / 3600)h ago\(stale)"
         }
     }
 }

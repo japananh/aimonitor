@@ -101,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupPopover() {
         popover = NSPopover()
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 340, height: 320)
+        popover.contentSize = NSSize(width: 360, height: 360)
         let root = PopoverRootView(
             model: model,
             openPreferences: { [weak self] in self?.showPreferences() },

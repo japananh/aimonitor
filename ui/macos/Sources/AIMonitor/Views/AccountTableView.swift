@@ -39,31 +39,46 @@ struct AccountTableView: View {
     private func rowView(_ acct: AccountRow) -> some View {
         let isActive = (model.status?.active_label == acct.label)
 
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    if isActive {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .font(.caption)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        if isActive {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                        }
+                        Text(acct.label).font(.subheadline)
                     }
-                    Text(acct.label).font(.subheadline)
+                    Text(identityCaption(acct))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                 }
-                Text(identityCaption(acct))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+                Spacer()
+                if !isActive {
+                    Button("Switch") {
+                        model.switchTo(label: acct.label)
+                    }
+                    .controlSize(.small)
+                    .pointerCursor()
+                    .help("Make \(acct.label) the active Claude account")
+                }
             }
-            Spacer()
-            if !isActive {
-                Button("Switch") {
-                    model.switchTo(label: acct.label)
-                }
-                .controlSize(.small)
+            // Per-account 5h / 7d utilization. Absent until the daemon has
+            // fetched this account at least once (active every tick; inactive
+            // round-robin when their token is valid).
+            if let lim = model.limitsByAccount[acct.id] {
+                UsageBars(limits: lim)
+            } else {
+                Text("no usage data yet")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 28)
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
         .contextMenu {
             if let rename = renameAccount {
                 Button("Rename…") { rename(acct.label) }
