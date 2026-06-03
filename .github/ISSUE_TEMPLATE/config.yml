@@ -1,0 +1,9 @@
+# Force people through the structured forms above; no blank issues.
+blank_issues_enabled: false
+contact_links:
+  - name: 🔐 Security report
+    url: https://github.com/japananh/aimonitor/security/advisories/new
+    about: Found a credential-handling or other security issue? Report it privately here, not as a public issue.
+  - name: 💬 Question / discussion
+    url: https://github.com/japananh/aimonitor/discussions
+    about: Usage questions and open-ended ideas — start a discussion instead of an issue.

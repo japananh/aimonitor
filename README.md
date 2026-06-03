@@ -6,21 +6,20 @@
 
 [![CI](https://github.com/japananh/aimonitor/actions/workflows/ci.yml/badge.svg)](https://github.com/japananh/aimonitor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/japananh/aimonitor?include_prereleases&sort=semver)](https://github.com/japananh/aimonitor/releases)
+[![Latest release](https://img.shields.io/github/v/release/japananh/aimonitor?sort=semver)](https://github.com/japananh/aimonitor/releases)
 
 </div>
 
-<p align="center">
-  <!-- TODO: replace src with the real path once the PNG is committed (e.g. docs/screenshot.png) -->
-  <img src="docs/screenshot.png" alt="aimonitor menu bar popover with 5-hour and 7-day usage bars" width="420" />
-</p>
+> **English** | [中文](README-zh.md) | [Tiếng Việt](README-vi.md)
 
 ## Features
 
-- 🔍 **Live 5-hour and 7-day usage bars** in your menu bar — server-side truth, polled from Anthropic's `/api/oauth/usage` introspection endpoint. No tokens consumed.
+- 🔍 **Live 5-hour and 7-day usage bars, per account** in your menu bar — server-side truth, polled from Anthropic's `/api/oauth/usage` introspection endpoint. No tokens consumed.
 - 🔀 **Silent account switching** — `aimonitor switch <label>` refreshes the OAuth access token via Anthropic's token endpoint and writes the live credential. No terminal hop, no `claude /login`.
-- 🤖 **Auto-swap** at 80 % utilization (configurable). Picks the account with the most headroom. Running `claude` sessions are never interrupted — they pick up the new credential automatically.
+- 🤖 **Auto-swap** at 80 % utilization (configurable single threshold). Picks the account with the most headroom. Running `claude` sessions are never interrupted — they pick up the new credential automatically.
+- 🤝 **Plays well with other tools.** Resolves the active account by identity, so it follows along when Claude Code or another switcher changes the live login — and tells you when that happens, or offers to import an account it doesn't yet manage.
 - 🔐 **OS-keyring credential storage** (macOS Keychain via `/usr/bin/security`, Linux libsecret). SQLite holds references; tokens never leave the keyring.
+- ⬆️ **Built-in self-update** — checks GitHub for new releases and updates via Homebrew on confirmation. No unattended installs.
 - 📡 **Local-first.** No telemetry. No phone-home.
 
 ## Install
@@ -31,7 +30,7 @@
 brew install --cask japananh/tap/aimonitor
 ```
 
-> **First launch:** the `.app` is unsigned in v1.0.0-beta (notarization is a v1.1 deliverable). Clear the Gatekeeper quarantine once:
+> **First launch:** the `.app` is not yet notarized (notarization is on the roadmap). Clear the Gatekeeper quarantine once:
 > ```sh
 > xattr -dr com.apple.quarantine /Applications/AIMonitor.app
 > ```
@@ -76,6 +75,12 @@ aimonitor list
 aimonitor doctor
 ```
 
+Already using another switcher (e.g. claude-bar)? Import its accounts in one step instead of adding them by hand:
+
+```sh
+aimonitor import
+```
+
 Auto-swap is on by default at 80 % 5-hour utilization. Nothing else to configure for the common case.
 
 ## Configuration
@@ -94,8 +99,9 @@ aimonitor config set autostart true                # daemon at login
 | `auto_swap.enabled` | `true` | Master toggle for the OAuth-limits-driven auto-swap |
 | `auto_swap.threshold_pct` | `80` | 5-hour utilization (%) at which to auto-swap |
 | `auto_swap.grace_sec` | `60` | Seconds between the "auto-swap pending" notification and the actual swap, so you can wrap up a live `claude` session. `0` swaps immediately. |
+| `auto_update.enabled` | `true` | Check GitHub for new releases on launch and notify you. Updates are never installed without confirmation. |
 | `autostart` | `false` | Start the daemon at login |
-| `autoswitch` | `false` | (Legacy) tripwire-driven JSONL accumulator. Disabled in v1.0.0-beta.4 — the new `auto_swap.*` keys supersede it. |
+| `autoswitch` | `false` | (Legacy) tripwire-driven JSONL accumulator, superseded by the `auto_swap.*` keys. Setting it is rejected. |
 
 </details>
 
@@ -124,9 +130,9 @@ When the active account hits the configured 5-hour utilization threshold, aimoni
                           └───────────────────────────┘
                                          │
                                          ▼
-                            next `claude` invocation
-                            uses the new account
-                            — no /login required
+                            running and new `claude`
+                            sessions use the new account
+                            — no /login, no restart
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for the full daemon / store / widget breakdown.
@@ -136,9 +142,10 @@ See [`docs/architecture.md`](docs/architecture.md) for the full daemon / store /
 - **No telemetry. No phone-home.** Anywhere.
 - OAuth tokens live only in the OS keyring. SQLite holds references, never secrets.
 - Token bytes are never logged, even at `--debug` level. Log scrubbing matches `sk-ant-(oat|ort)…`.
-- **The only outbound traffic** aimonitor initiates is to two Anthropic OAuth surfaces:
-  - `GET https://api.anthropic.com/api/oauth/usage` — introspection-only, ~5 KB per call. Consumes no tokens. Background interval: 5 min ± 30 s jitter for the active account, with exponential backoff on errors (capped at 1 h). Inactive accounts are fetched only when you open the popover.
-  - `POST https://platform.claude.com/v1/oauth/token` — only on account switches when the cached access token is near or past expiry. Silent (no browser).
+- **Outbound traffic** aimonitor initiates is limited to:
+  - `GET https://api.anthropic.com/api/oauth/usage` — introspection-only, ~5 KB per call. Consumes no tokens. Background interval: 5 min ± 30 s jitter for the active account, with exponential backoff on errors (capped at 1 h). Inactive accounts are polled one-at-a-time on a slow round-robin (only while their token is still valid — never refreshed in the background), or on demand via the per-account / "Refresh usage" buttons.
+  - `POST https://platform.claude.com/v1/oauth/token` — refreshes an access token that's near or past expiry, on a switch, a manual usage refresh, or just before an auto-swap decision. Silent (no browser).
+  - `GET https://api.github.com/repos/japananh/aimonitor/releases` — the update check. Unauthenticated, sends no data about you; runs on launch (if `auto_update.enabled`) and when you click "Check for Updates". Installing an update runs Homebrew, only on your confirmation.
 - The legacy `aimonitor probe` CLI subcommand fires a real `/v1/messages` request and is deprecated. The daemon no longer uses it.
 
 See [`docs/security.md`](docs/security.md) for the full threat model.
@@ -170,7 +177,7 @@ Your original `Claude Code-credentials` keyring entry is **never touched** by ai
 
 ## Build from source
 
-Requires Go 1.25+. Pure Go on all platforms — `CGO_ENABLED=0` works on macOS too since v1.0.0-beta.4 (keychain access shells out to `/usr/bin/security` instead of linking the Security framework via cgo).
+Requires Go 1.25+. Pure Go on all platforms — `CGO_ENABLED=0` works on macOS too (keychain access shells out to `/usr/bin/security` instead of linking the Security framework via cgo).
 
 ```sh
 git clone https://github.com/japananh/aimonitor
@@ -189,16 +196,13 @@ On macOS the menu bar widget needs the Swift toolchain (`xcode-select --install`
 |---|---|
 | Architecture (daemon, store, widget) | [`docs/architecture.md`](docs/architecture.md) |
 | Threat model + scrubbing rules | [`docs/security.md`](docs/security.md) |
-| Why the macOS `.app` is unsigned in v1.0.0-beta | [`docs/unsigned-app.md`](docs/unsigned-app.md) |
+| Why the macOS `.app` is not yet notarized | [`docs/unsigned-app.md`](docs/unsigned-app.md) |
 | User stories shipped in v1 | [`USER_STORIES.md`](USER_STORIES.md) |
 
 ## See also
 
-Related tools in the Claude-Code-ergonomics space:
-
 - [ncthanhngo/claude-bar](https://github.com/ncthanhngo/claude-bar) — sibling macOS menu-bar app and the source of patterns aimonitor learned from (keychain shell-out, OAuth refresh flow, account registry).
-- [ryoppippi/ccusage](https://github.com/ryoppippi/ccusage) — pure-CLI usage analyzer; parses local Claude transcripts for per-day / per-session breakdowns. Read-only, no credential management.
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+[MIT](LICENSE) © [@japananh](https://github.com/japananh)
