@@ -19,7 +19,7 @@
 
 - 🔍 **Live 5-hour and 7-day usage bars** in your menu bar — server-side truth, polled from Anthropic's `/api/oauth/usage` introspection endpoint. No tokens consumed.
 - 🔀 **Silent account switching** — `aimonitor switch <label>` refreshes the OAuth access token via Anthropic's token endpoint and writes the live credential. No terminal hop, no `claude /login`.
-- 🤖 **Auto-swap** at 80 % utilization (configurable). Picks the account with the most headroom; optionally SIGINTs running `claude` REPLs so they restart against the new credential.
+- 🤖 **Auto-swap** at 80 % utilization (configurable). Picks the account with the most headroom. Running `claude` sessions are never interrupted — they pick up the new credential automatically.
 - 🔐 **OS-keyring credential storage** (macOS Keychain via `/usr/bin/security`, Linux libsecret). SQLite holds references; tokens never leave the keyring.
 - 📡 **Local-first.** No telemetry. No phone-home.
 
@@ -196,7 +196,7 @@ On macOS the menu bar widget needs the Swift toolchain (`xcode-select --install`
 
 Related tools in the Claude-Code-ergonomics space:
 
-- [ncthanhngo/claude-bar](https://github.com/ncthanhngo/claude-bar) — sibling macOS menu-bar app and the source of patterns aimonitor learned from (keychain shell-out, OAuth refresh flow, post-swap SIGINT).
+- [ncthanhngo/claude-bar](https://github.com/ncthanhngo/claude-bar) — sibling macOS menu-bar app and the source of patterns aimonitor learned from (keychain shell-out, OAuth refresh flow, account registry).
 - [ryoppippi/ccusage](https://github.com/ryoppippi/ccusage) — pure-CLI usage analyzer; parses local Claude transcripts for per-day / per-session breakdowns. Read-only, no credential management.
 
 ## License

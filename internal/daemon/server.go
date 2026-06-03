@@ -112,13 +112,16 @@ func (s *Server) Run(ctx context.Context) error {
 	// usage endpoint we know about). When v2 adds a second provider the
 	// scheduler will move behind a Provider interface method.
 	//
-	// We construct the chain: PostSwap -> Switcher -> AutoSwapper ->
-	// UsageScheduler. Each component is stateless w.r.t. the others
-	// beyond the function-pointer wires established here.
+	// We construct the chain: Switcher -> AutoSwapper -> UsageScheduler.
+	// Each component is stateless w.r.t. the others beyond the
+	// function-pointer wires established here.
+	//
+	// Deliberately NO post-swap session kill: running `claude` sessions
+	// re-read the keychain credential mid-session and adopt the swapped-in
+	// account on their own (verified live 2026-06-03), so the old SIGINT
+	// sweep only interrupted work for no benefit. See Switcher.Switch.
 	if _, ok := s.provider.(*claude.Provider); ok {
-		post := &PostSwap{}
 		switcher := NewSwitcher(s.store, s.provider)
-		switcher.PostSwapHook = post.Run
 		fetcher := claude.NewUsageFetcher()
 
 		autoSwap := &AutoSwapper{
