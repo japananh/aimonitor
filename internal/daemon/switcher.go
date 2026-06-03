@@ -45,13 +45,6 @@ type Switcher struct {
 	// $HOME/.aimonitor-lock when zero.
 	LockPath string
 
-	// PostSwapHook (optional) runs after a successful, non-trivial swap.
-	// Used by the daemon to fire SIGINT to running `claude` processes
-	// so they re-read the freshly-promoted credential on restart.
-	// Errors are logged but do not roll back the swap — the credential
-	// has already moved. Not fired when from == to (no-op swap).
-	PostSwapHook func(ctx context.Context, from, to string)
-
 	// Stderr receives operational messages (e.g. "refreshing X's
 	// token...", "warning: post-swap hook failed"). Nil sends them to
 	// os.Stderr.
@@ -111,12 +104,8 @@ func (s *Switcher) Switch(ctx context.Context, label string) error {
 	prevLive, _ := s.Provider.ActiveCredential(ctx) // best-effort
 	defer prevLive.Zero()
 	outgoing, outgoingFound := s.matchAccount(ctx, prevLive)
-	fromLabel := ""
-	if outgoingFound {
-		fromLabel = outgoing.Label
-		if outgoing.ID != acct.ID {
-			s.snapshotOutgoing(ctx, outgoing, prevLive)
-		}
+	if outgoingFound && outgoing.ID != acct.ID {
+		s.snapshotOutgoing(ctx, outgoing, prevLive)
 	}
 
 	stashed, err := claude.RetrieveStash(ctx, acct.KeyringRef)
@@ -151,15 +140,15 @@ func (s *Switcher) Switch(ctx context.Context, label string) error {
 		fmt.Fprintf(s.stderr(), "warning: switch ok but UpdateLastUsed failed: %v\n", err)
 	}
 
-	// Fire PostSwapHook only on a real swap. Switching to the
-	// already-active account is a no-op from the user's perspective —
-	// no running `claude` process needs to be SIGINT'd. Suppressing the
-	// hook here avoids killing processes that don't need killing.
-	if s.PostSwapHook != nil && fromLabel != label {
-		// Run on a fresh goroutine so a long-running hook (e.g. SIGINT
-		// broadcast + sleep) doesn't block the caller.
-		go s.PostSwapHook(context.Background(), fromLabel, label)
-	}
+	// Deliberately no post-swap action on running `claude` processes.
+	// Current Claude Code re-reads the credential from the keychain during
+	// a live session, so running sessions adopt the swapped-in account on
+	// their own — verified empirically (2026-06-03): two live sessions
+	// followed a manual A→B switch without restarting (`/usage` showed B in
+	// both). An earlier version SIGINT'd running sessions here, built on
+	// the assumption that sessions cache the old token until restart; that
+	// assumption is false on current Claude Code, so the kill only
+	// interrupted live work for no benefit.
 	return nil
 }
 

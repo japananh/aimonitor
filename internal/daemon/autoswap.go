@@ -191,7 +191,7 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 			activeLabel, activeLim.FiveHourPct, threshold, cand.Label, graceSec)
 		a.notify(
 			fmt.Sprintf("Auto-swap in %ds", graceSec),
-			fmt.Sprintf("%q hit %.0f%%. Switching to %q. Close `claude` now if you want it to finish cleanly.", activeLabel, activeLim.FiveHourPct, cand.Label),
+			fmt.Sprintf("%q hit %.0f%%. Switching to %q — running sessions will follow automatically.", activeLabel, activeLim.FiveHourPct, cand.Label),
 		)
 		return false, nil
 	}
@@ -275,7 +275,7 @@ func (a *AutoSwapper) fireSwap(ctx context.Context, activeLabel string, activePc
 		Reason: fmt.Sprintf("active %q 5h%%=%.1f >= threshold %.0f; candidate %q 5h%%=%.1f",
 			activeLabel, activePct, threshold, cand.Label, cand.FiveHourPct),
 	})
-	a.notify(fmt.Sprintf("Switched to %s", cand.Label), "Restart `claude` to use the new account.")
+	a.notify(fmt.Sprintf("Switched to %s", cand.Label), "Running `claude` sessions pick up the new account automatically.")
 	return true, nil
 }
 
