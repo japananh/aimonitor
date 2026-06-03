@@ -108,6 +108,9 @@ func (s *Server) Run(ctx context.Context) error {
 		// Detect active-account changes the daemon didn't perform (another
 		// credential manager rewrote the live slot): notify + audit them.
 		ExternalWatch: &ExternalSwitchWatcher{Store: s.store},
+		// Surface a live account aimonitor doesn't manage so the widget can
+		// offer to import it.
+		UnknownActiveEmail: resolveUnknownActiveEmail(s),
 	}
 	go func() { _ = pub.Run(ctx) }()
 

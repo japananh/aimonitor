@@ -96,6 +96,19 @@ enum CLIBridge {
         try run(["usage", "refresh"])
     }
 
+    /// Fetches fresh usage for one account. Throws (with the CLI's stderr)
+    /// when the fetch can't complete, so the caller can show the error.
+    static func refreshUsage(label: String) throws {
+        try run(["usage", "refresh", label])
+    }
+
+    /// Imports whatever account is currently signed into the live slot,
+    /// stashing it under `label`. Used to adopt an account another app
+    /// signed into. Throws on failure (e.g. label already taken).
+    static func adoptCurrent(label: String) throws {
+        try run(["add", "--adopt-current", "--label", label])
+    }
+
     /// Reads a config value (trimmed). Throws on unknown key.
     static func configGet(_ key: String) throws -> String {
         try run(["config", "get", key]).trimmingCharacters(in: .whitespacesAndNewlines)

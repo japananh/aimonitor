@@ -70,6 +70,13 @@ type Status struct {
 	// active-account change it did not perform (another credential
 	// manager rewrote the live slot). Zero/absent when never detected.
 	LastExternalSwitchAt time.Time `json:"last_external_switch_at,omitempty"`
+
+	// UnknownActiveEmail is the Claude email currently signed into the live
+	// slot when it belongs to no account aimonitor manages — another app or
+	// a `claude /login` signed into an account we haven't imported. When
+	// set, the widget offers to import it. Empty when the active account is
+	// known (or nothing is signed in).
+	UnknownActiveEmail string `json:"unknown_active_email,omitempty"`
 }
 
 // snapshot reads AutoSwitcher fields under its lock so we don't race
@@ -110,6 +117,10 @@ type StatusPublisher struct {
 	// detect active-account changes the daemon didn't perform. Its
 	// LastExternalAt feeds Status.LastExternalSwitchAt.
 	ExternalWatch *ExternalSwitchWatcher
+
+	// UnknownActiveEmail, when set, returns the email of a live account
+	// aimonitor doesn't manage (for the import prompt), or "".
+	UnknownActiveEmail func(ctx context.Context) string
 }
 
 // Run blocks until ctx is cancelled, publishing a fresh Status row on
@@ -141,6 +152,9 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 	if p.ExternalWatch != nil {
 		p.ExternalWatch.Observe(ctx, label)
 		st.LastExternalSwitchAt = p.ExternalWatch.LastExternalAt()
+	}
+	if p.UnknownActiveEmail != nil {
+		st.UnknownActiveEmail = p.UnknownActiveEmail(ctx)
 	}
 	if label != "" {
 		// Look up the active account's persisted limits and attach
@@ -249,4 +263,44 @@ func ResolveActiveAccount(ctx context.Context, st *store.Store, p provider.Provi
 	}
 
 	return store.Account{}, false, nil
+}
+
+// UnknownActiveEmail returns the Claude email currently in the live slot
+// when it belongs to NO account aimonitor manages — another app, or a
+// `claude /login`, signed into an account that hasn't been imported.
+//
+// Returns "" when: the active account is known (ResolveActiveAccount
+// found it), the live slot is empty (nothing signed in → nothing to
+// import), or no identity can be read from ~/.claude.json (we can't name
+// the account to offer importing it). The email-present requirement is
+// itself the guard against nagging on a bare fresh install.
+func UnknownActiveEmail(ctx context.Context, st *store.Store, p provider.Provider, cc *claudeconfig.Store) string {
+	if _, found, err := ResolveActiveAccount(ctx, st, p, cc); err != nil || found {
+		return "" // known account, or couldn't resolve — not an import prompt
+	}
+	live, err := p.ActiveCredential(ctx)
+	if err != nil {
+		return ""
+	}
+	defer live.Zero()
+	if len(live.Bytes) == 0 {
+		return "" // nothing signed in
+	}
+	if cc == nil {
+		return ""
+	}
+	oa, err := cc.ReadOAuthAccount(ctx)
+	if err != nil || oa == nil || oa.EmailAddress == "" {
+		return "" // can't name the account → can't offer a meaningful import
+	}
+	return oa.EmailAddress
+}
+
+// resolveUnknownActiveEmail is the StatusPublisher's UnknownActiveEmail
+// resolver, with the claudeconfig handle built once and captured.
+func resolveUnknownActiveEmail(s *Server) func(ctx context.Context) string {
+	cc, _ := claudeconfig.New()
+	return func(ctx context.Context) string {
+		return UnknownActiveEmail(ctx, s.store, s.provider, cc)
+	}
 }

@@ -11,6 +11,9 @@ struct PopoverRootView: View {
     // Invoked with an account's label to start a rename (app delegate shows
     // the modal prompt). nil hides the rename affordance.
     var renameAccount: ((String) -> Void)? = nil
+    // Invoked with the signed-in email when the live account isn't managed
+    // by aimonitor, to offer importing it. nil hides the import prompt.
+    var importAccount: ((String) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -24,6 +27,24 @@ struct PopoverRootView: View {
                 )
                 .font(.caption2)
                 .foregroundStyle(.orange)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                Divider()
+            } else if let email = model.status?.unknown_active_email, !email.isEmpty {
+                // Another app (or `claude /login`) is signed into an account
+                // aimonitor doesn't manage — offer to import it.
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Claude is signed into \(email), which AIMonitor doesn’t manage.",
+                          systemImage: "person.crop.circle.badge.questionmark")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    if let importAccount {
+                        Button("Import this account…") { importAccount(email) }
+                            .controlSize(.small)
+                            .pointerCursor()
+                            .help("Register the currently signed-in account with AIMonitor")
+                    }
+                }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 Divider()

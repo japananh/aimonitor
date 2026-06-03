@@ -106,7 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model: model,
             openPreferences: { [weak self] in self?.showPreferences() },
             quit: { NSApplication.shared.terminate(nil) },
-            renameAccount: { [weak self] label in self?.promptRename(currentLabel: label) }
+            renameAccount: { [weak self] label in self?.promptRename(currentLabel: label) },
+            importAccount: { [weak self] email in self?.promptImportCurrent(email: email) }
         )
         popover.contentViewController = NSHostingController(rootView: root)
     }
@@ -159,6 +160,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 model.rename(label: currentLabel, to: newLabel)
             }
         }
+    }
+
+    // promptImportCurrent offers to import the account currently signed into
+    // the live slot (one another app/`claude /login` created). The label
+    // defaults to the email's local part. `add --adopt-current` captures the
+    // live blob without changing the active account; on failure (e.g. label
+    // already taken) the CLI error is surfaced so the user can retry.
+    private func promptImportCurrent(email: String) {
+        popover.performClose(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "Import account"
+        alert.informativeText = "Claude is signed into \(email), which AIMonitor doesn’t manage yet. Give it a label to import it:"
+        alert.addButton(withTitle: "Import")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = String(email.split(separator: "@").first ?? Substring(email))
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let label = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else { return }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try CLIBridge.adoptCurrent(label: label)
+                Task { @MainActor in await self?.model.refresh() }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.showError("Import failed", error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func showError(_ title: String, _ body: String) {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = body
+        a.addButton(withTitle: "OK")
+        a.runModal()
     }
 
     // checkForUpdates queries GitHub via the CLI on a background queue, then
