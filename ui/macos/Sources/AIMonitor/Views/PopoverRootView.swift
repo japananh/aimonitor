@@ -17,9 +17,12 @@ struct PopoverRootView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Top bar: settings gear, right-aligned. Replaces the old
-            // "Preferences…" text button in the footer.
+            // Top bar: the "Accounts" title and the settings gear on one
+            // line (gear right-aligned). Replaces the old footer
+            // "Preferences…" text button and the account table's own header.
             HStack {
+                Text("Accounts")
+                    .font(.subheadline).bold()
                 Spacer()
                 Button(action: openPreferences) {
                     Image(systemName: "gearshape")

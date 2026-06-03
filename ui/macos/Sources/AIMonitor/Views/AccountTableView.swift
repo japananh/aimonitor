@@ -14,11 +14,6 @@ struct AccountTableView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Accounts")
-                .font(.subheadline).bold()
-                .padding(.horizontal, 12)
-                .padding(.top, 4)
-
             if model.accounts.isEmpty {
                 Text("No accounts. Run `aimonitor add` in a terminal.")
                     .font(.caption)
