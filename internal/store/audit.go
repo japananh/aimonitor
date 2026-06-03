@@ -18,6 +18,11 @@ const (
 	// TriggerFirstRun is the first-run import of an existing Claude Code
 	// credential.
 	TriggerFirstRun SwitchTrigger = "first-run"
+	// TriggerExternal records an active-account change the daemon OBSERVED
+	// but did not perform — another credential manager (or a manual
+	// `claude /login`) rewrote the live slot. Written by the external-switch
+	// watcher, never by a switch aimonitor executed itself.
+	TriggerExternal SwitchTrigger = "external"
 )
 
 // SwitchAuditRecord is one row in the switch_audit table. From and To
@@ -60,6 +65,29 @@ func (s *Store) InsertSwitchAudit(ctx context.Context, r SwitchAuditRecord) erro
 		return fmt.Errorf("insert switch_audit: %w", err)
 	}
 	return nil
+}
+
+// LatestSwitchTo returns the newest audit row whose to_label is toLabel,
+// EXCLUDING TriggerExternal rows. Used by the external-switch watcher to
+// attribute an observed active-account change: a recent non-external row
+// means aimonitor itself performed the switch. External rows must not
+// satisfy the lookup — they are written BY the watcher, and counting them
+// would let one detected external switch legitimize the next one to the
+// same label. Returns sql.ErrNoRows via the wrapped error when none exists.
+func (s *Store) LatestSwitchTo(ctx context.Context, toLabel string) (SwitchAuditRecord, error) {
+	row := s.DB.QueryRowContext(ctx,
+		`SELECT id, ts, COALESCE(from_label, ''), to_label, trigger, COALESCE(reason, '')
+		 FROM switch_audit WHERE to_label = ? AND trigger != ?
+		 ORDER BY ts DESC LIMIT 1`, toLabel, string(TriggerExternal))
+	var r SwitchAuditRecord
+	var ts int64
+	var trigger string
+	if err := row.Scan(&r.ID, &ts, &r.FromLabel, &r.ToLabel, &trigger, &r.Reason); err != nil {
+		return SwitchAuditRecord{}, fmt.Errorf("latest switch to %q: %w", toLabel, err)
+	}
+	r.Ts = time.UnixMilli(ts)
+	r.Trigger = SwitchTrigger(trigger)
+	return r, nil
 }
 
 // ListSwitchAudit returns the most recent n rows, newest first.
