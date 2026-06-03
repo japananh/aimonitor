@@ -26,14 +26,6 @@ final class AppModel: ObservableObject {
     @Published var usageErrors: [Int64: String] = [:]
     @Published var lastError: String? = nil
 
-    // showAccountPanel is the user preference for whether the per-account
-    // headroom panel is visible. Default true; persisted via UserDefaults.
-    @Published var showAccountPanel: Bool {
-        didSet {
-            UserDefaults.standard.set(showAccountPanel, forKey: "showAccountPanel")
-        }
-    }
-
     /// activeEmail is the Claude email of the currently-active account,
     /// resolved by joining the daemon's active_label against the accounts
     /// table. nil when there's no active account or its identity hasn't
@@ -62,13 +54,6 @@ final class AppModel: ObservableObject {
 
     init(dbPath: String = SQLiteReader.defaultPath()) {
         self.dbPath = dbPath
-        // UserDefaults returns false for unset bool keys, so default to true
-        // when the key has never been written.
-        if UserDefaults.standard.object(forKey: "showAccountPanel") == nil {
-            self.showAccountPanel = true
-        } else {
-            self.showAccountPanel = UserDefaults.standard.bool(forKey: "showAccountPanel")
-        }
     }
 
     func start() {

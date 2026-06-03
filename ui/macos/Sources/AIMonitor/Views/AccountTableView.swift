@@ -56,25 +56,26 @@ struct AccountTableView: View {
                         .textSelection(.enabled)
                 }
                 Spacer()
-                if !isActive {
-                    // Per-account usage refresh. The active account is kept
-                    // fresh by the daemon and must not be refreshed via the
-                    // stash path, so this is inactive-only.
-                    Button {
-                        model.refreshUsage(label: acct.label, id: acct.id)
-                    } label: {
-                        if model.refreshingAccounts.contains(acct.id) {
-                            ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                        }
+                // Per-account usage refresh on every row. The CLI routes the
+                // active account through the daemon's safe live-refresh path
+                // and inactive accounts through their stash, so this is safe
+                // on all rows.
+                Button {
+                    model.refreshUsage(label: acct.label, id: acct.id)
+                } label: {
+                    if model.refreshingAccounts.contains(acct.id) {
+                        ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
                     }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .disabled(model.refreshingAccounts.contains(acct.id))
-                    .pointerCursor()
-                    .help("Fetch \(acct.label)'s latest usage now")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(model.refreshingAccounts.contains(acct.id))
+                .pointerCursor()
+                .help("Fetch \(acct.label)'s latest usage now")
 
+                if !isActive {
                     Button("Switch") {
                         model.switchTo(label: acct.label)
                     }

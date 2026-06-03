@@ -25,9 +25,6 @@ struct PreferencesView: View {
 
     var body: some View {
         Form {
-            Section("Panels") {
-                Toggle("Show the account list", isOn: $model.showAccountPanel)
-            }
             Section("Auto-switch") {
                 Toggle("Switch accounts automatically near the limit", isOn: Binding(
                     get: { autoSwapOn },
@@ -35,11 +32,15 @@ struct PreferencesView: View {
                 ))
                 .help("When on, AIMonitor switches the active account once it hits the threshold below")
                 if autoSwapOn {
-                    Stepper("Switch when 5-hour usage reaches \(threshold)%", value: Binding(
-                        get: { threshold },
-                        set: { newValue in threshold = newValue; setThreshold(newValue) }
-                    ), in: 10...99, step: 5)
-                    .help("If the active account's 5-hour usage reaches this, switch to an account below it (lowest wins)")
+                    HStack(spacing: 6) {
+                        Text("Switch when 5-hour usage reaches")
+                        TextField("", value: thresholdBinding, format: .number)
+                            .frame(width: 46)
+                            .multilineTextAlignment(.trailing)
+                        Text("%")
+                        Stepper("", value: thresholdBinding, in: 1...100).labelsHidden()
+                    }
+                    .help("Any value from 1 to 100. When the active account's 5-hour usage reaches it, switch to an account below it (lowest wins).")
                 }
                 Text("Switches to the least-used account whose 5-hour usage is still below the threshold. If another credential manager is also running, AIMonitor recovers from token rotation automatically; to avoid both tools switching at once, turn this off and let the other tool drive.")
                     .font(.caption2)
@@ -109,10 +110,20 @@ struct PreferencesView: View {
         }
     }
 
-    private func setThreshold(_ pct: Int) {
-        DispatchQueue.global(qos: .utility).async {
-            try? CLIBridge.configSet("auto_swap.threshold_pct", String(pct))
-        }
+    // thresholdBinding clamps any entered/stepped value to 1...100 (the
+    // backend's accepted range) and persists it. Shared by the text field
+    // and the stepper.
+    private var thresholdBinding: Binding<Int> {
+        Binding(
+            get: { threshold },
+            set: { newValue in
+                let clamped = min(max(newValue, 1), 100)
+                threshold = clamped
+                DispatchQueue.global(qos: .utility).async {
+                    try? CLIBridge.configSet("auto_swap.threshold_pct", String(clamped))
+                }
+            }
+        )
     }
 
     private func applyAutostart(_ enable: Bool) {

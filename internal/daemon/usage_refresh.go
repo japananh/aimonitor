@@ -44,6 +44,31 @@ func RefreshAccountUsage(ctx context.Context, st *store.Store, fetcher *claude.U
 	return limits, nil
 }
 
+// RefreshActiveUsage fetches and persists usage for the ACTIVE account
+// using the live credential via the Switcher — refreshing the token under
+// the switch lock if expired, keeping live and stash in sync. Use this,
+// NOT RefreshAccountUsage, for the active account: its stash must stay
+// byte-equal to the live slot, which only RefreshActive guarantees.
+func RefreshActiveUsage(ctx context.Context, st *store.Store, sw *Switcher, fetcher *claude.UsageFetcher, acct store.Account) (provider.Limits, error) {
+	cred, err := sw.RefreshActive(ctx, acct, false)
+	if err != nil {
+		return provider.Limits{}, err
+	}
+	defer cred.Zero()
+	if len(cred.Bytes) == 0 {
+		return provider.Limits{}, fmt.Errorf("active account %q has no live credential", acct.Label)
+	}
+	limits, err := fetcher.FetchLimits(ctx, cred)
+	if err != nil {
+		return provider.Limits{}, err
+	}
+	limits.AccountID = acct.ID
+	if err := st.PutLimits(ctx, acct.ID, limits); err != nil {
+		return provider.Limits{}, fmt.Errorf("persist usage for %q: %w", acct.Label, err)
+	}
+	return limits, nil
+}
+
 // ensureFreshStash returns acct's stashed credential with a non-expired
 // access token. If the stash is already valid it's returned as-is (no lock,
 // no network). If expired, it refreshes under the shared switch lock and
