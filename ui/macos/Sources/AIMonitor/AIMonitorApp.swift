@@ -1,11 +1,12 @@
 // AIMonitorApp is the @main entry point. It bootstraps an
 // NSApplication, installs an NSStatusItem in the menu bar, and shows a
-// SwiftUI popover when the user clicks the icon.
+// SwiftUI panel under the icon when clicked.
 //
-// Why AppKit + SwiftUI instead of pure SwiftUI MenuBarExtra: MenuBarExtra
-// from .menuBarExtraStyle(.window) gives us a menu-bar attached panel
-// but its size/positioning quirks are worse than vanilla NSPopover for a
-// content panel with a progress bar + table. NSPopover is well-trodden.
+// Why a borderless NSPanel rather than NSPopover: NSPopover always draws
+// an anchoring arrow (caret) pointing at the status item, with no public
+// way to hide it. A borderless, key-capable NSPanel gives the same
+// dropdown without the arrow — we position it under the icon ourselves
+// and dismiss it on an outside click.
 
 import AppKit
 import Combine
@@ -29,14 +30,16 @@ struct AIMonitorAppEntry {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
+    // A borderless NSPanel (not NSPopover) so there's no anchoring arrow.
+    private var panel: NSPanel!
+    private var clickMonitor: Any?
     private var preferencesWindow: NSWindow?
     private let model = AppModel()
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
-        setupPopover()
+        setupPanel()
         // Keep the menu-bar title in sync with the active account. status
         // carries active_label and accounts carries the identity, so the
         // title (icon + account name) recomputes whenever either changes.
@@ -54,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showPreferences() {
-        popover.performClose(nil)
+        closePanel()
         if preferencesWindow == nil {
             let view = PreferencesView(
                 model: model,
@@ -98,10 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.title = name.isEmpty ? "" : " \(name)"
     }
 
-    private func setupPopover() {
-        popover = NSPopover()
-        popover.behavior = .transient
-        popover.contentSize = NSSize(width: 360, height: 360)
+    private func setupPanel() {
+        // A borderless panel has no popover arrow. Rounded material + shadow
+        // give it the popover look without the caret pointing at the icon.
         let root = PopoverRootView(
             model: model,
             openPreferences: { [weak self] in self?.showPreferences() },
@@ -109,30 +111,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             renameAccount: { [weak self] label in self?.promptRename(currentLabel: label) },
             importAccount: { [weak self] email in self?.promptImportCurrent(email: email) }
         )
-        popover.contentViewController = NSHostingController(rootView: root)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+        let hosting = NSHostingController(rootView: root)
+        // Let the panel resize to the SwiftUI content (rows, banners, error
+        // lines all change the height).
+        hosting.sizingOptions = [.preferredContentSize]
+
+        let p = NSPanel(contentViewController: hosting)
+        p.styleMask = [.borderless, .nonactivatingPanel]
+        p.isFloatingPanel = true
+        p.level = .popUpMenu
+        p.backgroundColor = .clear
+        p.isOpaque = false
+        p.hasShadow = true
+        p.hidesOnDeactivate = false
+        p.isReleasedWhenClosed = false
+        p.isMovable = false
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        panel = p
+
+        // Keep the panel anchored under the icon when its height changes
+        // (e.g. an error row appears) — reposition keeps the TOP edge fixed.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(panelDidResize),
+            name: NSWindow.didResizeNotification, object: p)
+    }
+
+    @objc private func panelDidResize(_ note: Notification) {
+        if panel.isVisible { positionPanel() }
     }
 
     @objc private func togglePopover(_ sender: Any?) {
-        guard let button = statusItem.button else { return }
-        if popover.isShown {
-            popover.performClose(sender)
-        } else {
-            // Trigger a fresh poll right when the user opens the popover
-            // so they see up-to-date numbers without waiting for the
-            // 2-second timer tick.
-            Task { @MainActor in await model.refresh() }
-            // Activate first. For an .accessory (LSUIElement) app that is
-            // not the frontmost app, the status item's window frame isn't
-            // finalized at click time, so NSPopover falls back to a default
-            // position (screen centre / top-left) instead of anchoring to
-            // the button. Activating realises the window geometry so
-            // show(relativeTo:) lands directly beneath the menu-bar icon.
-            NSApp.activate(ignoringOtherApps: true)
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            // Keep the popover key so click-outside dismiss + keyboard work
-            // even though the app has no regular window.
-            popover.contentViewController?.view.window?.makeKey()
+        if panel.isVisible {
+            closePanel()
+            return
         }
+        // Fresh data the moment it opens, without waiting for the 2s tick.
+        Task { @MainActor in await model.refresh() }
+        // Activate so the status item's window geometry is realised before we
+        // read it for positioning (same reason the old popover needed it).
+        NSApp.activate(ignoringOtherApps: true)
+        positionPanel()
+        panel.makeKeyAndOrderFront(nil)
+        installClickMonitor()
+    }
+
+    // positionPanel places the panel just below the menu-bar icon, its right
+    // edge aligned to the icon's right edge, clamped to the visible screen.
+    // Anchored by its TOP so height changes grow downward.
+    private func positionPanel() {
+        guard let button = statusItem.button, let bwin = button.window else { return }
+        let b = bwin.convertToScreen(button.convert(button.bounds, to: nil))
+        let size = panel.frame.size
+        let gap: CGFloat = 6
+        var x = b.maxX - size.width
+        var y = b.minY - gap - size.height // origin is bottom-left; top sits gap below the icon
+        if let screen = bwin.screen ?? NSScreen.main {
+            let vf = screen.visibleFrame
+            x = max(vf.minX + 4, min(x, vf.maxX - size.width - 4))
+            y = max(vf.minY + 4, y)
+        }
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    // installClickMonitor dismisses the panel when the user clicks anywhere
+    // outside it (the global monitor only sees events outside our app's
+    // windows; clicks inside the panel don't fire it).
+    private func installClickMonitor() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            guard let self else { return }
+            // A click on our own status item must be left for togglePopover to
+            // handle (it closes the panel); closing here too would let the
+            // button action then re-open it. Only outside clicks dismiss.
+            if let button = self.statusItem.button, let bwin = button.window {
+                let btnScreen = bwin.convertToScreen(button.convert(button.bounds, to: nil))
+                if btnScreen.contains(NSEvent.mouseLocation) { return }
+            }
+            self.closePanel()
+        }
+    }
+
+    private func closePanel() {
+        if let m = clickMonitor {
+            NSEvent.removeMonitor(m)
+            clickMonitor = nil
+        }
+        panel?.orderOut(nil)
     }
 
     // promptRename shows a modal text field pre-filled with the current
@@ -140,7 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // alert inside the popover) because the transient popover dismisses as
     // soon as the modal takes focus, which would tear down a SwiftUI alert.
     private func promptRename(currentLabel: String) {
-        popover.performClose(nil)
+        closePanel()
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
@@ -168,7 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // live blob without changing the active account; on failure (e.g. label
     // already taken) the CLI error is surfaced so the user can retry.
     private func promptImportCurrent(email: String) {
-        popover.performClose(nil)
+        closePanel()
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
