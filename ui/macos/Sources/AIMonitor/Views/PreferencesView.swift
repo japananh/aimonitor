@@ -93,8 +93,15 @@ struct PreferencesView: View {
             // Default on: only an explicit "false" disables.
             let upd = (try? CLIBridge.configGet("auto_update.enabled")) != "false"
             let thr = Int((try? CLIBridge.configGet("auto_swap.threshold_pct")) ?? "80") ?? 80
-            let ver = (try? CLIBridge.run(["version"]))?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "version unavailable"
+            // Just the version number for About — no commit/build date.
+            // (The `aimonitor version` CLI still prints those for diagnostics.)
+            var ver = "version unavailable"
+            if let out = try? CLIBridge.run(["version", "--json"]),
+               let data = out.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let v = obj["version"] as? String {
+                ver = "aimonitor \(v)"
+            }
             DispatchQueue.main.async {
                 autoSwapOn = swap
                 autoUpdateOn = upd
