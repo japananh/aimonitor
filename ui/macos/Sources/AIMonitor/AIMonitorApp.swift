@@ -187,12 +187,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !label.isEmpty else { return }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let failure: String?
             do {
                 try CLIBridge.adoptCurrent(label: label)
-                Task { @MainActor in await self?.model.refresh() }
+                failure = nil
             } catch {
-                DispatchQueue.main.async {
-                    self?.showError("Import failed", error.localizedDescription)
+                failure = error.localizedDescription
+            }
+            Task { @MainActor in
+                guard let self else { return }
+                if let failure {
+                    self.showError("Import failed", failure)
+                } else {
+                    await self.model.refresh()
                 }
             }
         }
