@@ -17,9 +17,13 @@ final class AppModel: ObservableObject {
     // Per-account rate-limit snapshots keyed by account id, for the
     // per-account 5h/7d bars. A row may be stale (see LimitsRow.fetchedAt).
     @Published var limitsByAccount: [Int64: LimitsRow] = [:]
-    // True while a manual "Refresh usage" fetch is in flight (disables the
-    // button + shows progress text).
+    // True while a manual "Refresh usage" (all-accounts) fetch is in flight.
     @Published var refreshingUsage = false
+    // Account ids whose per-row refresh is in flight (spinner on that row).
+    @Published var refreshingAccounts: Set<Int64> = []
+    // Per-account last refresh error, shown on the row until the next
+    // successful refresh of that account.
+    @Published var usageErrors: [Int64: String] = [:]
     @Published var lastError: String? = nil
 
     // showAccountPanel is the user preference for whether the per-account
@@ -139,6 +143,24 @@ final class AppModel: ObservableObject {
                 await self.refresh()
                 self.refreshingUsage = false
                 if let failure { self.lastError = failure }
+            }
+        }
+    }
+
+    /// Fetches fresh usage for a single account; on failure records the
+    /// error against that account id so the row can show it.
+    func refreshUsage(label: String, id: Int64) {
+        guard !refreshingAccounts.contains(id) else { return }
+        refreshingAccounts.insert(id)
+        usageErrors[id] = nil
+        workQueue.async {
+            let failure: String? = {
+                do { try CLIBridge.refreshUsage(label: label); return nil } catch { return "\(error)" }
+            }()
+            Task { @MainActor in
+                await self.refresh()
+                self.refreshingAccounts.remove(id)
+                self.usageErrors[id] = failure
             }
         }
     }

@@ -69,6 +69,11 @@ struct DaemonStatus: Codable {
     var five_hour_reset_at: Date?
     var seven_day_reset_at: Date?
     var limits_fetched_at: Date?
+
+    // Set when a live account aimonitor doesn't manage is signed in
+    // (another app or `claude /login`) — drives the import prompt. Absent
+    // when the active account is known.
+    var unknown_active_email: String?
 }
 
 enum SQLiteReaderError: Error {

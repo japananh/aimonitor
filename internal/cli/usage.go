@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -24,22 +25,54 @@ func newUsageCmd() *cobra.Command {
 
 func newUsageRefreshCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "refresh",
-		Short: "Fetch current 5h/7d usage for all inactive accounts",
-		Long: `Fetch and store current usage for every account except the active one,
-refreshing an account's stashed token if it has expired.
+		Use:   "refresh [label]",
+		Short: "Fetch current 5h/7d usage for inactive accounts (all, or one by label)",
+		Long: `Fetch and store current usage, refreshing an account's stashed token if
+it has expired.
 
-The active account is refreshed continuously by the daemon and is skipped
-here — refreshing its stash out-of-band would desync it from the live
-keychain slot. Use this to populate usage for accounts that have been idle
-long enough for their cached usage (or token) to go stale.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+With no argument, refreshes every account except the active one
+(best-effort — per-account failures are reported but don't fail the run).
+
+With a <label>, refreshes just that account and FAILS (non-zero exit) if
+the fetch can't complete, so the caller sees the error.
+
+The active account is never refreshed here — it's kept fresh by the
+daemon, and rotating its stash out-of-band would desync it from the live
+keychain slot. Naming the active account is an error.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			return withRuntime(cmd.Context(), func(ctx context.Context, s *store.Store, p provider.Provider) error {
+				if len(args) == 1 {
+					return runUsageRefreshOne(ctx, cmd, s, p, args[0])
+				}
 				return runUsageRefresh(ctx, cmd, s, p)
 			})
 		},
 	}
+}
+
+// runUsageRefreshOne refreshes a single account by label and returns the
+// error (non-zero exit) on failure so the widget can show it per-row.
+func runUsageRefreshOne(ctx context.Context, cmd *cobra.Command, s *store.Store, p provider.Provider, label string) error {
+	acct, err := s.GetAccountByLabel(ctx, label)
+	if err != nil {
+		if errors.Is(err, store.ErrAccountNotFound) {
+			return fmt.Errorf("no account labeled %q (see `aimonitor list`)", label)
+		}
+		return err
+	}
+
+	cc, _ := claudeconfig.New()
+	if active, found, rErr := daemon.ResolveActiveAccount(ctx, s, p, cc); rErr == nil && found && active.ID == acct.ID {
+		return fmt.Errorf("%q is the active account — it's kept fresh by the daemon and isn't refreshed here", label)
+	}
+
+	lim, err := daemon.RefreshAccountUsage(ctx, s, claude.NewUsageFetcher(), claude.NewTokenRefresher(), acct)
+	if err != nil {
+		return fmt.Errorf("refresh %q: %w", label, err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s 5h %.0f%%  7d %.0f%%\n", label, lim.FiveHourPct, lim.SevenDayPct)
+	return nil
 }
 
 func runUsageRefresh(ctx context.Context, cmd *cobra.Command, s *store.Store, p provider.Provider) error {

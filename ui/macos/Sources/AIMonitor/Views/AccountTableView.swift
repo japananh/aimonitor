@@ -57,6 +57,24 @@ struct AccountTableView: View {
                 }
                 Spacer()
                 if !isActive {
+                    // Per-account usage refresh. The active account is kept
+                    // fresh by the daemon and must not be refreshed via the
+                    // stash path, so this is inactive-only.
+                    Button {
+                        model.refreshUsage(label: acct.label, id: acct.id)
+                    } label: {
+                        if model.refreshingAccounts.contains(acct.id) {
+                            ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .disabled(model.refreshingAccounts.contains(acct.id))
+                    .pointerCursor()
+                    .help("Fetch \(acct.label)'s latest usage now")
+
                     Button("Switch") {
                         model.switchTo(label: acct.label)
                     }
@@ -74,6 +92,15 @@ struct AccountTableView: View {
                 Text("no usage data yet")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .padding(.leading, 28)
+            }
+            // Per-account refresh error (e.g. expired refresh token →
+            // "re-add the account"). Cleared on the next successful refresh.
+            if let err = model.usageErrors[acct.id] {
+                Text(err)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
                     .padding(.leading, 28)
             }
         }
