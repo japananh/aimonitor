@@ -20,11 +20,25 @@ struct PreferencesView: View {
     @State private var threshold = 80
     @State private var autoUpdateOn = true
     @State private var versionText = "—"
+    // Appearance preference, persisted in UserDefaults; applied via NSApp.
+    @AppStorage(appThemeKey) private var appTheme = defaultAppTheme
 
     private let repoURL = URL(string: "https://github.com/japananh/aimonitor")!
 
     var body: some View {
         Form {
+            Section("Appearance") {
+                Picker("Theme", selection: $appTheme) {
+                    Text("System").tag("system")
+                    Text("Light").tag("light")
+                    Text("Dark").tag("dark")
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: appTheme) { _, newValue in applyAppearance(newValue) }
+                Text("“System” follows your macOS appearance.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             Section("Auto-switch") {
                 Toggle("Switch accounts automatically near the limit", isOn: Binding(
                     get: { autoSwapOn },
