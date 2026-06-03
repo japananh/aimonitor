@@ -186,7 +186,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let label = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !label.isEmpty else { return }
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        // The background closure captures no self (only `label`); the weak
+        // capture lives on the Task — the actual concurrent hop — so we never
+        // reference a captured `var self` across the concurrency boundary.
+        DispatchQueue.global(qos: .userInitiated).async {
             let failure: String?
             do {
                 try CLIBridge.adoptCurrent(label: label)
@@ -194,7 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 failure = error.localizedDescription
             }
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let failure {
                     self.showError("Import failed", failure)
