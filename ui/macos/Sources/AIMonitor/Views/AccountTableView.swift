@@ -25,10 +25,13 @@ struct AccountTableView: View {
                     .foregroundStyle(.secondary)
                     .padding(12)
             } else {
-                Divider()
+                // Divider BEFORE each row (header→row1, row1→row2, …) and
+                // none after the last row, so there's a single separator
+                // between the last account and the footer (PopoverRootView
+                // adds the one before the buttons).
                 ForEach(model.accounts) { acct in
-                    rowView(acct)
                     Divider()
+                    rowView(acct)
                 }
             }
         }

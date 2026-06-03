@@ -111,7 +111,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             renameAccount: { [weak self] label in self?.promptRename(currentLabel: label) },
             importAccount: { [weak self] email in self?.promptImportCurrent(email: email) }
         )
-        .background(.regularMaterial)
+        // Solid window background — NOT .regularMaterial, whose vibrancy
+        // desaturates the foreground (the colored 5h/7d bars, the green
+        // active check, red errors). Rounded + shadowed via clip + panel.
+        .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
         let hosting = NSHostingController(rootView: root)

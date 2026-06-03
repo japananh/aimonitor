@@ -17,6 +17,21 @@ struct PopoverRootView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Top bar: settings gear, right-aligned. Replaces the old
+            // "Preferences…" text button in the footer.
+            HStack {
+                Spacer()
+                Button(action: openPreferences) {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(.borderless)
+                .pointerCursor()
+                .help("Preferences — auto-switch, updates, and startup settings")
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
+
             // When the daemon hasn't published recently the rows below are
             // stale; surface that explicitly. (Dropping the old session bar
             // removed the previous "daemon not running" hint — keep one.)
@@ -61,9 +76,6 @@ struct PopoverRootView: View {
                 .pointerCursor()
                 .help("Fetch the latest 5h/7d usage for every account now")
                 Spacer()
-                Button("Preferences…", action: openPreferences)
-                    .pointerCursor()
-                    .help("Auto-switch, updates, and startup settings")
                 Button("Quit", action: quit)
                     .pointerCursor()
                     .help("Quit the menu-bar app (the background daemon keeps running)")
