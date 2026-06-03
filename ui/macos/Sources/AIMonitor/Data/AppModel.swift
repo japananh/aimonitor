@@ -14,6 +14,9 @@ final class AppModel: ObservableObject {
     @Published var status: DaemonStatus? = nil
     @Published var accounts: [AccountRow] = []
     @Published var probes: [ProbeRow] = []
+    // Per-account rate-limit snapshots keyed by account id, for the
+    // per-account 5h/7d bars. A row may be stale (see LimitsRow.fetchedAt).
+    @Published var limitsByAccount: [Int64: LimitsRow] = [:]
     @Published var lastError: String? = nil
 
     // showAccountPanel is the user preference for whether the per-account
@@ -78,24 +81,26 @@ final class AppModel: ObservableObject {
 
     func refresh() async {
         let path = dbPath
-        let result: Result<(DaemonStatus?, [AccountRow], [ProbeRow]), Error> = await withCheckedContinuation { cont in
+        let result: Result<(DaemonStatus?, [AccountRow], [ProbeRow], [Int64: LimitsRow]), Error> = await withCheckedContinuation { cont in
             workQueue.async {
                 do {
                     let r = try SQLiteReader(path: path)
                     let st = try r.daemonStatus()
                     let accs = try r.listAccounts()
                     let pr = try r.listProbes()
-                    cont.resume(returning: .success((st, accs, pr)))
+                    let lim = try r.limits()
+                    cont.resume(returning: .success((st, accs, pr, lim)))
                 } catch {
                     cont.resume(returning: .failure(error))
                 }
             }
         }
         switch result {
-        case .success(let (st, accs, pr)):
+        case .success(let (st, accs, pr, lim)):
             self.status = st
             self.accounts = accs
             self.probes = pr
+            self.limitsByAccount = lim
             self.lastError = nil
         case .failure(let err):
             self.lastError = "\(err)"
