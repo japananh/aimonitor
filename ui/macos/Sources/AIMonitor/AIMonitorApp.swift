@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Apply the saved theme (light/dark/inherit-from-OS) before any UI shows.
+        applyAppearance(UserDefaults.standard.string(forKey: appThemeKey) ?? defaultAppTheme)
         setupStatusItem()
         setupPanel()
         // Keep the menu-bar title in sync with the active account. status

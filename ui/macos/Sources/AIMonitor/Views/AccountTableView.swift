@@ -46,12 +46,42 @@ struct AccountTableView: View {
                                 .foregroundStyle(.green)
                                 .font(.caption)
                         }
-                        Text(acct.label).font(.subheadline)
+                        // Account name — the largest text in the row.
+                        Text(acct.label).font(.headline)
+                        // Rename button right next to the name.
+                        if let rename = renameAccount {
+                            Button {
+                                rename(acct.label)
+                            } label: {
+                                Image(systemName: "pencil")
+                            }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                            .pointerCursor()
+                            .help("Rename \(acct.label)")
+                        }
                     }
-                    Text(identityCaption(acct))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                    // Email below the name — larger than the org, smaller
+                    // than the account name.
+                    if let email = acct.email, !email.isEmpty {
+                        Text(email)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    // Organization below the email — the smallest line.
+                    if let org = acct.organizationName, !org.isEmpty {
+                        Text(org)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .textSelection(.enabled)
+                    }
+                    // Legacy rows added before identity capture: prompt a re-add.
+                    if (acct.email?.isEmpty ?? true) && (acct.organizationName?.isEmpty ?? true) {
+                        Text("identity not captured — re-run `aimonitor add`")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
                 Spacer()
                 // Per-account usage refresh on every row. The CLI routes the
@@ -109,23 +139,6 @@ struct AccountTableView: View {
             if let rename = renameAccount {
                 Button("Rename…") { rename(acct.label) }
             }
-        }
-    }
-
-    // identityCaption is the account's Claude identity line: email and,
-    // when known, the organization. Empty/absent identity (legacy rows
-    // added before identity capture) prompts a re-add rather than showing
-    // a blank line.
-    private func identityCaption(_ acct: AccountRow) -> String {
-        switch (acct.email, acct.organizationName) {
-        case let (email?, org?):
-            return "\(email) · \(org)"
-        case let (email?, nil):
-            return email
-        case let (nil, org?):
-            return org
-        default:
-            return "identity not captured — re-run `aimonitor add`"
         }
     }
 }
