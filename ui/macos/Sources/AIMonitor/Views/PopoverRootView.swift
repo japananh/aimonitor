@@ -26,6 +26,15 @@ struct PopoverRootView: View {
                 Text("Accounts")
                     .font(.headline)
                 Spacer()
+                // Bug report: opens a pre-filled GitHub issue (bug template).
+                Button {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/japananh/aimonitor/issues/new?template=bug_report.yml")!)
+                } label: {
+                    Image(systemName: "ladybug")
+                }
+                .buttonStyle(.borderless)
+                .pointerCursor()
+                .help("Report a bug — opens a new GitHub issue")
                 Button(action: openPreferences) {
                     Image(systemName: "gearshape")
                 }
