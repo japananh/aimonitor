@@ -57,6 +57,10 @@ const (
 	// refresh will poll per decision, so a swap decision can't fan out into
 	// an unbounded burst of token/usage calls.
 	maxJITRefresh = 5
+	// exhaustedPct is the utilization at which an account is hard-blocked
+	// by Anthropic. An account at/over it on either window can't serve
+	// requests and is never a swap candidate.
+	exhaustedPct = 100.0
 )
 
 // accountSwitcher is the narrow surface AutoSwapper needs from
@@ -342,6 +346,12 @@ func (c candidate) pct(w windowKind) float64 {
 //	         active into a 5h-warm-but-weekly-healthy account (and vice
 //	         versa) is still a win. Ranked by lowest binding-window pct.
 //
+// An account EXHAUSTED (>= 100%) on either window is never a candidate:
+// it cannot serve requests, so "lower on the binding window" is meaningless.
+// Without this, a 5h-capped active happily switched into a weekly-dead
+// account and ping-ponged back minutes later — each bounce burning token
+// refreshes until Anthropic throttled the lot (observed live 2026-06-04).
+//
 // Within a tier, ties break by least-recently-used so accounts rotate
 // evenly. Accounts with stale/unknown usage are the last resort — we can't
 // vouch for their headroom — ranked only by least-recently-used. (The
@@ -374,6 +384,10 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 				Label:      acct.Label,
 				LastUsedMs: acct.LastUsedAt.UnixMilli(),
 			})
+			continue
+		}
+		// Exhausted on either window → unusable, never a candidate.
+		if lim.FiveHourPct >= exhaustedPct || lim.SevenDayPct >= exhaustedPct {
 			continue
 		}
 		c := candidate{
