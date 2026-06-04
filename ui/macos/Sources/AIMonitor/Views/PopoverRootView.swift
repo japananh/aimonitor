@@ -18,6 +18,10 @@ struct PopoverRootView: View {
     // nil hides the affordance.
     var addAccount: (() -> Void)? = nil
 
+    // Start-daemon banner state: in-flight flag + surfaced error.
+    @State private var daemonStarting = false
+    @State private var daemonStartError: String?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Top bar: the "Accounts" title and the settings gear on one
@@ -64,12 +68,34 @@ struct PopoverRootView: View {
             // stale; surface that explicitly. (Dropping the old session bar
             // removed the previous "daemon not running" hint — keep one.)
             if daemonDown {
-                Label(
-                    "Daemon not running — usage may be stale. Enable “Launch at login” in Preferences, or run `aimonitor daemon start`.",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.caption2)
-                .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(
+                        "Daemon not running — usage may be stale.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    HStack(spacing: 8) {
+                        // Registers the daemon's LaunchAgent and starts it
+                        // immediately (`aimonitor config set autostart true`).
+                        // The Preferences "Launch at login" toggle only
+                        // registers the widget app — it never starts the
+                        // daemon, which is why this lives on the banner.
+                        Button(daemonStarting ? "Starting…" : "Start daemon") {
+                            startDaemon()
+                        }
+                        .controlSize(.small)
+                        .disabled(daemonStarting)
+                        .pointerCursor()
+                        .help("Start the background daemon now and keep it running at login")
+                        if let err = daemonStartError {
+                            Text(err)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 Divider()
@@ -131,5 +157,25 @@ struct PopoverRootView: View {
     private var daemonDown: Bool {
         guard let pub = model.status?.published_at else { return true }
         return Date().timeIntervalSince(pub) > 30
+    }
+
+    // startDaemon registers + starts the daemon LaunchAgent via the CLI
+    // (`config set autostart true` bootstraps it immediately; RunAtLoad
+    // keeps it across logins). Runs off-main; the banner clears by itself
+    // once the daemon publishes its first status tick.
+    private func startDaemon() {
+        daemonStarting = true
+        daemonStartError = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try CLIBridge.configSet("autostart", "true")
+                DispatchQueue.main.async { daemonStarting = false }
+            } catch {
+                DispatchQueue.main.async {
+                    daemonStarting = false
+                    daemonStartError = "\(error)"
+                }
+            }
+        }
     }
 }
