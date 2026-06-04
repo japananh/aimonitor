@@ -188,13 +188,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let top = NSMutableAttributedString(
             string: name + "\n",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 9, weight: .semibold),
+                .font: NSFont.systemFont(ofSize: 8, weight: .semibold),
                 .paragraphStyle: para,
             ])
         top.append(NSAttributedString(
             string: bottom,
             attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .bold),
                 .paragraphStyle: para,
             ]))
         // Nudge the block down so the two lines sit centered in the bar.
