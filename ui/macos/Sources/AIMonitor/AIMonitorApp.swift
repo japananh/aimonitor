@@ -179,23 +179,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let pct5 = model.status?.five_hour_pct
         let bottom = "5h | " + (pct5.map { String(format: "%.0f%%", $0) } ?? "–")
 
-        // Two 9pt lines stacked inside the 22pt menu bar. Fixed line height
-        // keeps the pair vertically centered instead of overflowing.
-        let para = NSMutableParagraphStyle()
-        para.alignment = .center
-        para.minimumLineHeight = 10
-        para.maximumLineHeight = 10
+        // Two stacked lines inside the 22pt menu bar: 8pt name over 11pt
+        // bold usage, 1px gap between them (9 + 1 + 11 = 21 ≤ 22). Fixed
+        // line heights keep the pair vertically centered, with a per-line
+        // paragraph style so the bigger number line isn't clamped to the
+        // name line's height.
+        let paraName = NSMutableParagraphStyle()
+        paraName.alignment = .center
+        paraName.minimumLineHeight = 9
+        paraName.maximumLineHeight = 9
+        paraName.paragraphSpacing = 1 // the gap between line 1 and line 2
+        let paraPct = NSMutableParagraphStyle()
+        paraPct.alignment = .center
+        paraPct.minimumLineHeight = 11
+        paraPct.maximumLineHeight = 11
         let top = NSMutableAttributedString(
             string: name + "\n",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 8, weight: .semibold),
-                .paragraphStyle: para,
+                .paragraphStyle: paraName,
             ])
         top.append(NSAttributedString(
             string: bottom,
             attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .bold),
-                .paragraphStyle: para,
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold),
+                .paragraphStyle: paraPct,
             ]))
         // Nudge the block down so the two lines sit centered in the bar.
         top.addAttribute(.baselineOffset, value: -4,
