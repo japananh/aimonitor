@@ -295,18 +295,49 @@ func TestAutoSwap_CustomThreshold(t *testing.T) {
 	// fakeProvider has no real credential bytes — but the config-read
 	// and threshold-check we care about is exercised before that
 	// failure. Strictly testing config parsing here:
-	enabled, threshold, graceSec, err := a.config(ctx)
+	enabled, threshold5h, threshold7d, graceSec, err := a.config(ctx)
 	if err != nil {
 		t.Fatalf("config: %v", err)
 	}
 	if !enabled {
 		t.Errorf("expected enabled=true (default)")
 	}
-	if threshold != 50 {
-		t.Errorf("threshold = %v want 50", threshold)
+	if threshold5h != 50 {
+		t.Errorf("threshold5h = %v want 50", threshold5h)
+	}
+	if threshold7d != DefaultAutoSwapThreshold7d {
+		t.Errorf("threshold7d = %v want default %v", threshold7d, DefaultAutoSwapThreshold7d)
 	}
 	if graceSec != DefaultAutoSwapGraceSec {
 		t.Errorf("graceSec = %d want default %d", graceSec, DefaultAutoSwapGraceSec)
+	}
+}
+
+// The 7-day window has its own threshold: 7d usage between the two
+// thresholds triggers only when it crosses the 7d one.
+func TestAutoSwap_Separate7dThreshold(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	other, _ := s.CreateAccount(ctx, store.Account{Label: "other", KeyringRef: "ref-o"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 85})
+	_ = s.PutLimits(ctx, other.ID, provider.Limits{FiveHourPct: 5, SevenDayPct: 5})
+	_ = s.PutSetting(ctx, SettingsKeyAutoSwapThreshold7d, "90") // 85 < 90 → no trigger
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	if swapped, err := a.MaybeSwap(ctx, "active"); err != nil || swapped {
+		t.Fatalf("7d 85%% under its 90%% threshold must not swap: swapped=%v err=%v", swapped, err)
+	}
+
+	// Crossing the 7d threshold fires even though 5h is quiet.
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 92})
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil || !swapped {
+		t.Fatalf("7d 92%% over its 90%% threshold must swap: swapped=%v err=%v", swapped, err)
+	}
+	if len(fsw.switched) != 1 || fsw.switched[0] != "other" {
+		t.Errorf("expected switch to other, got %v", fsw.switched)
 	}
 }
 
@@ -342,19 +373,23 @@ func TestAutoSwap_BadConfigValues(t *testing.T) {
 	ctx := context.Background()
 	_ = s.PutSetting(ctx, SettingsKeyAutoSwapEnabled, "notabool")
 	_ = s.PutSetting(ctx, SettingsKeyAutoSwapThreshold, "999")
+	_ = s.PutSetting(ctx, SettingsKeyAutoSwapThreshold7d, "-5")
 
 	_ = s.PutSetting(ctx, SettingsKeyAutoSwapGrace, "notanint")
 
 	a, _, _ := withAutoSwapStubs(t, s)
-	enabled, threshold, graceSec, err := a.config(ctx)
+	enabled, threshold5h, threshold7d, graceSec, err := a.config(ctx)
 	if err != nil {
 		t.Fatalf("config: %v", err)
 	}
 	if enabled != DefaultAutoSwapEnabled {
 		t.Errorf("enabled fallback failed: got %v", enabled)
 	}
-	if threshold != DefaultAutoSwapThreshold {
-		t.Errorf("threshold fallback failed: got %v (parsed=%q)", threshold, strconv.FormatFloat(threshold, 'f', -1, 64))
+	if threshold5h != DefaultAutoSwapThreshold5h {
+		t.Errorf("threshold5h fallback failed: got %v (parsed=%q)", threshold5h, strconv.FormatFloat(threshold5h, 'f', -1, 64))
+	}
+	if threshold7d != DefaultAutoSwapThreshold7d {
+		t.Errorf("threshold7d fallback failed: got %v", threshold7d)
 	}
 	if graceSec != DefaultAutoSwapGraceSec {
 		t.Errorf("graceSec fallback failed: got %d", graceSec)

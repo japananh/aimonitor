@@ -50,6 +50,7 @@ var configKeys = []string{
 	"autostart",
 	daemon.SettingsKeyAutoSwapEnabled,
 	daemon.SettingsKeyAutoSwapThreshold,
+	daemon.SettingsKeyAutoSwapThreshold7d,
 	daemon.SettingsKeyAutoSwapGrace,
 	SettingsKeyAutoUpdateEnabled,
 	SettingsKeyUpdateSkippedVersion,
@@ -71,6 +72,7 @@ func isStoreKey(key string) bool {
 	switch key {
 	case daemon.SettingsKeyAutoSwapEnabled,
 		daemon.SettingsKeyAutoSwapThreshold,
+		daemon.SettingsKeyAutoSwapThreshold7d,
 		daemon.SettingsKeyAutoSwapGrace,
 		SettingsKeyAutoUpdateEnabled,
 		SettingsKeyUpdateSkippedVersion:
@@ -229,7 +231,7 @@ func validateStoreValue(key, value string) (string, error) {
 			return "", err
 		}
 		return strconv.FormatBool(b), nil
-	case daemon.SettingsKeyAutoSwapThreshold:
+	case daemon.SettingsKeyAutoSwapThreshold, daemon.SettingsKeyAutoSwapThreshold7d:
 		f, err := strconv.ParseFloat(value, 64)
 		if err != nil {
 			return "", fmt.Errorf("%s: not a number: %q", key, value)
@@ -266,7 +268,9 @@ func storeKeyDefault(key string) string {
 	case daemon.SettingsKeyAutoSwapEnabled:
 		return strconv.FormatBool(daemon.DefaultAutoSwapEnabled)
 	case daemon.SettingsKeyAutoSwapThreshold:
-		return strconv.FormatFloat(daemon.DefaultAutoSwapThreshold, 'f', -1, 64)
+		return strconv.FormatFloat(daemon.DefaultAutoSwapThreshold5h, 'f', -1, 64)
+	case daemon.SettingsKeyAutoSwapThreshold7d:
+		return strconv.FormatFloat(daemon.DefaultAutoSwapThreshold7d, 'f', -1, 64)
 	case daemon.SettingsKeyAutoSwapGrace:
 		return strconv.Itoa(daemon.DefaultAutoSwapGraceSec)
 	case SettingsKeyAutoUpdateEnabled:

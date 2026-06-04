@@ -20,18 +20,24 @@ import (
 // Settings keys for the auto-swap engine. All are strings in the
 // settings table; AutoSwapper parses them with sane fallbacks.
 const (
-	SettingsKeyAutoSwapEnabled   = "auto_swap.enabled"
+	SettingsKeyAutoSwapEnabled = "auto_swap.enabled"
+	// SettingsKeyAutoSwapThreshold is the 5-hour-window threshold. The key
+	// name predates the 7-day trigger; it keeps its historical value so
+	// existing installs don't lose their setting.
 	SettingsKeyAutoSwapThreshold = "auto_swap.threshold_pct"
-	SettingsKeyAutoSwapGrace     = "auto_swap.grace_sec"
+	// SettingsKeyAutoSwapThreshold7d is the 7-day-window threshold.
+	SettingsKeyAutoSwapThreshold7d = "auto_swap.threshold_7d_pct"
+	SettingsKeyAutoSwapGrace       = "auto_swap.grace_sec"
 )
 
 // Defaults applied when the corresponding auto_swap.* setting is unset.
 // Exported so the `aimonitor config` CLI shows the same values the daemon
 // falls back to.
 const (
-	DefaultAutoSwapEnabled   = true
-	DefaultAutoSwapThreshold = 80.0
-	DefaultAutoSwapGraceSec  = 60
+	DefaultAutoSwapEnabled     = true
+	DefaultAutoSwapThreshold5h = 80.0
+	DefaultAutoSwapThreshold7d = 80.0
+	DefaultAutoSwapGraceSec    = 60
 )
 
 const (
@@ -131,7 +137,7 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	enabled, threshold, graceSec, err := a.config(ctx)
+	enabled, threshold5h, threshold7d, graceSec, err := a.config(ctx)
 	if err != nil {
 		return false, fmt.Errorf("auto-swap: read config: %w", err)
 	}
@@ -162,15 +168,15 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 	}
 	// Active is back below threshold on BOTH windows (window reset, or the
 	// user swapped manually): cancel any armed swap. Either window at/over
-	// threshold keeps a swap in play — a weekly-capped account is dead for
-	// days even while its 5-hour window is quiet.
-	if activeLim.FiveHourPct < threshold && activeLim.SevenDayPct < threshold {
+	// its threshold keeps a swap in play — a weekly-capped account is dead
+	// for days even while its 5-hour window is quiet.
+	if activeLim.FiveHourPct < threshold5h && activeLim.SevenDayPct < threshold7d {
 		a.pending = nil
 		return false, nil
 	}
-	// The binding window is the one driving this decision (the hotter of the
-	// over-threshold windows). Candidates are judged against it.
-	binding, activePct := bindingWindow(activeLim, threshold)
+	// The binding window is the one driving this decision (the one furthest
+	// over its own threshold). Candidates are judged against it.
+	binding, activePct, threshold := bindingWindow(activeLim, threshold5h, threshold7d)
 
 	cand, found, err := a.pickCandidate(ctx, activeAcct.ID, activeLim, binding)
 	if err != nil {
@@ -221,16 +227,17 @@ const (
 )
 
 // bindingWindow returns the window that should drive the swap decision —
-// the over-threshold window, or when both are over, the hotter one — and
-// the active account's utilization on it. Callers must already have
-// established that at least one window is at/over the threshold.
-func bindingWindow(lim provider.Limits, threshold float64) (windowKind, float64) {
-	over5 := lim.FiveHourPct >= threshold
-	over7 := lim.SevenDayPct >= threshold
-	if over7 && (!over5 || lim.SevenDayPct >= lim.FiveHourPct) {
-		return window7d, lim.SevenDayPct
+// the window over its own threshold, or when both are over, the one
+// furthest past its threshold — plus the active account's utilization on
+// it and that window's threshold. Callers must already have established
+// that at least one window is at/over its threshold.
+func bindingWindow(lim provider.Limits, threshold5h, threshold7d float64) (windowKind, float64, float64) {
+	over5 := lim.FiveHourPct >= threshold5h
+	over7 := lim.SevenDayPct >= threshold7d
+	if over7 && (!over5 || lim.SevenDayPct-threshold7d >= lim.FiveHourPct-threshold5h) {
+		return window7d, lim.SevenDayPct, threshold7d
 	}
-	return window5h, lim.FiveHourPct
+	return window5h, lim.FiveHourPct, threshold5h
 }
 
 // shouldRefreshCandidates reports whether a just-in-time candidate refresh
@@ -242,7 +249,7 @@ func (a *AutoSwapper) shouldRefreshCandidates(ctx context.Context, activeLabel s
 	if a.RefreshUsage == nil || activeLabel == "" {
 		return false
 	}
-	enabled, threshold, _, err := a.config(ctx)
+	enabled, threshold5h, threshold7d, _, err := a.config(ctx)
 	if err != nil || !enabled {
 		return false
 	}
@@ -254,8 +261,8 @@ func (a *AutoSwapper) shouldRefreshCandidates(ctx context.Context, activeLabel s
 	if err != nil {
 		return false
 	}
-	// Either window over threshold makes a swap imminent.
-	return lim.FiveHourPct >= threshold || lim.SevenDayPct >= threshold
+	// Either window over its threshold makes a swap imminent.
+	return lim.FiveHourPct >= threshold5h || lim.SevenDayPct >= threshold7d
 }
 
 // refreshStaleCandidates fetches fresh usage for up to maxJITRefresh
@@ -413,9 +420,10 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 	}
 }
 
-func (a *AutoSwapper) config(ctx context.Context) (enabled bool, threshold float64, graceSec int, err error) {
+func (a *AutoSwapper) config(ctx context.Context) (enabled bool, threshold5h, threshold7d float64, graceSec int, err error) {
 	enabled = DefaultAutoSwapEnabled
-	threshold = DefaultAutoSwapThreshold
+	threshold5h = DefaultAutoSwapThreshold5h
+	threshold7d = DefaultAutoSwapThreshold7d
 	graceSec = DefaultAutoSwapGraceSec
 
 	if v, getErr := a.Store.GetSetting(ctx, SettingsKeyAutoSwapEnabled); getErr == nil {
@@ -423,15 +431,23 @@ func (a *AutoSwapper) config(ctx context.Context) (enabled bool, threshold float
 			enabled = b
 		}
 	} else if !errors.Is(getErr, store.ErrSettingNotFound) {
-		return enabled, threshold, graceSec, getErr
+		return enabled, threshold5h, threshold7d, graceSec, getErr
 	}
 
 	if v, getErr := a.Store.GetSetting(ctx, SettingsKeyAutoSwapThreshold); getErr == nil {
 		if f, perr := strconv.ParseFloat(v, 64); perr == nil && f > 0 && f <= 100 {
-			threshold = f
+			threshold5h = f
 		}
 	} else if !errors.Is(getErr, store.ErrSettingNotFound) {
-		return enabled, threshold, graceSec, getErr
+		return enabled, threshold5h, threshold7d, graceSec, getErr
+	}
+
+	if v, getErr := a.Store.GetSetting(ctx, SettingsKeyAutoSwapThreshold7d); getErr == nil {
+		if f, perr := strconv.ParseFloat(v, 64); perr == nil && f > 0 && f <= 100 {
+			threshold7d = f
+		}
+	} else if !errors.Is(getErr, store.ErrSettingNotFound) {
+		return enabled, threshold5h, threshold7d, graceSec, getErr
 	}
 
 	if v, getErr := a.Store.GetSetting(ctx, SettingsKeyAutoSwapGrace); getErr == nil {
@@ -440,10 +456,10 @@ func (a *AutoSwapper) config(ctx context.Context) (enabled bool, threshold float
 			graceSec = n
 		}
 	} else if !errors.Is(getErr, store.ErrSettingNotFound) {
-		return enabled, threshold, graceSec, getErr
+		return enabled, threshold5h, threshold7d, graceSec, getErr
 	}
 
-	return enabled, threshold, graceSec, nil
+	return enabled, threshold5h, threshold7d, graceSec, nil
 }
 
 func (a *AutoSwapper) now() time.Time {
