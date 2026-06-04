@@ -156,14 +156,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // updateStatusTitle shows the active account name to the right of the
-    // menu-bar icon. Empty title → icon only (no active account, or the
-    // daemon hasn't published yet). A leading space separates the glyph
-    // from the text since imagePosition gives no built-in padding.
+    // updateStatusTitle renders the status item as a compact two-line text:
+    //   <account name>
+    //   5h | <usage>%
+    // replacing the chart icon whenever an active account is known. The
+    // icon returns as the fallback when there's no active account / no
+    // daemon data yet. A tooltip carries the full picture (name, email,
+    // both windows with reset times).
     private func updateStatusTitle() {
         guard let button = statusItem.button else { return }
         let name = model.activeDisplayName
-        button.title = name.isEmpty ? "" : " \(name)"
+        guard !name.isEmpty else {
+            button.attributedTitle = NSAttributedString(string: "")
+            button.image = NSImage(systemSymbolName: "chart.bar.fill",
+                                   accessibilityDescription: "AIMonitor")
+            button.image?.isTemplate = true
+            button.toolTip = "AIMonitor — no active account yet (is the daemon running?)"
+            return
+        }
+        button.image = nil
+
+        let pct5 = model.status?.five_hour_pct
+        let bottom = "5h | " + (pct5.map { String(format: "%.0f%%", $0) } ?? "–")
+
+        // Two 9pt lines stacked inside the 22pt menu bar. Fixed line height
+        // keeps the pair vertically centered instead of overflowing.
+        let para = NSMutableParagraphStyle()
+        para.alignment = .center
+        para.minimumLineHeight = 10
+        para.maximumLineHeight = 10
+        let top = NSMutableAttributedString(
+            string: name + "\n",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 9, weight: .semibold),
+                .paragraphStyle: para,
+            ])
+        top.append(NSAttributedString(
+            string: bottom,
+            attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular),
+                .paragraphStyle: para,
+            ]))
+        // Nudge the block down so the two lines sit centered in the bar.
+        top.addAttribute(.baselineOffset, value: -4,
+                         range: NSRange(location: 0, length: top.length))
+        button.attributedTitle = top
+        button.toolTip = statusTooltip(name: name)
+    }
+
+    // statusTooltip builds the hover text:
+    //   <name> — <email>
+    //   5h: <pct>% · resets <time>
+    //   7d: <pct>% · resets <time>
+    private func statusTooltip(name: String) -> String {
+        var lines: [String] = []
+        let email = model.accounts.first(where: { $0.label == name })?.email ?? ""
+        lines.append(email.isEmpty ? name : "\(name) — \(email)")
+        if let st = model.status {
+            lines.append(usageLine(window: "5h", pct: st.five_hour_pct, reset: st.five_hour_reset_at))
+            lines.append(usageLine(window: "7d", pct: st.seven_day_pct, reset: st.seven_day_reset_at))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func usageLine(window: String, pct: Double?, reset: Date?) -> String {
+        let p = pct.map { String(format: "%.0f%%", $0) } ?? "no data"
+        guard let reset, reset.timeIntervalSinceNow > 0 else {
+            return "\(window): \(p)"
+        }
+        let fmt = DateFormatter()
+        // Same-day resets just need the time; later ones need the day too.
+        fmt.dateFormat = Calendar.current.isDateInToday(reset) ? "HH:mm" : "E d MMM, HH:mm"
+        return "\(window): \(p) · resets \(fmt.string(from: reset))"
     }
 
     private func setupPanel() {
