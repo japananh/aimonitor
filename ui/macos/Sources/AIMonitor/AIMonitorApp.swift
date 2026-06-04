@@ -63,6 +63,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Apply the saved theme (light/dark/inherit-from-OS) before any UI shows.
         applyAppearance(UserDefaults.standard.string(forKey: appThemeKey) ?? defaultAppTheme)
+        // Show .help() tooltips quickly. macOS's default initial delay is
+        // ~1.5s, which reads as "no tooltip" for quick hovers; 300ms is
+        // snappy without popping up on every transit. Per-app preference —
+        // doesn't touch system-wide behavior.
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 300])
         // Test aid only: AIMONITOR_DOCK_ICON=1 promotes the app to a regular
         // (Dock-visible) app so it can be reached when the menu-bar icon is
         // hidden by a crowded bar / the notch. Never set in release, so the
