@@ -38,7 +38,10 @@ struct AccountTableView: View {
         let isActive = (model.status?.active_label == acct.label)
 
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
+            // .top so the refresh/Switch buttons line up with the account
+            // NAME (first line), not the vertical middle of the name/email/
+            // org stack.
+            HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         if isActive {
@@ -66,51 +69,58 @@ struct AccountTableView: View {
                     if let email = acct.email, !email.isEmpty {
                         Text(email)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary)
                             .textSelection(.enabled)
                     }
                     // Organization below the email — the smallest line.
                     if let org = acct.organizationName, !org.isEmpty {
                         Text(org)
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
                     // Legacy rows added before identity capture: prompt a re-add.
                     if (acct.email?.isEmpty ?? true) && (acct.organizationName?.isEmpty ?? true) {
                         Text("identity not captured — re-run `aimonitor add`")
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
-                // Per-account usage refresh on every row. The CLI routes the
-                // active account through the daemon's safe live-refresh path
-                // and inactive accounts through their stash, so this is safe
-                // on all rows.
-                Button {
-                    model.refreshUsage(label: acct.label, id: acct.id)
-                } label: {
-                    if model.refreshingAccounts.contains(acct.id) {
-                        ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
+                // Both buttons live in one fixed-height band matching the
+                // name line: the row is top-aligned (so the band sits beside
+                // the NAME, not the email), and the band centers the buttons
+                // vertically on that line.
+                HStack(spacing: 8) {
+                    // Per-account usage refresh on every row. The CLI routes
+                    // the active account through the daemon's safe
+                    // live-refresh path and inactive accounts through their
+                    // stash, so this is safe on all rows.
+                    Button {
+                        model.refreshUsage(label: acct.label, id: acct.id)
+                    } label: {
+                        if model.refreshingAccounts.contains(acct.id) {
+                            ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
                     }
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .disabled(model.refreshingAccounts.contains(acct.id))
-                .pointerCursor()
-                .help("Fetch \(acct.label)'s latest usage now")
-
-                if !isActive {
-                    Button("Switch") {
-                        model.switchTo(label: acct.label)
-                    }
+                    .buttonStyle(.borderless)
                     .controlSize(.small)
+                    .disabled(model.refreshingAccounts.contains(acct.id))
                     .pointerCursor()
-                    .help("Make \(acct.label) the active Claude account")
+                    .help("Fetch \(acct.label)'s latest usage now")
+
+                    if !isActive {
+                        Button("Switch") {
+                            model.switchTo(label: acct.label)
+                        }
+                        .controlSize(.small)
+                        .pointerCursor()
+                        .help("Make \(acct.label) the active Claude account")
+                    }
                 }
+                .frame(height: 18, alignment: .center)
             }
             // Per-account 5h / 7d utilization. Absent until the daemon has
             // fetched this account at least once (active every tick; inactive
@@ -120,7 +130,7 @@ struct AccountTableView: View {
             } else {
                 Text("no usage data yet")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .padding(.leading, 28)
             }
             // Per-account refresh error (e.g. expired refresh token →
@@ -135,6 +145,16 @@ struct AccountTableView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        // Soft accent tint behind the ACTIVE account so it reads at a
+        // glance (on top of the green check). Inset from the panel edges so
+        // it looks like a highlight card, not a full-bleed band; opacity 0
+        // (not a conditional view) keeps the row layout identical for all.
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.accentColor.opacity(isActive ? 0.14 : 0))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+        )
         .contextMenu {
             if let rename = renameAccount {
                 Button("Rename…") { rename(acct.label) }
