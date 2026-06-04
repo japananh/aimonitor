@@ -130,7 +130,7 @@ func (w *Watcher) bootstrap(ctx context.Context) error {
 			// Even creation failed (read-only home, odd perms). Degrade to a
 			// no-op watch rather than killing the daemon; session-usage
 			// tracking resumes after the next restart once the dir exists.
-			w.reportError(fmt.Errorf("watcher: root %q absent and uncreatable (%v); session-usage tracking off until restart", w.cfg.Root, mkErr))
+			w.reportError(fmt.Errorf("watcher: root %q absent and uncreatable (%w); session-usage tracking off until restart", w.cfg.Root, mkErr))
 			return nil
 		}
 		return w.addDir(w.cfg.Root)
