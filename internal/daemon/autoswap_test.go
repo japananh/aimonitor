@@ -179,6 +179,74 @@ func TestAutoSwap_AllNearLimit_NoSwap(t *testing.T) {
 	}
 }
 
+// The 2026-06-04 live regression: active hot on 5h; the only "better on
+// the binding window" candidate is DEAD at 100% weekly. Switching to it is
+// useless (and ping-pongs straight back) — pick the healthy account even
+// though its binding-window pct is higher, and never the exhausted one.
+func TestAutoSwap_NeverSwitchesIntoExhaustedAccount(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "gem3", KeyringRef: "ref-a"})
+	dead, _ := s.CreateAccount(ctx, store.Account{Label: "gem1", KeyringRef: "ref-d"})
+	healthy, _ := s.CreateAccount(ctx, store.Account{Label: "gem2", KeyringRef: "ref-h"})
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	clock := time.Now()
+	a.Now = func() time.Time { return clock }
+	// FetchedAt pinned to the mock clock so the rows stay "fresh" at both
+	// phases (a wall-clock FetchedAt would look stale after the advance).
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95, SevenDayPct: 50, FetchedAt: clock})
+	_ = s.PutLimits(ctx, dead.ID, provider.Limits{FiveHourPct: 23, SevenDayPct: 100, FetchedAt: clock}) // weekly-dead
+	_ = s.PutLimits(ctx, healthy.ID, provider.Limits{FiveHourPct: 96, SevenDayPct: 58, FetchedAt: clock})
+
+	swapped, err := a.MaybeSwap(ctx, "gem3")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	// healthy (96) is NOT lower than active (95) on the binding window and
+	// dead is excluded → no candidate, stay put.
+	if swapped || len(fsw.switched) != 0 {
+		t.Errorf("must not switch into a 100%%-weekly account (or a hotter one); switched=%v", fsw.switched)
+	}
+
+	// With a genuinely better healthy candidate, pick it — never the dead
+	// one. (Clock past the no-candidate cooldown; rows re-seeded fresh.)
+	clock = clock.Add(cooldownAfterExhausted + time.Minute)
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95, SevenDayPct: 50, FetchedAt: clock})
+	_ = s.PutLimits(ctx, dead.ID, provider.Limits{FiveHourPct: 23, SevenDayPct: 100, FetchedAt: clock})
+	_ = s.PutLimits(ctx, healthy.ID, provider.Limits{FiveHourPct: 40, SevenDayPct: 58, FetchedAt: clock})
+	swapped, err = a.MaybeSwap(ctx, "gem3")
+	if err != nil {
+		t.Fatalf("MaybeSwap 2: %v", err)
+	}
+	if !swapped || len(fsw.switched) != 1 || fsw.switched[0] != "gem2" {
+		t.Errorf("want switch to gem2 (healthy), got %v", fsw.switched)
+	}
+}
+
+// All non-active accounts exhausted somewhere → nothing to gain, stay put.
+func TestAutoSwap_AllCandidatesExhausted_NoSwap(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	d1, _ := s.CreateAccount(ctx, store.Account{Label: "dead-7d", KeyringRef: "ref-1"})
+	d2, _ := s.CreateAccount(ctx, store.Account{Label: "dead-5h", KeyringRef: "ref-2"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 90, SevenDayPct: 90})
+	_ = s.PutLimits(ctx, d1.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 100})
+	_ = s.PutLimits(ctx, d2.ID, provider.Limits{FiveHourPct: 100, SevenDayPct: 10})
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if swapped || len(fsw.switched) != 0 {
+		t.Errorf("every candidate is exhausted on a window — must not switch; got %v", fsw.switched)
+	}
+}
+
 // The Gem-2 regression: weekly (7d) limit nearly exhausted while the 5-hour
 // window is quiet. The swap must trigger on the 7-day window.
 func TestAutoSwap_WeeklyCapTriggersSwap(t *testing.T) {
