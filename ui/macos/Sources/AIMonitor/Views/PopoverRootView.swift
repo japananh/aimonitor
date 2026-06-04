@@ -21,8 +21,10 @@ struct PopoverRootView: View {
             // line (gear right-aligned). Replaces the old footer
             // "Preferences…" text button and the account table's own header.
             HStack {
+                // Panel title — bigger than the account-row headlines so the
+                // hierarchy reads title > account name > email > org.
                 Text("Accounts")
-                    .font(.subheadline).bold()
+                    .font(.title3).bold()
                 Spacer()
                 Button(action: openPreferences) {
                     Image(systemName: "gearshape")
@@ -32,8 +34,8 @@ struct PopoverRootView: View {
                 .help("Preferences — auto-switch, updates, and startup settings")
             }
             .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 2)
+            .padding(.top, 12)
+            .padding(.bottom, 6)
 
             // When the daemon hasn't published recently the rows below are
             // stale; surface that explicitly. (Dropping the old session bar
@@ -85,7 +87,8 @@ struct PopoverRootView: View {
             }
             .controlSize(.small)
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.top, 8)
+            .padding(.bottom, 12)
 
             if let err = model.lastError {
                 Divider()
@@ -96,9 +99,6 @@ struct PopoverRootView: View {
                     .padding(.vertical, 4)
             }
         }
-        // Breathing room between the panel's rounded edges and the content.
-        .padding(.top, 6)
-        .padding(.bottom, 6)
         .frame(width: 360)
     }
 
