@@ -38,6 +38,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Single-instance guard. macOS lets you launch the binary inside two
+        // different bundle paths (e.g. the brew-installed /Applications copy
+        // and a local build/AIMonitor.app) even though they share a bundle
+        // identifier. Two instances each install a status item AND a global
+        // click monitor, and the monitors swallow each other's clicks so the
+        // panel never opens. If another instance of this bundle id is already
+        // running, bow out before creating any UI — the first one wins.
+        if let bundleID = Bundle.main.bundleIdentifier {
+            let me = NSRunningApplication.current
+            let others = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID)
+                .filter { $0.processIdentifier != me.processIdentifier }
+            if !others.isEmpty {
+                // Surface the existing instance, then quit this one cleanly.
+                others.first?.activate(options: [])
+                exit(0)
+            }
+        }
+
         // Apply the saved theme (light/dark/inherit-from-OS) before any UI shows.
         applyAppearance(UserDefaults.standard.string(forKey: appThemeKey) ?? defaultAppTheme)
         setupStatusItem()
