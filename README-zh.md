@@ -16,7 +16,7 @@
 
 - 🔍 **菜单栏中按账户显示实时的 5 小时 / 7 天用量条** —— 来自服务端的真实数据，通过 Anthropic 的 `/api/oauth/usage` 自省接口轮询获取，不消耗任何 token。
 - 🔀 **静默切换账户** —— `aimonitor switch <label>` 通过 Anthropic 的 token 接口刷新 OAuth access token 并写入当前凭据。无需切换终端，也无需 `claude /login`。
-- 🤖 **自动切换**：在用量达到 80%（阈值可配置，单一阈值）时触发，选择剩余额度最多的账户。**运行中的 `claude` 会话不会被打断**——它们会自动采用新凭据。
+- 🤖 **任一限额触发自动切换**：当前账户的 5 小时**或** 7 天用量达到各自阈值（均可单独配置，默认 80%）时触发，选择剩余额度最多的账户——即使备选账户的 5 小时用量偏高，也会优先逃离周限额已耗尽的账户（5 小时窗口几小时即恢复，周限额一卡就是好几天）。**运行中的 `claude` 会话不会被打断**——它们会自动采用新凭据。
 - 🤝 **与其它工具良好共存。** 通过身份（identity）来识别当前账户，因此当 Claude Code 或其它切换器更改了当前登录时，aimonitor 会自动跟随；发生这种情况时它会通知你，或在遇到尚未纳管的账户时提示你导入。
 - 🔐 **凭据存储于操作系统钥匙串**（macOS 通过 `/usr/bin/security` 使用 Keychain，Linux 使用 libsecret）。SQLite 仅保存引用，token 永不离开钥匙串。
 - ⬆️ **内置自更新** —— 检查 GitHub 上的新版本，确认后通过 Homebrew 更新。绝不在无人值守时自动安装。
@@ -79,14 +79,15 @@ aimonitor doctor
 aimonitor import
 ```
 
-自动切换默认开启，阈值为 5 小时用量的 80%。常见场景下无需任何其它配置。
+自动切换默认开启，5 小时或 7 天用量任一达到 80% 即触发。常见场景下无需任何其它配置。
 
 ## 配置
 
 ```sh
-aimonitor config set auto_swap.enabled true       # 默认 true
-aimonitor config set auto_swap.threshold_pct 80   # 默认 80
-aimonitor config set autostart true                # 登录时启动守护进程
+aimonitor config set auto_swap.enabled true          # 默认 true
+aimonitor config set auto_swap.threshold_pct 80      # 5 小时阈值，默认 80
+aimonitor config set auto_swap.threshold_7d_pct 80   # 7 天阈值，默认 80
+aimonitor config set autostart true                  # 登录时启动守护进程
 ```
 
 <details>
@@ -96,6 +97,7 @@ aimonitor config set autostart true                # 登录时启动守护进程
 |---|---|---|
 | `auto_swap.enabled` | `true` | 基于 OAuth 用量的自动切换总开关 |
 | `auto_swap.threshold_pct` | `80` | 触发自动切换的 5 小时用量阈值（%） |
+| `auto_swap.threshold_7d_pct` | `80` | 触发自动切换的 7 天用量阈值（%） |
 | `auto_swap.grace_sec` | `60` | 从“即将自动切换”通知到真正切换之间的秒数，便于你收尾正在进行的 `claude` 会话。设为 `0` 则立即切换。 |
 | `auto_update.enabled` | `true` | 启动时检查 GitHub 上的新版本并通知你。未经确认绝不安装更新。 |
 | `autostart` | `false` | 登录时启动守护进程 |
@@ -105,7 +107,7 @@ aimonitor config set autostart true                # 登录时启动守护进程
 
 ## 工作原理
 
-当前账户的 5 小时用量达到配置阈值时，aimonitor 会找到用量次低的账户并静默切换：
+当前账户的 5 小时**或** 7 天用量达到各自阈值时，aimonitor 会找到剩余额度最多的账户并静默切换：
 
 ```
                       polled every 5 min ± 30 s jitter
@@ -114,9 +116,9 @@ aimonitor config set autostart true                # 登录时启动守护进程
                 │       → 5h % + 7d % + reset times       │
                 └─────────────────────────────────────────┘
                                    │
-              5h utilization ≥ threshold?
+            5h ≥ threshold  OR  7d ≥ threshold?
                           │
-                          ▼  yes — pick lowest-utilization account
+                          ▼  yes — pick account with most headroom
    ┌──────────────────┐   POST platform.claude.com/v1/oauth/token
    │ target account   │ ──────────────────────────────────────────▶
    │ refresh_token    │   grant_type=refresh_token

@@ -16,7 +16,7 @@
 
 - 🔍 **Live 5-hour and 7-day usage bars, per account** in your menu bar — server-side truth, polled from Anthropic's `/api/oauth/usage` introspection endpoint. No tokens consumed.
 - 🔀 **Silent account switching** — `aimonitor switch <label>` refreshes the OAuth access token via Anthropic's token endpoint and writes the live credential. No terminal hop, no `claude /login`.
-- 🤖 **Auto-swap** at 80 % utilization (configurable single threshold). Picks the account with the most headroom. Running `claude` sessions are never interrupted — they pick up the new credential automatically.
+- 🤖 **Auto-swap on either limit** — triggers when the active account crosses the 5-hour *or* the 7-day threshold (each configurable, default 80 %). Picks the account with the most remaining headroom, and escapes a weekly-capped account even when the alternatives are only 5-hour-hot (5-hour windows recover in hours; weekly caps last days). Running `claude` sessions are never interrupted — they pick up the new credential automatically.
 - 🤝 **Plays well with other tools.** Resolves the active account by identity, so it follows along when Claude Code or another switcher changes the live login — and tells you when that happens, or offers to import an account it doesn't yet manage.
 - 🔐 **OS-keyring credential storage** (macOS Keychain via `/usr/bin/security`, Linux libsecret). SQLite holds references; tokens never leave the keyring.
 - ⬆️ **Built-in self-update** — checks GitHub for new releases and updates via Homebrew on confirmation. No unattended installs.
@@ -81,14 +81,15 @@ Already using another switcher (e.g. claude-bar)? Import its accounts in one ste
 aimonitor import
 ```
 
-Auto-swap is on by default at 80 % 5-hour utilization. Nothing else to configure for the common case.
+Auto-swap is on by default at 80 % utilization on either the 5-hour or the 7-day window. Nothing else to configure for the common case.
 
 ## Configuration
 
 ```sh
-aimonitor config set auto_swap.enabled true       # default true
-aimonitor config set auto_swap.threshold_pct 80   # default 80
-aimonitor config set autostart true                # daemon at login
+aimonitor config set auto_swap.enabled true          # default true
+aimonitor config set auto_swap.threshold_pct 80      # 5-hour threshold, default 80
+aimonitor config set auto_swap.threshold_7d_pct 80   # 7-day threshold, default 80
+aimonitor config set autostart true                  # daemon at login
 ```
 
 <details>
@@ -98,6 +99,7 @@ aimonitor config set autostart true                # daemon at login
 |---|---|---|
 | `auto_swap.enabled` | `true` | Master toggle for the OAuth-limits-driven auto-swap |
 | `auto_swap.threshold_pct` | `80` | 5-hour utilization (%) at which to auto-swap |
+| `auto_swap.threshold_7d_pct` | `80` | 7-day utilization (%) at which to auto-swap |
 | `auto_swap.grace_sec` | `60` | Seconds between the "auto-swap pending" notification and the actual swap, so you can wrap up a live `claude` session. `0` swaps immediately. |
 | `auto_update.enabled` | `true` | Check GitHub for new releases on launch and notify you. Updates are never installed without confirmation. |
 | `autostart` | `false` | Start the daemon at login |
@@ -107,7 +109,7 @@ aimonitor config set autostart true                # daemon at login
 
 ## How it works
 
-When the active account hits the configured 5-hour utilization threshold, aimonitor finds the next-lowest-utilization account and silently swaps:
+When the active account crosses its 5-hour **or** 7-day threshold, aimonitor finds the account with the most remaining headroom and silently swaps:
 
 ```
                       polled every 5 min ± 30 s jitter
@@ -116,9 +118,9 @@ When the active account hits the configured 5-hour utilization threshold, aimoni
                 │       → 5h % + 7d % + reset times       │
                 └─────────────────────────────────────────┘
                                    │
-              5h utilization ≥ threshold?
+            5h ≥ threshold  OR  7d ≥ threshold?
                           │
-                          ▼  yes — pick lowest-utilization account
+                          ▼  yes — pick account with most headroom
    ┌──────────────────┐   POST platform.claude.com/v1/oauth/token
    │ target account   │ ──────────────────────────────────────────▶
    │ refresh_token    │   grant_type=refresh_token
