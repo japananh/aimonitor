@@ -17,15 +17,10 @@ struct PreferencesView: View {
     @State private var autostartOn = false
     @State private var autostartError: String?
     @State private var autoSwapOn = false
-    @State private var threshold = 80
-    // The threshold field is edited as text so we can validate the raw input
-    // (reject <=0 / >100 / non-numeric) instead of silently clamping.
-    @State private var thresholdText = "80"
-    @State private var thresholdError: String?
-    @State private var showSaved = false
-    // Generation token so overlapping 2s "Saved" timers don't hide a newer one.
-    @State private var savedToken = 0
-    @FocusState private var thresholdFocused: Bool
+    // Auto-swap thresholds, one per rate-limit window. Loaded from the
+    // settings table; edited via the ThresholdRow fields below.
+    @State private var threshold5h = 80
+    @State private var threshold7d = 80
     @State private var autoUpdateOn = true
     @State private var versionText = "—"
     // Appearance preference, persisted in UserDefaults; applied via NSApp.
@@ -44,73 +39,30 @@ struct PreferencesView: View {
                 }
                 .pickerStyle(.segmented)
                 .onChange(of: appTheme) { _, newValue in applyAppearance(newValue) }
+                .pointerCursor()
             }
             Section("Auto-switch") {
                 Toggle("Switch accounts automatically near the limit", isOn: Binding(
                     get: { autoSwapOn },
                     set: { newValue in autoSwapOn = newValue; setSetting("auto_swap.enabled", newValue) }
                 ))
-                .help("When on, AIMonitor switches the active account once it hits the threshold below")
+                .help("When on, AIMonitor switches the active account once it hits either threshold below")
+                .pointerCursor()
                 if autoSwapOn {
-                    // Description on its own line; the compact controls on the
-                    // next line. Keeping them apart avoids the row overflowing
-                    // and wrapping the field onto a second line (which looked
-                    // like the field "dropped below" the others).
-                    VStack(alignment: .leading, spacing: 4) {
-                        // One line: label, input, stepper. .firstTextBaseline
-                        // aligns the label's text with the field's text; the
-                        // label is fixedSize + single-line so it never wraps and
-                        // pushes the field onto a second line. A concise label
-                        // keeps the whole row inside the window width.
-                        // All three get the same 22pt height so .center makes
-                        // their vertical centers coincide exactly (baseline
-                        // alignment left the stepper sitting off-center).
-                        HStack(alignment: .center, spacing: 6) {
-                            Text("Switch when 5h or 7d usage reaches %:")
-                                .fixedSize(horizontal: true, vertical: false)
-                                .frame(height: 22)
-                            // Bordered field so it visibly reads as editable.
-                            // Empty title: in a Form a non-empty title renders
-                            // as a separate label beside the field (a stray
-                            // duplicate number).
-                            TextField("", text: $thresholdText)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 60)
-                                .multilineTextAlignment(.trailing)
-                                .focused($thresholdFocused)
-                                // Validate live as the user types so the error
-                                // appears immediately — but only SAVE on Enter
-                                // or when focus leaves the field.
-                                .onChange(of: thresholdText) { _, _ in validateThreshold() }
-                                .onSubmit { commitThreshold() }
-                                .onChange(of: thresholdFocused) { _, focused in
-                                    if focused {
-                                        // Editing resumed — drop a stale "Saved".
-                                        showSaved = false
-                                    } else {
-                                        commitThreshold()
-                                    }
-                                }
-                                .pointerCursor()
-                            Stepper("", value: thresholdStepper, in: 1...100)
-                                .labelsHidden()
-                                .frame(height: 22)
-                        }
-                        .help("Any whole number from 1 to 100. When the active account's 5-hour OR 7-day usage reaches it, AIMonitor switches to the account with the most remaining headroom.")
-                        // Inline feedback: red validation error, or a green
-                        // "Saved" that auto-hides after 2 seconds.
-                        if let err = thresholdError {
-                            Text(err)
-                                .font(.caption2)
-                                .foregroundStyle(.red)
-                        } else if showSaved {
-                            Text("Saved")
-                                .font(.caption2)
-                                .foregroundStyle(.green)
-                        }
-                    }
+                    ThresholdRow(
+                        label: "Switch when 5h usage reaches %:",
+                        settingsKey: "auto_swap.threshold_pct",
+                        value: $threshold5h
+                    )
+                    .help("Any whole number from 1 to 100. When the active account's 5-hour usage reaches it, AIMonitor switches to the account with the most remaining headroom.")
+                    ThresholdRow(
+                        label: "Switch when 7d usage reaches %:",
+                        settingsKey: "auto_swap.threshold_7d_pct",
+                        value: $threshold7d
+                    )
+                    .help("Any whole number from 1 to 100. When the active account's 7-day usage reaches it, AIMonitor switches — even if the alternatives are 5-hour-hot, since weekly caps last days while 5-hour windows recover in hours.")
                 }
-                Text("Triggers on either the 5-hour or the 7-day limit and picks the account with the most remaining headroom — escaping a weekly-capped account even when the alternatives are only 5-hour-hot (5-hour windows recover in hours; weekly caps last days). If another credential manager is also running, AIMonitor recovers from token rotation automatically; to avoid both tools switching at once, turn this off and let the other tool drive.")
+                Text("Each window has its own threshold; crossing either one triggers a switch to the account with the most remaining headroom — escaping a weekly-capped account even when the alternatives are only 5-hour-hot. If another credential manager is also running, AIMonitor recovers from token rotation automatically; to avoid both tools switching at once, turn this off and let the other tool drive.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -119,6 +71,7 @@ struct PreferencesView: View {
                     .onChange(of: autostartOn) { _, newValue in
                         applyAutostart(newValue)
                     }
+                    .pointerCursor()
                 if let msg = autostartError {
                     Text(msg).font(.caption2).foregroundStyle(.red)
                 }
@@ -129,6 +82,7 @@ struct PreferencesView: View {
                     set: { newValue in autoUpdateOn = newValue; setSetting("auto_update.enabled", newValue) }
                 ))
                 .help("Check GitHub for new releases on launch and notify you")
+                .pointerCursor()
                 Text("Checks GitHub for new releases and notifies you. Updates are never installed without your confirmation.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -148,7 +102,7 @@ struct PreferencesView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .frame(width: 420, height: 520)
+        .frame(width: 420, height: 560)
         .onAppear(perform: loadState)
     }
 
@@ -160,7 +114,8 @@ struct PreferencesView: View {
             let swap = (try? CLIBridge.configGet("auto_swap.enabled")) == "true"
             // Default on: only an explicit "false" disables.
             let upd = (try? CLIBridge.configGet("auto_update.enabled")) != "false"
-            let thr = Int((try? CLIBridge.configGet("auto_swap.threshold_pct")) ?? "80") ?? 80
+            let thr5 = Int((try? CLIBridge.configGet("auto_swap.threshold_pct")) ?? "80") ?? 80
+            let thr7 = Int((try? CLIBridge.configGet("auto_swap.threshold_7d_pct")) ?? "80") ?? 80
             // Just the version number for About — no commit/build date.
             // (The `aimonitor version` CLI still prints those for diagnostics.)
             var ver = "version unavailable"
@@ -173,8 +128,8 @@ struct PreferencesView: View {
             DispatchQueue.main.async {
                 autoSwapOn = swap
                 autoUpdateOn = upd
-                threshold = thr
-                thresholdText = String(thr)
+                threshold5h = thr5
+                threshold7d = thr7
                 versionText = ver
             }
         }
@@ -184,61 +139,6 @@ struct PreferencesView: View {
         DispatchQueue.global(qos: .utility).async {
             try? CLIBridge.configSet(key, on ? "true" : "false")
         }
-    }
-
-    // validateThreshold updates the inline error as the user types, without
-    // saving. It's the live-feedback counterpart to commitThreshold (which
-    // persists on Enter / blur).
-    private func validateThreshold() {
-        let trimmed = thresholdText.trimmingCharacters(in: .whitespaces)
-        if let v = Int(trimmed), v > 0, v <= 100 {
-            thresholdError = nil
-        } else {
-            thresholdError = "Value must be > 0 and <= 100"
-        }
-    }
-
-    // commitThreshold validates the raw text and, only when valid, persists it
-    // and flashes "Saved". Invalid input (non-numeric, <=0, >100) shows an
-    // error and is NOT saved. Called on Enter and when the field loses focus.
-    private func commitThreshold() {
-        let trimmed = thresholdText.trimmingCharacters(in: .whitespaces)
-        guard let v = Int(trimmed), v > 0, v <= 100 else {
-            thresholdError = "Value must be > 0 and <= 100"
-            return
-        }
-        thresholdError = nil
-        // Normalise the displayed text (e.g. "080" -> "80").
-        thresholdText = String(v)
-        threshold = v
-        DispatchQueue.global(qos: .utility).async {
-            try? CLIBridge.configSet("auto_swap.threshold_pct", String(v))
-        }
-        flashSaved()
-    }
-
-    // flashSaved shows the green "Saved" note for 2 seconds. The generation
-    // token ensures a rapid second save doesn't get hidden early by the first
-    // save's timer.
-    private func flashSaved() {
-        showSaved = true
-        savedToken += 1
-        let token = savedToken
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            if token == savedToken { showSaved = false }
-        }
-    }
-
-    // thresholdStepper drives the +/- control. It's always within 1...100, so
-    // it routes through commitThreshold (which then saves + flashes "Saved").
-    private var thresholdStepper: Binding<Int> {
-        Binding(
-            get: { Int(thresholdText) ?? threshold },
-            set: { newValue in
-                thresholdText = String(min(max(newValue, 1), 100))
-                commitThreshold()
-            }
-        )
     }
 
     private func applyAutostart(_ enable: Bool) {
@@ -254,5 +154,133 @@ struct PreferencesView: View {
             // Revert the toggle so the UI matches reality.
             autostartOn = !enable
         }
+    }
+}
+
+// ThresholdRow is one "<label> <input> <stepper>" line with live validation,
+// save-on-blur/Enter, and a transient green "Saved" note. Used for the 5h
+// and 7d auto-swap thresholds; persists to the given settings key via the
+// CLI. The field is edited as raw text so bad input (<=0, >100, non-numeric)
+// shows an error while typing instead of being silently clamped.
+private struct ThresholdRow: View {
+    let label: String
+    let settingsKey: String
+    // The loaded/persisted value. loadState publishes into it after the
+    // async settings read; commits write back through it.
+    @Binding var value: Int
+
+    @State private var text = ""
+    @State private var error: String?
+    @State private var saved = false
+    // Generation token so overlapping 2s "Saved" timers don't hide a newer one.
+    @State private var savedToken = 0
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // All three get the same 22pt height so .center makes their
+            // vertical centers coincide exactly. The label is fixedSize +
+            // single-line so it never wraps and pushes the field down.
+            HStack(alignment: .center, spacing: 6) {
+                Text(label)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(height: 22)
+                // Bordered field so it visibly reads as editable. Empty
+                // title: in a Form a non-empty title renders as a separate
+                // label beside the field (a stray duplicate number).
+                TextField("", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 60)
+                    .multilineTextAlignment(.trailing)
+                    .focused($focused)
+                    // Validate live as the user types so the error appears
+                    // immediately — but only SAVE on Enter or blur.
+                    .onChange(of: text) { _, _ in validate() }
+                    .onSubmit { commit() }
+                    .onChange(of: focused) { _, isFocused in
+                        if isFocused {
+                            // Editing resumed — drop a stale "Saved".
+                            saved = false
+                        } else {
+                            commit()
+                        }
+                    }
+                    .pointerCursor()
+                Stepper("", value: stepper, in: 1...100)
+                    .labelsHidden()
+                    .frame(height: 22)
+            }
+            // Inline feedback: red validation error, or a green "Saved"
+            // that auto-hides after 2 seconds.
+            if let err = error {
+                Text(err)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            } else if saved {
+                Text("Saved")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+            }
+        }
+        .onAppear { text = String(value) }
+        .onChange(of: value) { _, v in
+            // The async settings load publishes after onAppear; don't stomp
+            // the user's in-progress edit.
+            if !focused { text = String(v) }
+        }
+    }
+
+    // validate updates the inline error as the user types, without saving.
+    private func validate() {
+        if parsed() != nil {
+            error = nil
+        } else {
+            error = "Value must be > 0 and <= 100"
+        }
+    }
+
+    // commit validates the raw text and, only when valid, persists it and
+    // flashes "Saved". Invalid input shows the error and is NOT saved.
+    private func commit() {
+        guard let v = parsed() else {
+            error = "Value must be > 0 and <= 100"
+            return
+        }
+        error = nil
+        // Normalise the displayed text (e.g. "080" -> "80").
+        text = String(v)
+        value = v
+        let key = settingsKey
+        DispatchQueue.global(qos: .utility).async {
+            try? CLIBridge.configSet(key, String(v))
+        }
+        flashSaved()
+    }
+
+    private func parsed() -> Int? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard let v = Int(trimmed), v > 0, v <= 100 else { return nil }
+        return v
+    }
+
+    private func flashSaved() {
+        saved = true
+        savedToken += 1
+        let token = savedToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            if token == savedToken { saved = false }
+        }
+    }
+
+    // stepper drives the +/- control. Always within 1...100, so it routes
+    // straight through commit (save + "Saved").
+    private var stepper: Binding<Int> {
+        Binding(
+            get: { Int(text) ?? value },
+            set: { newValue in
+                text = String(min(max(newValue, 1), 100))
+                commit()
+            }
+        )
     }
 }
