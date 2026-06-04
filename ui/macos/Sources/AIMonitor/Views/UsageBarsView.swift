@@ -20,7 +20,7 @@ struct UsageBars: View {
             bar(label: "7d", pct: limits.sevenDayPct, resetAt: limits.sevenDayResetAt)
             Text(stalenessLabel(fetched: limits.fetchedAt))
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .padding(.leading, 28)
         }
     }
@@ -31,7 +31,7 @@ struct UsageBars: View {
             Text(label)
                 .font(.caption.monospaced())
                 .frame(width: 22, alignment: .leading)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
             // Custom-drawn bar instead of ProgressView: macOS's linear
             // ProgressView ignores .tint for the fill, so the bars rendered
             // colorless. Drawing a track + colored fill guarantees the
@@ -51,10 +51,10 @@ struct UsageBars: View {
             Text(String(format: "%.0f%%", pct))
                 .font(.caption.monospacedDigit())
                 .frame(width: 34, alignment: .trailing)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
             Text(resetAt.map { "· \(resetCountdown($0))" } ?? "")
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .frame(width: 64, alignment: .leading)
         }
     }
@@ -92,9 +92,9 @@ struct UsageBars: View {
         let age = Int(Date().timeIntervalSince(fetched))
         let stale = age > 720 ? " (stale)" : ""
         switch age {
-        case ..<60: return "updated just now\(stale)"
-        case ..<3600: return "updated \(age / 60)m ago\(stale)"
-        default: return "updated \(age / 3600)h ago\(stale)"
+        case ..<60: return "Updated just now\(stale)"
+        case ..<3600: return "Updated \(age / 60)m ago\(stale)"
+        default: return "Updated \(age / 3600)h ago\(stale)"
         }
     }
 }
