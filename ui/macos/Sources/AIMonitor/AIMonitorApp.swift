@@ -68,12 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // snappy without popping up on every transit. Per-app preference —
         // doesn't touch system-wide behavior.
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 300])
-        // Dock icon: user preference (Preferences → Appearance), plus the
-        // AIMONITOR_DOCK_ICON=1 env override used by local dev builds.
-        // Clicking the Dock icon opens the panel via
-        // applicationShouldHandleReopen below.
-        let dockEnv = ProcessInfo.processInfo.environment["AIMONITOR_DOCK_ICON"] == "1"
-        if dockEnv || UserDefaults.standard.bool(forKey: showDockIconKey) {
+        // Dock icon: user preference (Preferences → Appearance), OFF by
+        // default — the app is a menu-bar accessory first. No env override:
+        // the Dock icon must always match the toggle, so the preference is
+        // the single source of truth. Clicking the Dock icon opens the
+        // panel via applicationShouldHandleReopen below.
+        if UserDefaults.standard.bool(forKey: showDockIconKey) {
             applyDockIconPolicy(true)
         }
         setupStatusItem()
