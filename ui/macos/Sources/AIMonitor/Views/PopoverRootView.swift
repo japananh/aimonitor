@@ -14,6 +14,9 @@ struct PopoverRootView: View {
     // Invoked with the signed-in email when the live account isn't managed
     // by aimonitor, to offer importing it. nil hides the import prompt.
     var importAccount: ((String) -> Void)? = nil
+    // Shows the add-account instructions (claude /login → import banner).
+    // nil hides the affordance.
+    var addAccount: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -26,6 +29,17 @@ struct PopoverRootView: View {
                 Text("Accounts")
                     .font(.headline)
                 Spacer()
+                // Add account: instructions dialog (the actual login happens
+                // in the browser via `claude /login`; the import banner then
+                // captures it).
+                if let addAccount {
+                    Button(action: addAccount) {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .pointerCursor()
+                    .help("Add a Claude account to AIMonitor")
+                }
                 // Bug report: opens a pre-filled GitHub issue (bug template).
                 Button {
                     NSWorkspace.shared.open(URL(string: "https://github.com/japananh/aimonitor/issues/new?template=bug_report.yml")!)
