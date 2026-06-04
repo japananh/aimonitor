@@ -103,6 +103,8 @@ archives:
         dst: AIMonitor.app/Contents/MacOS/AIMonitor
         info:
           mode: 0755
+      - src: build/AIMonitor.app/Contents/Resources/AppIcon.icns
+        dst: AIMonitor.app/Contents/Resources/AppIcon.icns
 
 checksum:
   name_template: checksums.txt
