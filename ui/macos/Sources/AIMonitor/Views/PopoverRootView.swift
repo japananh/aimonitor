@@ -24,7 +24,7 @@ struct PopoverRootView: View {
                 // Panel title — bigger than the account-row headlines so the
                 // hierarchy reads title > account name > email > org.
                 Text("Accounts")
-                    .font(.title3).bold()
+                    .font(.headline)
                 Spacer()
                 Button(action: openPreferences) {
                     Image(systemName: "gearshape")
