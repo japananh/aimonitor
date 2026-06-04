@@ -194,7 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         top.append(NSAttributedString(
             string: bottom,
             attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold),
                 .paragraphStyle: para,
             ]))
         // Nudge the block down so the two lines sit centered in the bar.
