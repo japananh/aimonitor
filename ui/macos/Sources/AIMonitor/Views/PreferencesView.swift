@@ -87,6 +87,9 @@ struct PreferencesView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Button("Check for Updates…", action: checkForUpdates)
+                    // Same control size as the main popover's buttons
+                    // (Refresh usage / Quit / Switch are all .small).
+                    .controlSize(.small)
                     .pointerCursor()
                     .help("Check for a newer version now")
             }

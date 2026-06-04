@@ -96,6 +96,9 @@ struct PopoverRootView: View {
                     .padding(.vertical, 4)
             }
         }
+        // Breathing room between the panel's rounded edges and the content.
+        .padding(.top, 6)
+        .padding(.bottom, 6)
         .frame(width: 360)
     }
 
