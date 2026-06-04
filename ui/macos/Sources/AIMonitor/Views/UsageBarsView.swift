@@ -9,6 +9,7 @@
 // this morning — the "(stale)" marker tells you.
 
 import SwiftUI
+import AppKit
 
 struct UsageBars: View {
     let limits: LimitsRow
@@ -31,9 +32,22 @@ struct UsageBars: View {
                 .font(.caption.monospaced())
                 .frame(width: 22, alignment: .leading)
                 .foregroundStyle(.secondary)
-            ProgressView(value: min(max(pct, 0), 100) / 100.0)
-                .tint(color(for: pct))
-                .progressViewStyle(.linear)
+            // Custom-drawn bar instead of ProgressView: macOS's linear
+            // ProgressView ignores .tint for the fill, so the bars rendered
+            // colorless. Drawing a track + colored fill guarantees the
+            // green/amber/red severity shows. Both colors are AppKit system
+            // colors, so they adapt to the active appearance — including the
+            // "inherit from OS" theme, where they match the OS light/dark shade.
+            GeometryReader { geo in
+                let frac = CGFloat(min(max(pct, 0), 100) / 100.0)
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color(nsColor: .quaternaryLabelColor))
+                    Capsule()
+                        .fill(color(for: pct))
+                        .frame(width: max(0, geo.size.width * frac))
+                }
+            }
+            .frame(height: 6)
             Text(String(format: "%.0f%%", pct))
                 .font(.caption.monospacedDigit())
                 .frame(width: 34, alignment: .trailing)
@@ -46,12 +60,13 @@ struct UsageBars: View {
     }
 
     // green < 60, amber < 85, red ≥ 85 — claude-bar's palette for absolute
-    // rate-limit utilization.
+    // rate-limit utilization. AppKit system colors so they adapt to the OS
+    // appearance (and our light/dark/inherit theme) rather than being fixed.
     private func color(for pct: Double) -> Color {
         switch pct {
-        case ..<60: return .green
-        case ..<85: return .yellow
-        default: return .red
+        case ..<60: return Color(nsColor: .systemGreen)
+        case ..<85: return Color(nsColor: .systemYellow)
+        default: return Color(nsColor: .systemRed)
         }
     }
 
