@@ -51,20 +51,25 @@ type ExternalSwitchWatcher struct {
 	// Now is the clock, injectable for tests. Nil → time.Now.
 	Now func() time.Time
 
+	// Identity is tracked by account ID, not label: a rename changes the
+	// label of the SAME account, which label-tracking misread as an
+	// external switch (no audit row explains a rename). IDs are stable
+	// across renames; labels are kept only for human-facing messages.
 	mu           sync.Mutex
 	initialized  bool
+	lastID       int64
 	lastLabel    string
-	pendingLabel string // change seen once but not yet attributed — grace
+	pendingID    int64 // change seen once but not yet attributed — grace
 	lastExternal time.Time
 	lastNotified time.Time
 }
 
-// Observe feeds the watcher one resolution of the active label (the
-// StatusPublisher calls it every publish tick). Empty labels are ignored
-// entirely — a transient resolution failure must not register as a
-// change in either direction.
-func (w *ExternalSwitchWatcher) Observe(ctx context.Context, label string) {
-	if label == "" {
+// Observe feeds the watcher one resolution of the active account (the
+// StatusPublisher calls it every publish tick). Unresolved observations
+// (id <= 0 or empty label) are ignored entirely — a transient resolution
+// failure must not register as a change in either direction.
+func (w *ExternalSwitchWatcher) Observe(ctx context.Context, id int64, label string) {
+	if id <= 0 || label == "" {
 		return
 	}
 	w.mu.Lock()
@@ -75,11 +80,15 @@ func (w *ExternalSwitchWatcher) Observe(ctx context.Context, label string) {
 		// happened while the daemon was down can't be attributed either
 		// way, so they're absorbed silently.
 		w.initialized = true
+		w.lastID = id
 		w.lastLabel = label
 		return
 	}
-	if label == w.lastLabel {
-		w.pendingLabel = ""
+	if id == w.lastID {
+		// Same account. Track label drift (a rename) silently — same
+		// identity, nothing switched.
+		w.lastLabel = label
+		w.pendingID = 0
 		return
 	}
 
@@ -87,8 +96,9 @@ func (w *ExternalSwitchWatcher) Observe(ctx context.Context, label string) {
 	// aimonitor's own switch paths (manual CLI/widget, auto-swap) claims
 	// the change as ours.
 	if w.ownSwitchTo(ctx, label) {
+		w.lastID = id
 		w.lastLabel = label
-		w.pendingLabel = ""
+		w.pendingID = 0
 		return
 	}
 
@@ -96,15 +106,16 @@ func (w *ExternalSwitchWatcher) Observe(ctx context.Context, label string) {
 	// external: an own switch writes its audit row milliseconds AFTER the
 	// live slot, so a publish tick can land in between. By the next tick
 	// (~2s) a genuine own switch is always attributable.
-	if w.pendingLabel != label {
-		w.pendingLabel = label
+	if w.pendingID != id {
+		w.pendingID = id
 		return
 	}
 
 	// Second consecutive unattributed sighting — external.
 	w.flagExternal(ctx, w.lastLabel, label)
+	w.lastID = id
 	w.lastLabel = label
-	w.pendingLabel = ""
+	w.pendingID = 0
 }
 
 // LastExternalAt returns when the most recent external switch was
