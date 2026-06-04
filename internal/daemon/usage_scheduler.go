@@ -384,10 +384,11 @@ func (u *UsageScheduler) activeAccount(ctx context.Context) (store.Account, bool
 	return store.Account{}, false, nil
 }
 
-// activePct returns the most recently persisted 5-hour utilization for
-// the active account, used to decide whether to switch to the high-
-// cadence interval. Returns (0, false) when there is no persisted data
-// or no active account.
+// activePct returns the active account's hotter utilization — the max of
+// its 5-hour and 7-day percentages — used to decide whether to switch to
+// the high-cadence interval. The 7-day window counts because a weekly-
+// capped account arms an auto-swap just like a 5-hour-capped one does.
+// Returns (0, false) when there is no persisted data or no active account.
 func (u *UsageScheduler) activePct(ctx context.Context) (float64, bool) {
 	resolve := u.ResolveActive
 	if resolve == nil {
@@ -401,7 +402,7 @@ func (u *UsageScheduler) activePct(ctx context.Context) (float64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	return limits.FiveHourPct, true
+	return max(limits.FiveHourPct, limits.SevenDayPct), true
 }
 
 // jittered returns base ± uniform(-Jitter, +Jitter), clamped to a

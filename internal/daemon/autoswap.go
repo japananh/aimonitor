@@ -72,9 +72,11 @@ type pendingSwap struct {
 }
 
 // AutoSwapper is the Limits-driven account-rotation engine. When the
-// active account's 5-hour utilization rises to or above the configured
-// threshold, it arms a swap to the least-utilized non-active account,
-// notifies the user, and fires the swap once the grace window elapses.
+// active account's 5-hour OR 7-day utilization rises to or above the
+// configured threshold, it arms a swap to the non-active account with
+// the most headroom (judged relative to the active account — see
+// pickCandidate), notifies the user, and fires the swap once the grace
+// window elapses.
 //
 // Distinct from the legacy AutoSwitcher (autoswitch.go) which is
 // tripwire-driven by JSONL samples and fires probe-based decisions.
@@ -158,40 +160,45 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 		}
 		return false, err
 	}
-	// Active dropped back below threshold (window reset, or the user swapped
-	// manually): cancel any armed swap.
-	if activeLim.FiveHourPct < threshold {
+	// Active is back below threshold on BOTH windows (window reset, or the
+	// user swapped manually): cancel any armed swap. Either window at/over
+	// threshold keeps a swap in play — a weekly-capped account is dead for
+	// days even while its 5-hour window is quiet.
+	if activeLim.FiveHourPct < threshold && activeLim.SevenDayPct < threshold {
 		a.pending = nil
 		return false, nil
 	}
+	// The binding window is the one driving this decision (the hotter of the
+	// over-threshold windows). Candidates are judged against it.
+	binding, activePct := bindingWindow(activeLim, threshold)
 
-	cand, found, err := a.pickCandidate(ctx, activeAcct.ID, threshold)
+	cand, found, err := a.pickCandidate(ctx, activeAcct.ID, activeLim, binding)
 	if err != nil {
 		return false, fmt.Errorf("auto-swap: pick candidate: %w", err)
 	}
 	if !found {
-		fmt.Fprintf(a.stderr(), "auto-swap: no candidate below %.0f%% — all accounts near limit (active=%q at %.1f%%)\n",
-			threshold, activeLabel, activeLim.FiveHourPct)
+		fmt.Fprintf(a.stderr(), "auto-swap: no candidate better than active on the %s window — all accounts near limit (active=%q at %.1f%%)\n",
+			binding, activeLabel, activePct)
 		a.pending = nil
 		a.cooldownUntil = a.now().Add(cooldownAfterExhausted)
-		a.notify("All accounts near limit", fmt.Sprintf("%q is at %.0f%% and no account has headroom to swap to.", activeLabel, activeLim.FiveHourPct))
+		a.notify("All accounts near limit", fmt.Sprintf("%q is at %.0f%% of its %s limit and no account has more headroom.", activeLabel, activePct, binding))
 		return false, nil
 	}
 
 	// Grace disabled (grace_sec=0): swap immediately.
 	if graceSec <= 0 {
-		return a.fireSwap(ctx, activeLabel, activeLim.FiveHourPct, cand, threshold)
+		return a.fireSwap(ctx, activeLabel, activePct, binding, cand)
 	}
 
 	// Arm on first detection (or when the best candidate changed), notifying
 	// once. Subsequent ticks reuse the same deadline.
 	if a.pending == nil || a.pending.target != cand.Label {
 		a.pending = &pendingSwap{target: cand.Label, deadline: a.now().Add(time.Duration(graceSec) * time.Second)}
-		fmt.Fprintf(a.stderr(), "auto-swap: armed — %q at %.1f%% (>= %.0f%%), will switch to %q in %ds\n",
-			activeLabel, activeLim.FiveHourPct, threshold, cand.Label, graceSec)
+		fmt.Fprintf(a.stderr(), "auto-swap: armed — %q at %.1f%% of its %s limit (>= %.0f%%), will switch to %q in %ds\n",
+			activeLabel, activePct, binding, threshold, cand.Label, graceSec)
 		a.notify(
 			fmt.Sprintf("Auto-swap in %ds", graceSec),
-			fmt.Sprintf("%q hit %.0f%%. Switching to %q — running sessions will follow automatically.", activeLabel, activeLim.FiveHourPct, cand.Label),
+			fmt.Sprintf("%q hit %.0f%% of its %s limit. Switching to %q — running sessions will follow automatically.", activeLabel, activePct, binding, cand.Label),
 		)
 		return false, nil
 	}
@@ -202,7 +209,28 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 	}
 
 	// Deadline reached — fire.
-	return a.fireSwap(ctx, activeLabel, activeLim.FiveHourPct, cand, threshold)
+	return a.fireSwap(ctx, activeLabel, activePct, binding, cand)
+}
+
+// windowKind names the rate-limit window driving a swap decision.
+type windowKind string
+
+const (
+	window5h windowKind = "5-hour"
+	window7d windowKind = "7-day"
+)
+
+// bindingWindow returns the window that should drive the swap decision —
+// the over-threshold window, or when both are over, the hotter one — and
+// the active account's utilization on it. Callers must already have
+// established that at least one window is at/over the threshold.
+func bindingWindow(lim provider.Limits, threshold float64) (windowKind, float64) {
+	over5 := lim.FiveHourPct >= threshold
+	over7 := lim.SevenDayPct >= threshold
+	if over7 && (!over5 || lim.SevenDayPct >= lim.FiveHourPct) {
+		return window7d, lim.SevenDayPct
+	}
+	return window5h, lim.FiveHourPct
 }
 
 // shouldRefreshCandidates reports whether a just-in-time candidate refresh
@@ -226,7 +254,8 @@ func (a *AutoSwapper) shouldRefreshCandidates(ctx context.Context, activeLabel s
 	if err != nil {
 		return false
 	}
-	return lim.FiveHourPct >= threshold
+	// Either window over threshold makes a swap imminent.
+	return lim.FiveHourPct >= threshold || lim.SevenDayPct >= threshold
 }
 
 // refreshStaleCandidates fetches fresh usage for up to maxJITRefresh
@@ -259,9 +288,9 @@ func (a *AutoSwapper) refreshStaleCandidates(ctx context.Context, activeID int64
 
 // fireSwap performs the switch, records the audit row, arms the
 // post-swap cooldown, and clears the pending state. Caller holds a.mu.
-func (a *AutoSwapper) fireSwap(ctx context.Context, activeLabel string, activePct float64, cand candidate, threshold float64) (bool, error) {
-	fmt.Fprintf(a.stderr(), "auto-swap: %q at %.1f%% (>= %.0f%%), switching to %q (5h %.1f%%)\n",
-		activeLabel, activePct, threshold, cand.Label, cand.FiveHourPct)
+func (a *AutoSwapper) fireSwap(ctx context.Context, activeLabel string, activePct float64, binding windowKind, cand candidate) (bool, error) {
+	fmt.Fprintf(a.stderr(), "auto-swap: %q at %.1f%% of its %s limit, switching to %q (5h %.1f%%, 7d %.1f%%)\n",
+		activeLabel, activePct, binding, cand.Label, cand.FiveHourPct, cand.SevenDayPct)
 	if err := a.Switcher.Switch(ctx, cand.Label); err != nil {
 		return false, fmt.Errorf("auto-swap: switch to %q: %w", cand.Label, err)
 	}
@@ -272,8 +301,8 @@ func (a *AutoSwapper) fireSwap(ctx context.Context, activeLabel string, activePc
 		FromLabel: activeLabel,
 		ToLabel:   cand.Label,
 		Trigger:   store.TriggerAutoswitch,
-		Reason: fmt.Sprintf("active %q 5h%%=%.1f >= threshold %.0f; candidate %q 5h%%=%.1f",
-			activeLabel, activePct, threshold, cand.Label, cand.FiveHourPct),
+		Reason: fmt.Sprintf("active %q %s%%=%.1f over threshold; candidate %q 5h%%=%.1f 7d%%=%.1f",
+			activeLabel, binding, activePct, cand.Label, cand.FiveHourPct, cand.SevenDayPct),
 	})
 	a.notify(fmt.Sprintf("Switched to %s", cand.Label), "Running `claude` sessions pick up the new account automatically.")
 	return true, nil
@@ -287,27 +316,45 @@ type candidate struct {
 	LastUsedMs  int64
 }
 
-// pickCandidate returns the best non-active account whose 5-hour
-// utilization is below threshold. Lowest 5h% wins; ties break by
-// lowest 7d%; further ties break by least-recently-used so accounts
-// rotate evenly.
+// pct returns the candidate's utilization on the given window.
+func (c candidate) pct(w windowKind) float64 {
+	if w == window7d {
+		return c.SevenDayPct
+	}
+	return c.FiveHourPct
+}
+
+// pickCandidate returns the best non-active account, judged RELATIVE to the
+// active account rather than against the absolute threshold:
 //
-// Returns (_, false, nil) when no eligible account exists.
-func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, threshold float64) (candidate, bool, error) {
+//	tier 1 — lower than the active on BOTH windows: the clean win. Ranked by
+//	         most overall headroom (lowest max(5h, 7d)).
+//	tier 2 — lower than the active on the BINDING window only. The windows
+//	         aren't symmetric: a 5h-hot account self-heals within hours while
+//	         a weekly-capped one is dead for days, so escaping a 7d-capped
+//	         active into a 5h-warm-but-weekly-healthy account (and vice
+//	         versa) is still a win. Ranked by lowest binding-window pct.
+//
+// Within a tier, ties break by least-recently-used so accounts rotate
+// evenly. Accounts with stale/unknown usage are the last resort — we can't
+// vouch for their headroom — ranked only by least-recently-used. (The
+// just-in-time refresh normally promotes those to fresh before we get
+// here; they remain only when a refresh wasn't possible, e.g. an expired
+// refresh token.)
+//
+// Returns (_, false, nil) when no account beats the active on the binding
+// window — switching would gain nothing.
+func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeLim provider.Limits, binding windowKind) (candidate, bool, error) {
 	accounts, err := a.Store.ListAccounts(ctx)
 	if err != nil {
 		return candidate{}, false, err
 	}
-	// Two pools (B): trust accounts with a FRESH, known snapshot below the
-	// threshold; fall back to uncertain (stale/unknown) accounts only when no
-	// trusted candidate exists. This avoids the old behavior of treating an
-	// account we can't see as "0% available" and preferring it — which could
-	// switch straight into an exhausted account. The just-in-time refresh
-	// (refreshStaleCandidates) normally promotes uncertain accounts to fresh
-	// before we get here; the uncertain pool is the last resort when a
-	// refresh wasn't possible (e.g. an expired refresh token).
+	activeBindingPct := activeLim.FiveHourPct
+	if binding == window7d {
+		activeBindingPct = activeLim.SevenDayPct
+	}
 	now := a.now()
-	var fresh, uncertain []candidate
+	var tier1, tier2, uncertain []candidate
 	for _, acct := range accounts {
 		if acct.ID == activeID {
 			continue
@@ -315,43 +362,55 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, thresho
 		lim, err := a.Store.GetLimits(ctx, acct.ID)
 		known := err == nil
 		isFresh := known && now.Sub(lim.FetchedAt) <= candidateFreshWindow
-		if isFresh {
-			if lim.FiveHourPct >= threshold {
-				continue // known to be over the threshold — not a candidate
-			}
-			fresh = append(fresh, candidate{
-				Label:       acct.Label,
-				FiveHourPct: lim.FiveHourPct,
-				SevenDayPct: lim.SevenDayPct,
-				LastUsedMs:  acct.LastUsedAt.UnixMilli(),
+		if !isFresh {
+			uncertain = append(uncertain, candidate{
+				Label:      acct.Label,
+				LastUsedMs: acct.LastUsedAt.UnixMilli(),
 			})
 			continue
 		}
-		// Stale or unknown: we can't vouch for its headroom. Keep it as a
-		// last resort, ranked only by least-recently-used (its percentages
-		// are untrustworthy, so don't sort on them).
-		uncertain = append(uncertain, candidate{
-			Label:      acct.Label,
-			LastUsedMs: acct.LastUsedAt.UnixMilli(),
+		c := candidate{
+			Label:       acct.Label,
+			FiveHourPct: lim.FiveHourPct,
+			SevenDayPct: lim.SevenDayPct,
+			LastUsedMs:  acct.LastUsedAt.UnixMilli(),
+		}
+		switch {
+		case c.FiveHourPct < activeLim.FiveHourPct && c.SevenDayPct < activeLim.SevenDayPct:
+			tier1 = append(tier1, c)
+		case c.pct(binding) < activeBindingPct:
+			tier2 = append(tier2, c)
+		}
+		// Fresh but not lower on the binding window: not a candidate —
+		// switching to it would gain nothing on the constraint that fired.
+	}
+	switch {
+	case len(tier1) > 0:
+		sort.Slice(tier1, func(i, j int) bool {
+			mi := max(tier1[i].FiveHourPct, tier1[i].SevenDayPct)
+			mj := max(tier1[j].FiveHourPct, tier1[j].SevenDayPct)
+			if mi != mj {
+				return mi < mj
+			}
+			return tier1[i].LastUsedMs < tier1[j].LastUsedMs
 		})
-	}
-	pool := fresh
-	if len(pool) == 0 {
-		pool = uncertain
-	}
-	if len(pool) == 0 {
+		return tier1[0], true, nil
+	case len(tier2) > 0:
+		sort.Slice(tier2, func(i, j int) bool {
+			if tier2[i].pct(binding) != tier2[j].pct(binding) {
+				return tier2[i].pct(binding) < tier2[j].pct(binding)
+			}
+			return tier2[i].LastUsedMs < tier2[j].LastUsedMs
+		})
+		return tier2[0], true, nil
+	case len(uncertain) > 0:
+		sort.Slice(uncertain, func(i, j int) bool {
+			return uncertain[i].LastUsedMs < uncertain[j].LastUsedMs
+		})
+		return uncertain[0], true, nil
+	default:
 		return candidate{}, false, nil
 	}
-	sort.Slice(pool, func(i, j int) bool {
-		if pool[i].FiveHourPct != pool[j].FiveHourPct {
-			return pool[i].FiveHourPct < pool[j].FiveHourPct
-		}
-		if pool[i].SevenDayPct != pool[j].SevenDayPct {
-			return pool[i].SevenDayPct < pool[j].SevenDayPct
-		}
-		return pool[i].LastUsedMs < pool[j].LastUsedMs
-	})
-	return pool[0], true, nil
 }
 
 func (a *AutoSwapper) config(ctx context.Context) (enabled bool, threshold float64, graceSec int, err error) {

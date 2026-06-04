@@ -131,21 +131,132 @@ func TestAutoSwap_AboveThreshold_PicksLowest(t *testing.T) {
 	}
 }
 
-func TestAutoSwap_AllNearLimit_NoSwap(t *testing.T) {
+// Candidates are judged RELATIVE to the active account: even when both are
+// over the threshold, an account with lower utilization on the binding
+// window is still a win (it has more remaining headroom).
+func TestAutoSwap_RelativeHeadroom_SwapsEvenWhenCandidateOverThreshold(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
 	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
 	other, _ := s.CreateAccount(ctx, store.Account{Label: "other", KeyringRef: "ref-o"})
 	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 90})
 	_ = s.PutLimits(ctx, other.ID, provider.Limits{FiveHourPct: 85})
+	immediateSwap(t, s)
 
-	a, _, _ := withAutoSwapStubs(t, s)
+	a, fsw, _ := withAutoSwapStubs(t, s)
 	swapped, err := a.MaybeSwap(ctx, "active")
 	if err != nil {
 		t.Fatalf("MaybeSwap: %v", err)
 	}
-	if swapped {
-		t.Errorf("no candidate has headroom — should not swap")
+	if !swapped || len(fsw.switched) != 1 || fsw.switched[0] != "other" {
+		t.Errorf("85%% beats 90%% on the binding window — want switch to other; swapped=%v switched=%v", swapped, fsw.switched)
+	}
+}
+
+// When no account is lower than the active on the binding window, there is
+// nothing to gain — stay put and notify.
+func TestAutoSwap_AllNearLimit_NoSwap(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	other, _ := s.CreateAccount(ctx, store.Account{Label: "other", KeyringRef: "ref-o"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 90})
+	_ = s.PutLimits(ctx, other.ID, provider.Limits{FiveHourPct: 95}) // hotter than active
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	var notes []string
+	a.Notify = func(title, _ string) { notes = append(notes, title) }
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if swapped || len(fsw.switched) != 0 {
+		t.Errorf("no candidate beats active on the binding window — should not swap; got %v", fsw.switched)
+	}
+	if len(notes) != 1 || notes[0] != "All accounts near limit" {
+		t.Errorf("want the all-accounts-near-limit notification, got %v", notes)
+	}
+}
+
+// The Gem-2 regression: weekly (7d) limit nearly exhausted while the 5-hour
+// window is quiet. The swap must trigger on the 7-day window.
+func TestAutoSwap_WeeklyCapTriggersSwap(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "gem2", KeyringRef: "ref-a"})
+	other, _ := s.CreateAccount(ctx, store.Account{Label: "gem3", KeyringRef: "ref-o"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 97})
+	_ = s.PutLimits(ctx, other.ID, provider.Limits{FiveHourPct: 20, SevenDayPct: 30})
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "gem2")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if !swapped || len(fsw.switched) != 1 || fsw.switched[0] != "gem3" {
+		t.Errorf("97%% weekly must trigger a swap to gem3; swapped=%v switched=%v", swapped, fsw.switched)
+	}
+}
+
+// Tier 2: active is weekly-capped; the only candidates are 5h-hot but
+// weekly-healthy. Escaping the multi-day weekly exhaustion wins — pick the
+// candidate lowest on the binding (7-day) window even though its 5-hour
+// usage is above the active's.
+func TestAutoSwap_WeeklyCapped_SwitchesTo5hHotButWeeklyHealthy(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	hotA, _ := s.CreateAccount(ctx, store.Account{Label: "hot-a", KeyringRef: "ref-b"})
+	hotB, _ := s.CreateAccount(ctx, store.Account{Label: "hot-b", KeyringRef: "ref-c"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 97})
+	_ = s.PutLimits(ctx, hotA.ID, provider.Limits{FiveHourPct: 85, SevenDayPct: 30})
+	_ = s.PutLimits(ctx, hotB.ID, provider.Limits{FiveHourPct: 90, SevenDayPct: 20})
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	// Binding window is 7d → lowest 7d wins (hot-b at 20%), even though its
+	// 5h (90%) is hotter than hot-a's (85%).
+	if !swapped || len(fsw.switched) != 1 || fsw.switched[0] != "hot-b" {
+		t.Errorf("want switch to hot-b (lowest 7d); swapped=%v switched=%v", swapped, fsw.switched)
+	}
+}
+
+// An armed swap must NOT cancel when only the 5-hour window recovers — a
+// weekly-capped account is still weekly-capped.
+func TestAutoSwap_ArmedSwapSurvives5hRecoveryWhileWeeklyCapped(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	low, _ := s.CreateAccount(ctx, store.Account{Label: "low", KeyringRef: "ref-l"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95, SevenDayPct: 92})
+	_ = s.PutLimits(ctx, low.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 10})
+	_ = s.PutSetting(ctx, SettingsKeyAutoSwapGrace, "60")
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	clock := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	a.Now = func() time.Time { return clock }
+
+	// Tick 1: arm.
+	if swapped, _ := a.MaybeSwap(ctx, "active"); swapped {
+		t.Fatalf("tick1 should arm, not swap")
+	}
+	// 5h window rolls over but the weekly cap remains.
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 20, SevenDayPct: 92})
+	clock = clock.Add(90 * time.Second)
+
+	// Tick 2: still weekly-capped — the armed swap must fire.
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil || !swapped {
+		t.Fatalf("weekly still capped — armed swap must fire: swapped=%v err=%v", swapped, err)
+	}
+	if len(fsw.switched) != 1 || fsw.switched[0] != "low" {
+		t.Errorf("expected switch to low, got %v", fsw.switched)
 	}
 }
 
@@ -176,9 +287,9 @@ func TestAutoSwap_CustomThreshold(t *testing.T) {
 	_ = s.PutSetting(ctx, SettingsKeyAutoSwapThreshold, "50")
 
 	a, _, _ := withAutoSwapStubs(t, s)
-	cand, found, _ := a.pickCandidate(ctx, active.ID, 50)
+	cand, found, _ := a.pickCandidate(ctx, active.ID, provider.Limits{FiveHourPct: 55}, window5h)
 	if !found || cand.Label != "other" {
-		t.Errorf("pickCandidate with threshold 50: found=%v cand=%v want other", found, cand)
+		t.Errorf("pickCandidate (active 5h=55, binding 5h): found=%v cand=%v want other", found, cand)
 	}
 	// The full MaybeSwap will fail at Switcher.Switch since the
 	// fakeProvider has no real credential bytes — but the config-read
