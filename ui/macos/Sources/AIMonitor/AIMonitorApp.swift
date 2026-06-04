@@ -242,9 +242,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button, let bwin = button.window else { return }
         let b = bwin.convertToScreen(button.convert(button.bounds, to: nil))
         let size = panel.frame.size
-        let gap: CGFloat = 6
         var x = b.maxX - size.width
-        var y = b.minY - gap - size.height // origin is bottom-left; top sits gap below the icon
+        var y = b.minY - size.height // origin is bottom-left; top edge flush against the menu bar
         if let screen = bwin.screen ?? NSScreen.main {
             let vf = screen.visibleFrame
             x = max(vf.minX + 4, min(x, vf.maxX - size.width - 4))
