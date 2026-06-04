@@ -205,7 +205,9 @@ private struct ThresholdRow: View {
                             commit()
                         }
                     }
-                    .pointerCursor()
+                    // No pointerCursor() here: a forced pointing-hand
+                    // suppresses AppKit's native I-beam over text fields,
+                    // which is the cue that the field is typeable.
                 Stepper("", value: stepper, in: 1...100)
                     .labelsHidden()
                     .frame(height: 22)
