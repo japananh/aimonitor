@@ -174,7 +174,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openPreferences: { [weak self] in self?.showPreferences() },
             quit: { NSApplication.shared.terminate(nil) },
             renameAccount: { [weak self] label in self?.promptRename(currentLabel: label) },
-            importAccount: { [weak self] email in self?.promptImportCurrent(email: email) }
+            importAccount: { [weak self] email in self?.promptImportCurrent(email: email) },
+            addAccount: { [weak self] in self?.promptAddAccount() }
         )
         // Solid window background — NOT .regularMaterial, whose vibrancy
         // desaturates the foreground (the colored 5h/7d bars, the green
@@ -281,6 +282,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             clickMonitor = nil
         }
         panel?.orderOut(nil)
+    }
+
+    // promptAddAccount explains the add flow (option C): the actual sign-in
+    // happens in the browser via `claude /login` (Google SSO and magic-link
+    // accounts both work there); once the new login lands, the daemon's
+    // unknown-account banner offers the import. The dialog exists because
+    // the flow spans two apps — without it, users don't know the import
+    // banner is coming.
+    private func promptAddAccount() {
+        closePanel()
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "Add a Claude account"
+        alert.informativeText = """
+        1. In any terminal, run `claude /login` and sign in to the account \
+        you want to add — the browser handles Google or email-code logins. \
+        (If the browser auto-signs you in, choose “Use a different account”.)
+
+        2. Come back to AIMonitor: a banner will offer to import the new \
+        account. Click “Import this account…” and give it a name.
+
+        3. Your previous account stays saved — use Switch to go back to it \
+        any time.
+        """
+        alert.addButton(withTitle: "Copy `claude /login`")
+        alert.addButton(withTitle: "Close")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("claude /login", forType: .string)
+        }
     }
 
     // promptRename shows a modal text field pre-filled with the current
