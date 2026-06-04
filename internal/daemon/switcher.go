@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/japananh/aimonitor/internal/claudeconfig"
@@ -285,8 +286,16 @@ func (s *Switcher) RefreshActive(ctx context.Context, acct store.Account, force 
 	// the two would disagree and resolution would silently break. Writing
 	// the stash first means a failure here aborts before we touch the live
 	// slot, leaving both at their previous (consistent) value to retry.
+	//
+	// Same identity gate as healStash: the rebuilt credential descends from
+	// whatever was in the live slot, so if acct's attribution is wrong
+	// (login race), mirroring would overwrite acct's real credential with
+	// another account's. Skip the mirror, keep the live-slot refresh —
+	// identity-based resolution recovers; a corrupted stash does not.
 	if acct.KeyringRef != "" {
-		if err := claude.StashCredential(ctx, acct.KeyringRef, rebuilt); err != nil {
+		if !s.liveIdentityMatches(ctx, acct) {
+			fmt.Fprintf(s.stderr(), "warning: live login (~/.claude.json) is not %q; refreshed live slot but skipping stash mirror to avoid cross-account corruption\n", acct.Label)
+		} else if err := claude.StashCredential(ctx, acct.KeyringRef, rebuilt); err != nil {
 			rebuilt.Zero()
 			return provider.Credential{}, fmt.Errorf("mirror refreshed tokens to %q stash: %w", acct.Label, err)
 		}
@@ -303,6 +312,14 @@ func (s *Switcher) RefreshActive(ctx context.Context, acct store.Account, force 
 // refresh token current for a future switch back. Best-effort: a read or
 // write failure is logged and ignored (the live slot is untouched). No-op
 // when they already match. Caller holds the switch lock.
+//
+// The write is gated on liveIdentityMatches: acct is the CALLER's idea of
+// who is active, and when that attribution is wrong (a `claude /login`
+// race, or resolution lagging a rapid switch), healing would copy another
+// account's credential into acct's stash — observed live 2026-06-04, where
+// two accounts ended up sharing one credential and the real one was lost.
+// A skipped heal is recoverable (stale stash, resolution falls back to
+// identity); a wrong heal is corruption.
 func (s *Switcher) healStash(ctx context.Context, acct store.Account, live provider.Credential) {
 	if acct.KeyringRef == "" || len(live.Bytes) == 0 {
 		return
@@ -314,9 +331,33 @@ func (s *Switcher) healStash(ctx context.Context, acct store.Account, live provi
 			return
 		}
 	}
+	if !s.liveIdentityMatches(ctx, acct) {
+		fmt.Fprintf(s.stderr(), "warning: live login (~/.claude.json) is not %q; skipping stash heal to avoid cross-account corruption\n", acct.Label)
+		return
+	}
 	if err := claude.StashCredential(ctx, acct.KeyringRef, live); err != nil {
 		fmt.Fprintf(s.stderr(), "warning: re-sync %q stash to live blob: %v\n", acct.Label, err)
 	}
+}
+
+// liveIdentityMatches reports whether ~/.claude.json's oauthAccount — the
+// identity Claude Code itself maintains for the live credential — agrees
+// with acct. It gates every write of live-slot bytes into an account's
+// stash. Returns true (allow) when there is no evidence to refuse on:
+// no claude.json handling, no captured identity on the account, or no
+// readable oauthAccount. Claude Code rewrites oauthAccount on /login and
+// Switch patches it after a swap, so on any settled state the two agree;
+// disagreement means the attribution is mid-race and must not be trusted
+// for a write.
+func (s *Switcher) liveIdentityMatches(ctx context.Context, acct store.Account) bool {
+	if s.ClaudeConfig == nil || acct.Email == "" {
+		return true
+	}
+	oa, err := s.ClaudeConfig.ReadOAuthAccount(ctx)
+	if err != nil || oa == nil || oa.EmailAddress == "" {
+		return true
+	}
+	return strings.EqualFold(oa.EmailAddress, acct.Email)
 }
 
 // ensureFreshTokens returns a credential whose access token is valid for

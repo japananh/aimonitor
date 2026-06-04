@@ -106,3 +106,58 @@ func TestSwitcher_SnapshotOutgoing_DoesNotOverwriteExistingIdentity(t *testing.T
 		t.Errorf("backfill clobbered existing identity: %+v", got)
 	}
 }
+
+// liveIdentityMatches gates every write of live-slot bytes into a stash.
+// The 2026-06-04 corruption: attribution said account X while the live
+// login was account Y; the heal/mirror then copied Y's credential into
+// X's stash, leaving two accounts sharing one credential and X's real
+// credential lost. Disagreement between ~/.claude.json and the attributed
+// account must refuse the write.
+func TestSwitcher_LiveIdentityMatches(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("mismatch refuses", func(t *testing.T) {
+		cc, _ := tempClaudeConfig(t)
+		if err := cc.WriteOAuthAccount(ctx, claudeconfig.OAuthAccount{EmailAddress: "actual@example.com"}); err != nil {
+			t.Fatal(err)
+		}
+		sw := &Switcher{ClaudeConfig: cc}
+		if sw.liveIdentityMatches(ctx, store.Account{Label: "X", Email: "attributed@example.com"}) {
+			t.Error("live login is actual@, attribution says attributed@ — must refuse the stash write")
+		}
+	})
+
+	t.Run("match allows", func(t *testing.T) {
+		cc, _ := tempClaudeConfig(t)
+		if err := cc.WriteOAuthAccount(ctx, claudeconfig.OAuthAccount{EmailAddress: "Same@Example.com"}); err != nil {
+			t.Fatal(err)
+		}
+		sw := &Switcher{ClaudeConfig: cc}
+		if !sw.liveIdentityMatches(ctx, store.Account{Label: "X", Email: "same@example.com"}) {
+			t.Error("same email (case-insensitive) must allow the heal")
+		}
+	})
+
+	t.Run("no evidence allows", func(t *testing.T) {
+		// Legacy account without captured identity: nothing to verify against.
+		cc, _ := tempClaudeConfig(t)
+		if err := cc.WriteOAuthAccount(ctx, claudeconfig.OAuthAccount{EmailAddress: "actual@example.com"}); err != nil {
+			t.Fatal(err)
+		}
+		sw := &Switcher{ClaudeConfig: cc}
+		if !sw.liveIdentityMatches(ctx, store.Account{Label: "legacy"}) {
+			t.Error("account without identity: no evidence to refuse on, must allow")
+		}
+		// No claude.json handling at all.
+		sw2 := &Switcher{ClaudeConfig: nil}
+		if !sw2.liveIdentityMatches(ctx, store.Account{Email: "x@example.com"}) {
+			t.Error("nil ClaudeConfig: must allow (legacy degraded mode)")
+		}
+		// claude.json present but no oauthAccount (mid-login wipe / fresh file).
+		cc3, _ := tempClaudeConfig(t)
+		sw3 := &Switcher{ClaudeConfig: cc3}
+		if !sw3.liveIdentityMatches(ctx, store.Account{Email: "x@example.com"}) {
+			t.Error("no readable oauthAccount: must allow")
+		}
+	})
+}
