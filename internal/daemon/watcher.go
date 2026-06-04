@@ -112,14 +112,28 @@ func (w *Watcher) Run(ctx context.Context) error {
 func (w *Watcher) bootstrap(ctx context.Context) error {
 	info, err := os.Stat(w.cfg.Root)
 	if errors.Is(err, os.ErrNotExist) {
-		// Root not yet present (user hasn't used Claude Code yet). Watch
-		// the parent so we can pick up creation later. If parent also
-		// missing, surface the error.
+		// Root not yet present. On a fresh machine this happens two ways:
+		//   1. ~/.claude exists but ~/.claude/projects doesn't yet — watch
+		//      the parent so the projects dir is picked up when it appears.
+		//   2. ~/.claude itself is absent (Claude Code never run here) —
+		//      create the tree so there's something to watch immediately;
+		//      session dirs/files arrive later via CREATE events.
+		// Crucially, the watcher only feeds session-usage samples; it must
+		// never take the daemon down, since OAuth polling and switching (the
+		// daemon's primary job) don't depend on it. A clean install used to
+		// crash-loop here, surfacing "daemon not running" forever.
 		parent := filepath.Dir(w.cfg.Root)
 		if pinfo, perr := os.Stat(parent); perr == nil && pinfo.IsDir() {
 			return w.addDir(parent)
 		}
-		return fmt.Errorf("watcher: root %q does not exist (and parent unavailable)", w.cfg.Root)
+		if mkErr := os.MkdirAll(w.cfg.Root, 0o700); mkErr != nil {
+			// Even creation failed (read-only home, odd perms). Degrade to a
+			// no-op watch rather than killing the daemon; session-usage
+			// tracking resumes after the next restart once the dir exists.
+			w.reportError(fmt.Errorf("watcher: root %q absent and uncreatable (%v); session-usage tracking off until restart", w.cfg.Root, mkErr))
+			return nil
+		}
+		return w.addDir(w.cfg.Root)
 	}
 	if err != nil {
 		return fmt.Errorf("watcher: stat root: %w", err)

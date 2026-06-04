@@ -245,6 +245,48 @@ func TestWatcher_HandlesMissingRootByWatchingParent(t *testing.T) {
 	}
 }
 
+func TestWatcher_MissingRootAndParentDoesNotKillDaemon(t *testing.T) {
+	// Fresh machine: ~/.claude doesn't exist at all (Claude Code never run),
+	// so BOTH the watch root and its parent are absent. The watcher must not
+	// return a fatal error — doing so tears down the whole daemon (and with
+	// it OAuth usage polling), which is exactly the "daemon not running"
+	// crash-loop a clean `brew install` hit. The watcher should create the
+	// tree (or degrade) and reach its blocking event loop instead.
+	base := t.TempDir()
+	root := filepath.Join(base, "claude", "projects") // parent "claude" is missing
+
+	c := &collector{}
+	w, err := NewWatcher(WatcherConfig{
+		Root:     root,
+		Store:    openStore(t),
+		OnSample: c.onSample,
+		OnError:  c.onError,
+	})
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	runDone := make(chan error, 1)
+	go func() { runDone <- w.Run(ctx) }()
+
+	// Bootstrap must reach the blocking loop, not exit early with the old
+	// fatal "root does not exist (and parent unavailable)" error.
+	time.Sleep(150 * time.Millisecond)
+	select {
+	case err := <-runDone:
+		t.Fatalf("Run exited early (daemon would die on a fresh machine): %v", err)
+	default:
+		// Still running — correct.
+	}
+
+	cancel()
+	if err := <-runDone; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run returned unexpected error: %v", err)
+	}
+}
+
 // Sanity: NewWatcher validates required config.
 func TestNewWatcher_Validation(t *testing.T) {
 	if _, err := NewWatcher(WatcherConfig{}); err == nil {
