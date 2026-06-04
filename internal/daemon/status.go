@@ -148,32 +148,41 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 	if p.ActiveLabel != nil {
 		label = p.ActiveLabel(ctx)
 	}
+	// Resolve the active account's ID up front: the external watcher
+	// tracks identity by ID (rename-stable), and the limits lookup below
+	// reuses the same row.
+	var activeAcct store.Account
+	activeFound := false
+	if label != "" {
+		if acct, err := p.Store.GetAccountByLabel(ctx, label); err == nil {
+			activeAcct, activeFound = acct, true
+		}
+	}
 	st := p.Auto.snapshot(label)
 	if p.ExternalWatch != nil {
-		p.ExternalWatch.Observe(ctx, label)
+		if activeFound {
+			p.ExternalWatch.Observe(ctx, activeAcct.ID, label)
+		}
 		st.LastExternalSwitchAt = p.ExternalWatch.LastExternalAt()
 	}
 	if p.UnknownActiveEmail != nil {
 		st.UnknownActiveEmail = p.UnknownActiveEmail(ctx)
 	}
-	if label != "" {
-		// Look up the active account's persisted limits and attach
-		// them to the snapshot. Best-effort: any failure (no account
-		// row yet, no limits row yet) leaves the corresponding fields
-		// zero — the widget hides bars without data, which is the
-		// right "no data" state.
-		if acct, err := p.Store.GetAccountByLabel(ctx, label); err == nil {
-			if l, err := p.Store.GetLimits(ctx, acct.ID); err == nil {
-				st.FiveHourPct = l.FiveHourPct
-				st.SevenDayPct = l.SevenDayPct
-				st.FiveHourResetAt = l.FiveHourResetAt
-				st.SevenDayResetAt = l.SevenDayResetAt
-				st.LimitsFetchedAt = l.FetchedAt
-			} else if !errors.Is(err, store.ErrLimitsNotFound) {
-				// Real I/O error (not just "no row yet"): surface
-				// to stderr but keep publishing without limits.
-				fmt.Fprintf(os.Stderr, "status: read limits for %q: %v\n", label, err)
-			}
+	if activeFound {
+		// Attach the active account's persisted limits to the snapshot.
+		// Best-effort: any failure (no limits row yet) leaves the
+		// corresponding fields zero — the widget hides bars without
+		// data, which is the right "no data" state.
+		if l, err := p.Store.GetLimits(ctx, activeAcct.ID); err == nil {
+			st.FiveHourPct = l.FiveHourPct
+			st.SevenDayPct = l.SevenDayPct
+			st.FiveHourResetAt = l.FiveHourResetAt
+			st.SevenDayResetAt = l.SevenDayResetAt
+			st.LimitsFetchedAt = l.FetchedAt
+		} else if !errors.Is(err, store.ErrLimitsNotFound) {
+			// Real I/O error (not just "no row yet"): surface
+			// to stderr but keep publishing without limits.
+			fmt.Fprintf(os.Stderr, "status: read limits for %q: %v\n", label, err)
 		}
 	}
 	b, err := json.Marshal(st)
