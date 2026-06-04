@@ -25,6 +25,8 @@ struct PreferencesView: View {
     @State private var versionText = "—"
     // Appearance preference, persisted in UserDefaults; applied via NSApp.
     @AppStorage(appThemeKey) private var appTheme = defaultAppTheme
+    // Dock-icon preference, persisted in UserDefaults; applied live.
+    @AppStorage(showDockIconKey) private var showDockIcon = false
 
     private let repoURL = URL(string: "https://github.com/japananh/aimonitor")!
 
@@ -40,6 +42,10 @@ struct PreferencesView: View {
                 .pickerStyle(.segmented)
                 .onChange(of: appTheme) { _, newValue in applyAppearance(newValue) }
                 .pointerCursor()
+                Toggle("Show Dock icon", isOn: $showDockIcon)
+                    .onChange(of: showDockIcon) { _, show in applyDockIconPolicy(show) }
+                    .pointerCursor()
+                    .help("Also show AIMonitor in the Dock — clicking the Dock icon opens the panel. Handy when the menu-bar icon is hidden behind the notch.")
             }
             Section("Auto-switch") {
                 Toggle("Switch accounts automatically near the limit", isOn: Binding(

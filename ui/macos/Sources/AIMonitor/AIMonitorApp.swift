@@ -68,13 +68,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // snappy without popping up on every transit. Per-app preference —
         // doesn't touch system-wide behavior.
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 300])
-        // Test aid only: AIMONITOR_DOCK_ICON=1 promotes the app to a regular
-        // (Dock-visible) app so it can be reached when the menu-bar icon is
-        // hidden by a crowded bar / the notch. Never set in release, so the
-        // shipped build stays a pure menu-bar accessory. Clicking the Dock
-        // icon opens the panel via applicationShouldHandleReopen below.
-        if ProcessInfo.processInfo.environment["AIMONITOR_DOCK_ICON"] == "1" {
-            NSApp.setActivationPolicy(.regular)
+        // Dock icon: user preference (Preferences → Appearance), plus the
+        // AIMONITOR_DOCK_ICON=1 env override used by local dev builds.
+        // Clicking the Dock icon opens the panel via
+        // applicationShouldHandleReopen below.
+        let dockEnv = ProcessInfo.processInfo.environment["AIMONITOR_DOCK_ICON"] == "1"
+        if dockEnv || UserDefaults.standard.bool(forKey: showDockIconKey) {
+            applyDockIconPolicy(true)
         }
         setupStatusItem()
         setupPanel()
