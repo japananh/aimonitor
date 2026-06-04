@@ -34,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: NSPanel!
     private var clickMonitor: Any?
     private var preferencesWindow: NSWindow?
+    // Resigns a focused text field in Preferences when the user clicks
+    // elsewhere in that window (macOS keeps a field first-responder on empty
+    // clicks otherwise, so "save on click outside" never fired).
+    private var prefsClickMonitor: Any?
     private let model = AppModel()
     private var cancellables = Set<AnyCancellable>()
 
@@ -59,6 +63,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Apply the saved theme (light/dark/inherit-from-OS) before any UI shows.
         applyAppearance(UserDefaults.standard.string(forKey: appThemeKey) ?? defaultAppTheme)
+        // Test aid only: AIMONITOR_DOCK_ICON=1 promotes the app to a regular
+        // (Dock-visible) app so it can be reached when the menu-bar icon is
+        // hidden by a crowded bar / the notch. Never set in release, so the
+        // shipped build stays a pure menu-bar accessory. Clicking the Dock
+        // icon opens the panel via applicationShouldHandleReopen below.
+        if ProcessInfo.processInfo.environment["AIMONITOR_DOCK_ICON"] == "1" {
+            NSApp.setActivationPolicy(.regular)
+        }
         setupStatusItem()
         setupPanel()
         // Keep the menu-bar title in sync with the active account. status
@@ -94,6 +106,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preferencesWindow?.center()
         preferencesWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        installPrefsClickMonitor()
+    }
+
+    // installPrefsClickMonitor makes a click anywhere in the Preferences
+    // window that ISN'T a text field end editing. macOS keeps a focused text
+    // field as first responder when you click empty space, so a SwiftUI
+    // @FocusState-based "save on blur" never fires on an outside click.
+    // Resigning first responder here flips that @FocusState to false, which
+    // runs the field's commit (validate + save + "Saved"). Installed once;
+    // it's a no-op for any window other than Preferences.
+    private func installPrefsClickMonitor() {
+        guard prefsClickMonitor == nil else { return }
+        prefsClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard let self,
+                  let win = self.preferencesWindow,
+                  event.window == win,
+                  let hit = win.contentView?.hitTest(event.locationInWindow)
+            else { return event }
+            // Don't resign when the click lands on a text field or its field
+            // editor (the NSText the field uses while editing) — that's the
+            // field itself, not an "outside" click.
+            let onTextField = hit is NSText || hit is NSTextField
+            if !onTextField {
+                win.makeFirstResponder(nil)
+            }
+            return event
+        }
     }
 
     private func setupStatusItem() {
@@ -171,6 +210,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if panel.isVisible {
             closePanel()
             return
+        }
+        // The panel floats at .popUpMenu level, above the normal-level
+        // Preferences window. If Preferences is still open (e.g. left
+        // lingering after a click outside the app), reopening the panel would
+        // render on top of it and cover its close button. Keep the two
+        // mutually exclusive: hide Preferences when the panel opens. (Opening
+        // Preferences already closes the panel — see showPreferences.)
+        if let prefs = preferencesWindow, prefs.isVisible {
+            prefs.orderOut(nil)
         }
         // Fresh data the moment it opens, without waiting for the 2s tick.
         Task { @MainActor in await model.refresh() }
@@ -419,5 +467,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         model.stop()
         return .terminateNow
+    }
+
+    // Dock-icon click handler. Only reachable when the Dock-icon test aid is
+    // on (otherwise the app is an accessory with no Dock icon, so this never
+    // fires). Opens/closes the panel so the widget is usable without the
+    // menu-bar icon.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        togglePopover(nil)
+        return true
     }
 }
