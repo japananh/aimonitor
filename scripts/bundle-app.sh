@@ -49,6 +49,9 @@ mkdir -p "$APP_OUT/Contents/MacOS" "$APP_OUT/Contents/Resources"
 cp "$BIN_IN" "$APP_OUT/Contents/MacOS/AIMonitor"
 chmod +x "$APP_OUT/Contents/MacOS/AIMonitor"
 cp "$PLIST_IN" "$APP_OUT/Contents/Info.plist"
+# App icon (Dock + Finder). Pre-built .icns committed in Resources/;
+# regenerate from assets/icon.svg via qlmanage + sips + iconutil.
+cp "$SWIFT_DIR/Resources/AppIcon.icns" "$APP_OUT/Contents/Resources/AppIcon.icns"
 
 # Touch the PkgInfo marker — older versions of Finder pre-Sonoma rely
 # on it to detect the bundle type. macOS 14+ doesn't strictly need it
