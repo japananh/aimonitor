@@ -191,8 +191,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         paraName.paragraphSpacing = 1 // the gap between line 1 and line 2
         let paraPct = NSMutableParagraphStyle()
         paraPct.alignment = .center
-        paraPct.minimumLineHeight = 11
-        paraPct.maximumLineHeight = 11
+        paraPct.minimumLineHeight = 12
+        paraPct.maximumLineHeight = 12
         let top = NSMutableAttributedString(
             string: name + "\n",
             attributes: [
@@ -202,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         top.append(NSAttributedString(
             string: bottom,
             attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
                 .paragraphStyle: paraPct,
             ]))
         // Nudge the block down so the two lines sit centered in the bar.
