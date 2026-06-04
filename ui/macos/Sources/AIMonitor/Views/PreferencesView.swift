@@ -101,7 +101,9 @@ struct PreferencesView: View {
             }
         }
         .formStyle(.grouped)
-        .padding()
+        // No extra outer padding: the grouped form style already insets its
+        // sections; doubling it wrapped everything in a thick margin (the
+        // main popover gets by with 12px).
         .frame(width: 420, height: 560)
         .onAppear(perform: loadState)
     }

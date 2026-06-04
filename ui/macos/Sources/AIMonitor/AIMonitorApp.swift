@@ -243,9 +243,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let b = bwin.convertToScreen(button.convert(button.bounds, to: nil))
         let size = panel.frame.size
         var x = b.maxX - size.width
-        var y = b.minY - size.height // origin is bottom-left; top edge flush against the menu bar
+        // Anchor the top edge to visibleFrame.maxY — the exact bottom of the
+        // menu bar — so the panel sits flush. The status-item button's own
+        // frame floats a few px above that line, so anchoring to b.minY
+        // either leaves a sliver of space or overlaps the bar.
+        var y = b.minY - size.height // fallback when no screen is resolvable
         if let screen = bwin.screen ?? NSScreen.main {
             let vf = screen.visibleFrame
+            y = vf.maxY - size.height
             x = max(vf.minX + 4, min(x, vf.maxX - size.width - 4))
             y = max(vf.minY + 4, y)
         }
