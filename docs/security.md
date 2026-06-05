@@ -37,6 +37,6 @@ It does **not** try to defend against:
 None. `aimonitor` initiates exactly two kinds of outbound traffic, both to Anthropic and both with the user's own credentials:
 
 1. The OAuth flow during `aimonitor add` (delegated to `claude login`).
-2. The server-side rate-limit probe before any auto-switch and on user-requested `aimonitor probe`.
+2. The OAuth token refresh (`platform.claude.com/v1/oauth/token`) performed silently on switch or when a stored token nears expiry.
 
 No analytics, error reporting, or update checks call any other host.

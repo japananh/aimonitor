@@ -1,37 +1,56 @@
 # Thresholds and auto-switch
 
-`aimonitor` decides when to auto-switch using a small, deterministic algorithm.
+aimonitor auto-switches using a small, deterministic algorithm driven by
+Anthropic's own usage numbers (`/api/oauth/usage` — server-side truth,
+consumes no tokens).
 
 ## Configuration
 
 ```sh
-aimonitor config set thresholds 40,60,100
+aimonitor config set auto_swap.enabled true          # master toggle (default true)
+aimonitor config set auto_swap.threshold_pct 80      # 5-hour window threshold
+aimonitor config set auto_swap.threshold_7d_pct 80   # 7-day window threshold
+aimonitor config set auto_swap.grace_sec 60          # warning → switch delay; 0 = immediate
 ```
 
-Valid configurations:
+Thresholds accept any integer in `(0, 100]`. Both windows are checked
+independently — crossing **either** one arms a switch.
 
-- At least one value.
-- Every value is a positive integer in `(0, 100]`.
-- Values are strictly ascending (no duplicates).
+## When a switch arms
 
-Default: `40,60,100`.
+The daemon polls the active account's usage every ~5 minutes (± jitter).
+When the active account's 5-hour **or** 7-day utilization reaches its
+threshold, a switch arms: a desktop notification announces the target and
+the swap fires after `grace_sec` (time to wrap up a thought — running
+`claude` sessions are never interrupted; they adopt the new credential
+automatically).
 
-## How a tripwire fires
+An armed switch cancels only when the active account drops back below the
+threshold on **both** windows — a 5-hour reset doesn't clear a weekly cap.
 
-The daemon keeps an in-memory **local % used** for the active account, derived from the JSONL transcripts on this machine. Whenever a fresh usage sample bumps that value across one of the configured thresholds (e.g. crosses from 39% to 41% when 40 is in the list), a tripwire fires.
+## How the target is chosen
 
-## What happens on a tripwire
+The window that crossed its threshold (the further over, when both) is the
+**binding window**. Candidates are judged relative to the active account:
 
-1. Collect every other configured account whose local % used is strictly less than the just-crossed tripwire.
-2. Cap the candidate set at K=3 by lowest local %.
-3. For each surviving candidate, issue a one-shot **server-side rate-limit probe** (a tiny request to Anthropic that costs ~10 tokens). Parse `anthropic-ratelimit-tokens-remaining` and `anthropic-ratelimit-tokens-reset` from the response headers.
-4. Pick the candidate with the highest probed `tokens_remaining` — but only if it is strictly higher than the current account's probed remaining.
-5. Swap the OS-level credential blob, emit a desktop notification, write an audit row.
+1. **Never** an account at ≥ 100 % on either window — it can't serve
+   requests, and switching into it just ping-pongs back.
+2. Prefer accounts lower than the active one on **both** windows, ranked by
+   most overall headroom (lowest `max(5h, 7d)`).
+3. Otherwise accept an account lower on the **binding** window only —
+   escaping a weekly-capped account into a 5-hour-warm one is still a win,
+   since 5-hour windows recover in hours while weekly caps last days.
+4. Accounts whose usage data is stale or unknown are last-resort (the
+   daemon refreshes stale candidates just-in-time before deciding, so this
+   rarely applies). Ties break least-recently-used so accounts rotate.
 
-A 60-second cool-down between switches prevents thrashing.
+If nothing beats the active account on the binding window, aimonitor stays
+put and notifies that no account has more headroom.
 
-## Why the probe is non-negotiable
+## Anti-thrash guards
 
-The local JSONL estimate is blind to other devices using the same account. On a shared Claude Team seat, a teammate's morning session can drive the server-side counter to 95% while aimonitor on your Mac still says "0% locally." Without the probe, auto-switch would happily switch you onto an exhausted account. The probe is the only ground truth available outside the admin API.
-
-See `_plans/kind-painting-noodle.md` §1 for the full rationale.
+- 5-minute cooldown after every auto-switch (the fresh account's numbers
+  are re-fetched before it can be judged).
+- 10-minute cooldown after a "no candidate" decision.
+- A manual switch (CLI or widget) always wins; auto-switch re-evaluates
+  from the new active account.

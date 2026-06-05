@@ -58,7 +58,7 @@ contains `-beta`.
 > though the cask in the tap is correct and points at real URLs.
 >
 > This means **publishing happens BEFORE `brew install` can be tested**.
-> The recovery if e2e finds a bug is retag-as-`-beta.<n+1>`, not
+> The recovery if the smoke test finds a bug is retag-as-`-beta.<n+1>`, not
 > "edit the draft." See the Rollback section below.
 
 1. Open the draft Release on GitHub. Verify the changelog reads cleanly;
@@ -85,13 +85,7 @@ contains `-beta`.
 3. **Publish the Release.** Until you do this, `brew install --cask
    aimonitor` returns 404. After this, it works for everyone.
 
-4. Run the e2e checklists against the *published* release:
-   - `docs/e2e-macos.md` (12 steps, ~30 min on a Mac)
-   - `docs/e2e-linux.md` (9 steps, ~20 min on Ubuntu)
-
-   The macOS e2e starts with `brew tap japananh/tap && brew install
-   --cask aimonitor` — that's the install path real users will follow.
-
+4. Smoke-test the *published* release on a real machine: `brew install`/`upgrade`, daemon starts, widget shows usage, a manual switch works, `aimonitor doctor` is clean.
 5. If both checklists pass: announce. The release is done.
 
 6. If a checklist fails: see Rollback.
