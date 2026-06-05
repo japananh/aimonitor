@@ -180,29 +180,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let bottom = "5h | " + (pct5.map { String(format: "%.0f%%", $0) } ?? "–")
 
         // Two stacked lines inside the 22pt menu bar: 8pt name over 11pt
-        // bold usage, 1px gap between them (9 + 1 + 11 = 21 ≤ 22). Fixed
+        // usage, 1px gap between them. Fixed
         // line heights keep the pair vertically centered, with a per-line
         // paragraph style so the bigger number line isn't clamped to the
         // name line's height.
         let paraName = NSMutableParagraphStyle()
         paraName.alignment = .center
-        paraName.minimumLineHeight = 9
-        paraName.maximumLineHeight = 9
+        paraName.minimumLineHeight = 11
+        paraName.maximumLineHeight = 11
         paraName.paragraphSpacing = 1 // the gap between line 1 and line 2
         let paraPct = NSMutableParagraphStyle()
         paraPct.alignment = .center
         paraPct.minimumLineHeight = 12
         paraPct.maximumLineHeight = 12
+        // Usage line at full label color + semibold so it reads as the
+        // brighter, highlighted line. The name keeps the default menu-bar
+        // text color. Semantic colors (not literal white) stay correct in
+        // both a light and a dark menu bar.
         let top = NSMutableAttributedString(
             string: name + "\n",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 8, weight: .semibold),
+                .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
                 .paragraphStyle: paraName,
             ])
         top.append(NSAttributedString(
             string: bottom,
             attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
                 .paragraphStyle: paraPct,
             ]))
         // Nudge the block down so the two lines sit centered in the bar.
@@ -260,7 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // lines all change the height).
         hosting.sizingOptions = [.preferredContentSize]
 
-        let p = NSPanel(contentViewController: hosting)
+        let p = KeyablePanel(contentViewController: hosting)
         p.styleMask = [.borderless, .nonactivatingPanel]
         p.isFloatingPanel = true
         p.level = .popUpMenu
@@ -305,6 +310,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         positionPanel()
         panel.makeKeyAndOrderFront(nil)
+        // The panel is key (so the first click reaches a control), but we
+        // don't want a control auto-focused with a focus ring on open — drop
+        // first responder to the window itself. Key state is unaffected.
+        panel.makeFirstResponder(nil)
         installClickMonitor()
     }
 
@@ -591,4 +600,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         togglePopover(nil)
         return true
     }
+}
+
+// KeyablePanel is a borderless NSPanel that can become key. A plain
+// borderless window returns canBecomeKey=false, so makeKeyAndOrderFront
+// can't actually make it key — AppKit then spends the user's FIRST click
+// just trying (and failing) to focus the window, so a button inside only
+// fires on the SECOND click. Returning true lets the panel take key state
+// when we show it, so the first click lands on the control as expected.
+final class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
 }
