@@ -60,15 +60,15 @@ struct PopoverRootView: View {
                 .pointerCursor()
                 .help("Preferences — auto-switch, updates, and startup settings")
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .padding(.top, 12)
-            .padding(.bottom, 6)
+            .padding(.bottom, 8)
 
             // When the daemon hasn't published recently the rows below are
             // stale; surface that explicitly. (Dropping the old session bar
             // removed the previous "daemon not running" hint — keep one.)
             if daemonDown {
-                VStack(alignment: .leading, spacing: 4) {
+                bannerCard {
                     Label(
                         "Daemon not running — usage may be stale.",
                         systemImage: "exclamationmark.triangle.fill"
@@ -94,13 +94,10 @@ struct PopoverRootView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                Divider()
             } else if let email = model.status?.unknown_active_email, !email.isEmpty {
                 // Another app (or `claude /login`) is signed into an account
                 // aimonitor doesn't manage — offer to import it.
-                VStack(alignment: .leading, spacing: 4) {
+                bannerCard {
                     Label("Claude is signed into \(email), which AIMonitor doesn’t manage.",
                           systemImage: "person.crop.circle.badge.questionmark")
                         .font(.caption2)
@@ -110,14 +107,12 @@ struct PopoverRootView: View {
                             .help("Register the currently signed-in account with AIMonitor")
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                Divider()
             }
 
             AccountTableView(model: model, renameAccount: renameAccount)
 
-            Divider()
+            // Footer actions float directly on the glass — no separator;
+            // the account cards above provide the visual grouping.
             HStack {
                 AppTextButton(model.refreshingUsage ? "Refreshing…" : "Refresh usage") {
                     model.refreshUsage()
@@ -133,15 +128,38 @@ struct PopoverRootView: View {
             .padding(.bottom, 12)
 
             if let err = model.lastError {
-                Divider()
                 Text(err)
                     .font(.caption2)
                     .foregroundStyle(.red)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.red.opacity(0.12))
+                    )
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
             }
         }
         .frame(width: 360)
+    }
+
+    // bannerCard wraps banner content in a Control-Center-style module
+    // card (amber tint = attention), matching the account cards below.
+    @ViewBuilder
+    private func bannerCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            content()
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.orange.opacity(0.12))
+        )
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
     }
 
     // daemonDown is true when no status has been published, or the last

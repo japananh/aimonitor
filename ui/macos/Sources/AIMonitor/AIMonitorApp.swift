@@ -180,8 +180,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         button.image = nil
 
-        let pct5 = model.status?.five_hour_pct
-        let bottom = "5h | " + (pct5.map { String(format: "%.0f%%", $0) } ?? "–")
+        // "Has data" is gated on limits_fetched_at, NOT on the pct value:
+        // a genuine 0% (fresh, unused account) is real data and must show
+        // "0%", while a never-fetched account shows "–". (The daemon
+        // publishes five_hour_pct without omitempty so 0 survives the JSON.)
+        let bottom: String
+        if model.status?.limits_fetched_at != nil, let pct5 = model.status?.five_hour_pct {
+            bottom = "5h | " + String(format: "%.0f%%", pct5)
+        } else {
+            bottom = "5h | –"
+        }
 
         // Two stacked lines inside the 22pt menu bar: 8pt name over 11pt
         // usage, 1px gap between them. Fixed

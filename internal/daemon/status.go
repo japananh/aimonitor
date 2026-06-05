@@ -51,10 +51,12 @@ type Status struct {
 
 	// FiveHourPct / SevenDayPct are the active account's OAuth-introspected
 	// utilization, fetched on the UsageScheduler's cadence (~300 s with
-	// jitter). Zero values mean "no data yet" — the Swift widget hides the
-	// bars in that case rather than rendering 0%.
-	FiveHourPct float64 `json:"five_hour_pct,omitempty"`
-	SevenDayPct float64 `json:"seven_day_pct,omitempty"`
+	// jitter). NO omitempty: a genuine 0% (a fresh, unused account) must be
+	// published as 0, not dropped — otherwise the widget can't tell 0% from
+	// "no data" and the menu-bar number disappears. The widget gates
+	// "has data" on LimitsFetchedAt instead.
+	FiveHourPct float64 `json:"five_hour_pct"`
+	SevenDayPct float64 `json:"seven_day_pct"`
 
 	// FiveHourResetAt / SevenDayResetAt mirror the above for the reset
 	// countdowns. Zero when unknown.
