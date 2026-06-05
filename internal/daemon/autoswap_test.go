@@ -174,7 +174,7 @@ func TestAutoSwap_AllNearLimit_NoSwap(t *testing.T) {
 	if swapped || len(fsw.switched) != 0 {
 		t.Errorf("no candidate beats active on the binding window — should not swap; got %v", fsw.switched)
 	}
-	if len(notes) != 1 || notes[0] != "All accounts near limit" {
+	if len(notes) != 1 || notes[0] != "No better account to switch to" {
 		t.Errorf("want the all-accounts-near-limit notification, got %v", notes)
 	}
 }
