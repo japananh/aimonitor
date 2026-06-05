@@ -135,11 +135,20 @@ func (c *Client) slackPOST(ctx context.Context, method string, body any, out int
 // clickup runs one ClickUp v2 API call. ClickUp wants the raw personal
 // token in Authorization (no Bearer prefix).
 func (c *Client) clickup(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	return c.clickupBase(ctx, clickupAPIBase, method, path, query, body, out)
+}
+
+// clickupV3 is the same call against the v3 API (Docs live there).
+func (c *Client) clickupV3(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	return c.clickupBase(ctx, clickupV3APIBase, method, path, query, body, out)
+}
+
+func (c *Client) clickupBase(ctx context.Context, base, method, path string, query url.Values, body, out any) error {
 	tok, err := c.token(ServiceClickUp)
 	if err != nil {
 		return err
 	}
-	u := clickupAPIBase + path
+	u := base + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}

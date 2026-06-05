@@ -409,3 +409,144 @@ func (c *Client) clickupDeleteComment(ctx context.Context, _ *mcp.CallToolReques
 	}
 	return textResult(map[string]string{"comment_id": in.CommentID, "status": "deleted"})
 }
+
+// --- docs (API v3) --------------------------------------------------------
+// A ClickUp Doc is a container; the CONTENT lives in its pages. URL shape:
+// app.clickup.com/<workspace>/v/dc/<doc_id>/<page_id>.
+
+type cuListDocsIn struct {
+	WorkspaceID string `json:"workspace_id" jsonschema:"workspace (team) ID"`
+	Cursor      string `json:"cursor,omitempty" jsonschema:"pagination cursor from a previous call"`
+}
+
+func (c *Client) clickupListDocs(ctx context.Context, _ *mcp.CallToolRequest, in cuListDocsIn) (*mcp.CallToolResult, any, error) {
+	q := url.Values{}
+	if in.Cursor != "" {
+		q.Set("next_cursor", in.Cursor)
+	}
+	var out struct {
+		Docs []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"docs"`
+		NextCursor string `json:"next_cursor"`
+	}
+	if err := c.clickupV3(ctx, http.MethodGet, "/workspaces/"+url.PathEscape(in.WorkspaceID)+"/docs", q, nil, &out); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]any{"docs": out.Docs, "next_cursor": out.NextCursor})
+}
+
+type cuDocIn struct {
+	WorkspaceID string `json:"workspace_id" jsonschema:"workspace (team) ID"`
+	DocID       string `json:"doc_id" jsonschema:"doc ID (the dc/<id> part of the doc URL)"`
+}
+
+// clickupGetDoc lists the doc's pages WITH markdown content.
+func (c *Client) clickupGetDoc(ctx context.Context, _ *mcp.CallToolRequest, in cuDocIn) (*mcp.CallToolResult, any, error) {
+	q := url.Values{"content_format": {"text/md"}}
+	var pages []struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := c.clickupV3(ctx, http.MethodGet, "/workspaces/"+url.PathEscape(in.WorkspaceID)+"/docs/"+url.PathEscape(in.DocID)+"/pages", q, nil, &pages); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]any{"pages": pages})
+}
+
+type cuCreateDocIn struct {
+	WorkspaceID string `json:"workspace_id" jsonschema:"workspace (team) ID"`
+	Name        string `json:"name" jsonschema:"doc name"`
+}
+
+func (c *Client) clickupCreateDoc(ctx context.Context, _ *mcp.CallToolRequest, in cuCreateDocIn) (*mcp.CallToolResult, any, error) {
+	var out struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := c.clickupV3(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(in.WorkspaceID)+"/docs", nil,
+		map[string]any{"name": in.Name}, &out); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]any{"created_doc": out})
+}
+
+type cuCreatePageIn struct {
+	WorkspaceID  string `json:"workspace_id" jsonschema:"workspace (team) ID"`
+	DocID        string `json:"doc_id" jsonschema:"doc to add the page to"`
+	Name         string `json:"name" jsonschema:"page title"`
+	Content      string `json:"content" jsonschema:"page content (markdown)"`
+	ParentPageID string `json:"parent_page_id,omitempty" jsonschema:"nest under this page"`
+}
+
+func (c *Client) clickupCreatePage(ctx context.Context, _ *mcp.CallToolRequest, in cuCreatePageIn) (*mcp.CallToolResult, any, error) {
+	body := map[string]any{
+		"name":           in.Name,
+		"content":        in.Content,
+		"content_format": "text/md",
+	}
+	if in.ParentPageID != "" {
+		body["parent_page_id"] = in.ParentPageID
+	}
+	var out struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := c.clickupV3(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(in.WorkspaceID)+"/docs/"+url.PathEscape(in.DocID)+"/pages", nil, body, &out); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]any{"created_page": out})
+}
+
+type cuUpdatePageIn struct {
+	WorkspaceID string `json:"workspace_id" jsonschema:"workspace (team) ID"`
+	DocID       string `json:"doc_id" jsonschema:"doc ID (dc/<id> in the URL)"`
+	PageID      string `json:"page_id" jsonschema:"page ID (last segment of the page URL)"`
+	Name        string `json:"name,omitempty" jsonschema:"new page title"`
+	Content     string `json:"content,omitempty" jsonschema:"page content (markdown)"`
+	EditMode    string `json:"content_edit_mode,omitempty" jsonschema:"replace (default), append, or prepend"`
+}
+
+func (c *Client) clickupUpdatePage(ctx context.Context, _ *mcp.CallToolRequest, in cuUpdatePageIn) (*mcp.CallToolResult, any, error) {
+	if in.Name == "" && in.Content == "" {
+		return nil, nil, fmt.Errorf("nothing to update — provide name and/or content")
+	}
+	body := map[string]any{}
+	if in.Name != "" {
+		body["name"] = in.Name
+	}
+	if in.Content != "" {
+		mode := in.EditMode
+		if mode == "" {
+			mode = "replace"
+		}
+		body["content"] = in.Content
+		body["content_format"] = "text/md"
+		body["content_edit_mode"] = mode
+	}
+	if err := c.clickupV3(ctx, http.MethodPut, "/workspaces/"+url.PathEscape(in.WorkspaceID)+"/docs/"+url.PathEscape(in.DocID)+"/pages/"+url.PathEscape(in.PageID), nil, body, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"page_id": in.PageID, "status": "updated"})
+}
+
+type cuGetPageIn struct {
+	WorkspaceID string `json:"workspace_id" jsonschema:"workspace (team) ID"`
+	DocID       string `json:"doc_id" jsonschema:"doc ID"`
+	PageID      string `json:"page_id" jsonschema:"page ID"`
+}
+
+func (c *Client) clickupGetPage(ctx context.Context, _ *mcp.CallToolRequest, in cuGetPageIn) (*mcp.CallToolResult, any, error) {
+	q := url.Values{"content_format": {"text/md"}}
+	var out struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := c.clickupV3(ctx, http.MethodGet, "/workspaces/"+url.PathEscape(in.WorkspaceID)+"/docs/"+url.PathEscape(in.DocID)+"/pages/"+url.PathEscape(in.PageID), q, nil, &out); err != nil {
+		return nil, nil, err
+	}
+	return textResult(out)
+}
