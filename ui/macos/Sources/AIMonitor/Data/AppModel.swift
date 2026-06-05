@@ -19,6 +19,11 @@ final class AppModel: ObservableObject {
     @Published var limitsByAccount: [Int64: LimitsRow] = [:]
     // True while a manual "Refresh usage" (all-accounts) fetch is in flight.
     @Published var refreshingUsage = false
+    /// Label of the account a Switch is currently in flight for (nil when
+    /// idle). Drives the Switch buttons' spinner + disabled state — a switch
+    /// takes a few seconds (token refresh + keychain writes) and double
+    /// clicks must not queue a second one.
+    @Published var switchingLabel: String? = nil
     // Account ids whose per-row refresh is in flight (spinner on that row).
     @Published var refreshingAccounts: Set<Int64> = []
     // Per-account last refresh error, shown on the row until the next
@@ -102,15 +107,43 @@ final class AppModel: ObservableObject {
     /// Calls aimonitor CLI on a background queue so the UI doesn't freeze
     /// during the 50–200 ms switch dance.
     func switchTo(label: String) {
+        guard switchingLabel == nil else { return }
+        switchingLabel = label
         let q = workQueue
         q.async {
             do {
                 try CLIBridge.switchTo(label: label)
-                Task { @MainActor in await self.refresh() }
+                // The keychain swap is done, but the ✓ in the UI follows the
+                // DAEMON\'s published status, which lags by its 2s publish
+                // tick plus a 5s credential cache. Clearing the spinner here
+                // made a successful switch look like "nothing happened" and
+                // invited more clicks — keep "Switching…" until the daemon
+                // confirms the new active account.
+                Task { @MainActor in await self.confirmSwitch(to: label) }
             } catch {
-                Task { @MainActor in self.lastError = "\(error)" }
+                Task { @MainActor in
+                    self.lastError = "\(error)"
+                    self.switchingLabel = nil
+                }
             }
         }
+    }
+
+    /// Polls the daemon-published status until it names `label` as active,
+    /// then clears the in-flight spinner. Bounded: after ~12s we give up and
+    /// surface a hint instead of spinning forever (daemon down, etc.).
+    private func confirmSwitch(to label: String) async {
+        let deadline = Date().addingTimeInterval(12)
+        while Date() < deadline {
+            await refresh()
+            if status?.active_label == label {
+                switchingLabel = nil
+                return
+            }
+            try? await Task.sleep(nanoseconds: 700_000_000)
+        }
+        switchingLabel = nil
+        lastError = "Switched, but the daemon hasn\'t confirmed \"\(label)\" yet — is `aimonitor daemon` running?"
     }
 
     /// Fetches fresh usage for all inactive accounts via the CLI (the active
