@@ -239,8 +239,28 @@ struct PreferencesView: View {
     // refreshes the local snapshot after writing.
     private func mcpBinding(_ svc: MCPServiceStatus, keyPath: KeyPath<MCPServiceStatus, Bool>, settingSuffix: String) -> Binding<Bool> {
         Binding(
-            get: { svc[keyPath: keyPath] },
+            // Read from the LIVE array, not the captured row: the captured
+            // snapshot goes stale after the async reload, and a quick second
+            // click against a stale get() wrote inverted values to the WRONG
+            // state (observed: disabling ClickUp also flipped Slack off).
+            get: {
+                mcpServices.first(where: { $0.service == svc.service })?[keyPath: keyPath] ?? svc[keyPath: keyPath]
+            },
             set: { newValue in
+                // Optimistic local update so the toggle reflects the click
+                // immediately; the settings write + reload reconcile after.
+                if let i = mcpServices.firstIndex(where: { $0.service == svc.service }) {
+                    var updated = mcpServices[i]
+                    updated = MCPServiceStatus(
+                        service: updated.service,
+                        connected: updated.connected,
+                        identity: updated.identity,
+                        error: updated.error,
+                        enabled: settingSuffix == "enabled" ? newValue : updated.enabled,
+                        read_only: settingSuffix == "read_only" ? newValue : updated.read_only
+                    )
+                    mcpServices[i] = updated
+                }
                 let key = "mcp.\(svc.service).\(settingSuffix)"
                 DispatchQueue.global(qos: .userInitiated).async {
                     try? CLIBridge.configSet(key, newValue ? "true" : "false")
