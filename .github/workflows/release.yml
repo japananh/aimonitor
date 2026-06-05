@@ -53,6 +53,11 @@ jobs:
       - name: Run goreleaser
         run: goreleaser release --clean
         env:
+          # Pin the version to the tag that triggered this run. Without it,
+          # goreleaser picks among ALL tags on HEAD via git version-sort,
+          # which ranks v1.0.1-beta.5 above v1.0.1 — so tagging a final on
+          # the same commit as its last beta rebuilt the beta.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
           # Default to the workflow's job token for the release upload,
           # and use a personal-access token with `repo` scope for the
           # cross-repo push to japananh/homebrew-tap.
