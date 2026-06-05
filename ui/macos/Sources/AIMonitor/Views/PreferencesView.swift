@@ -118,27 +118,18 @@ struct PreferencesView: View {
             }
         }
         .formStyle(.grouped)
-        // Shared type scale with the main popover: 12pt body text, with
-        // .small controls — so the two windows read as one design.
-        .font(.system(size: 12))
-        // Compact switches/steppers/fields everywhere (the enable/disable
-        // toggles at regular size dwarfed the rest of the row).
-        .controlSize(.small)
-        // Tighter vertical rhythm: the grouped Form's default row height
-        // leaves airy gaps around 12pt text; 20pt rows close them up, and a
-        // 16pt header height pulls the sections (Updates ↔ About, …) closer.
-        .environment(\.defaultMinListRowHeight, 20)
-        .environment(\.defaultMinListHeaderHeight, 16)
-        // No extra outer padding: the grouped form style already insets its
-        // sections; doubling it wrapped everything in a thick margin (the
-        // main popover gets by with 12px).
-        .frame(width: 440, height: 600)
+        // Tahoe restyle: NO pinned font, controlSize, or row-height
+        // overrides — the grouped Form renders at the system's default
+        // type scale (13pt body on macOS 26) so the window matches
+        // System Settings exactly. The old 12pt/.small/compact-row pins
+        // made everything read smaller than the OS.
+        .frame(width: 460, height: 640)
         .onAppear(perform: loadState)
     }
 
-    // miniToggle renders "label … switch" with ONLY the switch scaled down
-    // (system .mini is the smallest controlSize; scaling the bare,
-    // labels-hidden switch shrinks it further without shrinking the text).
+    // miniToggle renders "label … switch". The switch sits at .small —
+    // the size System Settings uses on Tahoe — with the label at the
+    // row's default font (only the control is sized, never the text).
     private func miniToggle(_ label: String, isOn: Binding<Bool>) -> some View {
         HStack {
             Text(label)
@@ -146,8 +137,7 @@ struct PreferencesView: View {
             Toggle("", isOn: isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .controlSize(.mini)
-                .scaleEffect(0.85, anchor: .trailing)
+                .controlSize(.small)
                 .pointerCursor()
         }
     }

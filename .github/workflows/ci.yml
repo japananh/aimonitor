@@ -41,8 +41,12 @@ jobs:
           version: v2.12.2
 
   swift:
-    name: swift build (macos-14)
-    runs-on: macos-14
+    # macos-26 (Xcode 26) is required: the widget adopts Liquid Glass via
+    # `#available(macOS 26.0, *)` paths that only compile against SDK 26+,
+    # and linking the 26 SDK is what opts standard controls into the
+    # Tahoe design at runtime.
+    name: swift build (macos-26)
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
       - name: swift --version

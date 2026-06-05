@@ -128,7 +128,6 @@ struct PopoverRootView: View {
                 AppTextButton("Quit", action: quit)
                     .help("Quit the menu-bar app (the background daemon keeps running)")
             }
-            .controlSize(.small)
             .padding(.horizontal, 12)
             .padding(.top, 8)
             .padding(.bottom, 12)
