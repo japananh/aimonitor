@@ -191,7 +191,11 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 			binding, activeLabel, activePct)
 		a.pending = nil
 		a.cooldownUntil = a.now().Add(cooldownAfterExhausted)
-		a.notify("All accounts near limit", fmt.Sprintf("%q is at %.0f%% of its %s limit and no account has more headroom.", activeLabel, activePct, binding))
+		a.notify(
+			"No better account to switch to",
+			fmt.Sprintf("%q hit %.0f%% of its %s limit, but no other account has lower %s usage than yours (or they're already exhausted). Staying on %q.",
+				activeLabel, activePct, binding, binding, activeLabel),
+		)
 		return false, nil
 	}
 
