@@ -110,6 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         preferencesWindow?.center()
         preferencesWindow?.makeKeyAndOrderFront(nil)
+        // Don't auto-focus the first control (the Theme segmented picker
+        // got a focus ring on open) — same treatment as the panel: the
+        // window stays key, no control is first responder.
+        preferencesWindow?.makeFirstResponder(nil)
         NSApp.activate(ignoringOtherApps: true)
         installPrefsClickMonitor()
     }
@@ -254,11 +258,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             importAccount: { [weak self] email in self?.promptImportCurrent(email: email) },
             addAccount: { [weak self] in self?.promptAddAccount() }
         )
-        // Solid window background — NOT .regularMaterial, whose vibrancy
-        // desaturates the foreground (the colored 5h/7d bars, the green
-        // active check, red errors). Rounded + shadowed via clip + panel.
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        // Liquid Glass chrome on Tahoe, solid rounded background before it
+        // (see PanelChrome.swift for why glass stays on the chrome only).
+        .panelChrome()
 
         let hosting = NSHostingController(rootView: root)
         // Let the panel resize to the SwiftUI content (rows, banners, error

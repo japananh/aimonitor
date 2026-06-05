@@ -122,10 +122,10 @@ struct AccountTableView: View {
                             if model.switchingLabel == acct.label {
                                 HStack(spacing: 4) {
                                     ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
-                                    Text("Switching…").font(.system(size: appButtonFontSize))
+                                    Text("Switching…")
                                 }
                             } else {
-                                Text("Switch").font(.system(size: appButtonFontSize))
+                                Text("Switch")
                             }
                         }
                         .appTextButtonChrome()

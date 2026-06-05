@@ -20,8 +20,11 @@ permissions:
 
 jobs:
   release:
-    name: goreleaser
-    runs-on: macos-14
+    # macos-26 (Xcode 26 / SDK 26) so the shipped widget gets the Liquid
+    # Glass design on Tahoe — binaries linked against older SDKs render
+    # with the legacy compatibility appearance, and the `#available`
+    # glass code paths need SDK 26 to compile at all.
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v5

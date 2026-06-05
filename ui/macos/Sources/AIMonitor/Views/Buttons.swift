@@ -1,14 +1,11 @@
-// The ONE text-button component, app-wide. macOS's bordered button style
-// ignores .font applied from OUTSIDE the button (it derives the label font
-// from controlSize), so the font must sit on the Text INSIDE the label —
-// which is why this is a component and not just a modifier. Every button
-// whose label is text must be an AppTextButton; never hand-roll one.
+// The ONE text-button component, app-wide. Since the Tahoe (macOS 26)
+// restyle it deliberately pins NOTHING: no font, no controlSize — the
+// system renders buttons at the platform's default type scale (13pt on
+// Tahoe) so they match System Settings and system menus exactly.
+// Keeping the component (rather than bare Buttons) preserves the single
+// place to restyle every text button at once, plus the pointer cursor.
 
 import SwiftUI
-
-/// Label size for all text buttons (and for custom button labels that
-/// can't use AppTextButton directly, e.g. spinner+text combos).
-let appButtonFontSize: CGFloat = 12
 
 struct AppTextButton: View {
     let title: String
@@ -20,20 +17,16 @@ struct AppTextButton: View {
     }
 
     var body: some View {
-        Button(action: action) {
-            Text(title).font(.system(size: appButtonFontSize))
-        }
-        .controlSize(.small)
-        .pointerCursor()
+        Button(title, action: action)
+            .pointerCursor()
     }
 }
 
 extension View {
-    /// Chrome for buttons with CUSTOM labels (apply appButtonFontSize to
-    /// the inner Text yourself).
+    /// Chrome for buttons with CUSTOM labels (spinner+text combos).
+    /// Keep the label's Text at the default font so it matches
+    /// AppTextButton.
     func appTextButtonChrome() -> some View {
-        self
-            .controlSize(.small)
-            .pointerCursor()
+        self.pointerCursor()
     }
 }
