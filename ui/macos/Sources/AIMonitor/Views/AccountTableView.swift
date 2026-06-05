@@ -68,7 +68,7 @@ struct AccountTableView: View {
                     // than the account name.
                     if let email = acct.email, !email.isEmpty {
                         Text(email)
-                            .font(.subheadline)
+                            .font(.system(size: 11))
                             .foregroundStyle(.primary)
                             .textSelection(.enabled)
                     }
@@ -122,15 +122,14 @@ struct AccountTableView: View {
                             if model.switchingLabel == acct.label {
                                 HStack(spacing: 4) {
                                     ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
-                                    Text("Switching…")
+                                    Text("Switching…").font(.system(size: appButtonFontSize))
                                 }
                             } else {
-                                Text("Switch")
+                                Text("Switch").font(.system(size: appButtonFontSize))
                             }
                         }
-                        .controlSize(.small)
+                        .appTextButtonChrome()
                         .disabled(model.switchingLabel != nil)
-                        .pointerCursor()
                         .help("Make \(acct.label) the active Claude account")
                     }
                 }
