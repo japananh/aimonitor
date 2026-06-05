@@ -150,6 +150,36 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuAddCommentIn, any] {
 				return c.clickupAddComment
 			})},
+		{name: "clickup_list_docs", svc: ServiceClickUp,
+			desc: "List ClickUp Docs in a workspace",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuListDocsIn, any] {
+				return c.clickupListDocs
+			})},
+		{name: "clickup_get_doc", svc: ServiceClickUp,
+			desc: "Get a ClickUp Doc's pages with their markdown content (doc URL: …/v/dc/<doc_id>/<page_id>)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuDocIn, any] {
+				return c.clickupGetDoc
+			})},
+		{name: "clickup_get_page", svc: ServiceClickUp,
+			desc: "Get one ClickUp Doc page's markdown content",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuGetPageIn, any] {
+				return c.clickupGetPage
+			})},
+		{name: "clickup_create_doc", svc: ServiceClickUp, write: true,
+			desc: "Create a new ClickUp Doc in a workspace",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuCreateDocIn, any] {
+				return c.clickupCreateDoc
+			})},
+		{name: "clickup_create_page", svc: ServiceClickUp, write: true,
+			desc: "Add a page (markdown) to a ClickUp Doc",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuCreatePageIn, any] {
+				return c.clickupCreatePage
+			})},
+		{name: "clickup_update_page", svc: ServiceClickUp, write: true,
+			desc: "Edit a ClickUp Doc page's markdown content (replace, append, or prepend)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUpdatePageIn, any] {
+				return c.clickupUpdatePage
+			})},
 		{name: "clickup_delete_comment", svc: ServiceClickUp, write: true,
 			desc: "Delete a ClickUp comment by its ID",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuDeleteCommentIn, any] {

@@ -15,8 +15,9 @@ import (
 // Default API roots. Vars (not consts) so tests point them at httptest
 // servers; the production values never change at runtime.
 var (
-	slackAPIBase   = "https://slack.com/api"
-	clickupAPIBase = "https://api.clickup.com/api/v2"
+	slackAPIBase     = "https://slack.com/api"
+	clickupAPIBase   = "https://api.clickup.com/api/v2"
+	clickupV3APIBase = "https://api.clickup.com/api/v3"
 )
 
 // verifyHTTP is the client for verification calls. Short timeout: these
