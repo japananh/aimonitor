@@ -1,7 +1,11 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strconv"
 
@@ -283,4 +287,88 @@ func (c *Client) slackGetPermalink(ctx context.Context, _ *mcp.CallToolRequest, 
 		return nil, nil, err
 	}
 	return textResult(map[string]string{"permalink": out.Permalink})
+}
+
+// --- file upload --------------------------------------------------------
+
+type slackUploadIn struct {
+	Filename string `json:"filename" jsonschema:"file name including extension (e.g. report.txt, snippet.go)"`
+	Content  string `json:"content" jsonschema:"the file's content as text"`
+	Channel  string `json:"channel,omitempty" jsonschema:"share into this channel ID"`
+	ThreadTS string `json:"thread_ts,omitempty" jsonschema:"share as a reply in this thread (requires channel)"`
+	Title    string `json:"title,omitempty" jsonschema:"display title (defaults to filename)"`
+	Comment  string `json:"initial_comment,omitempty" jsonschema:"message text shown with the file"`
+}
+
+// slackUploadFile drives Slack's three-step external upload:
+// getUploadURLExternal → raw POST of the bytes → completeUploadExternal
+// (which also shares it into a channel/thread when given).
+func (c *Client) slackUploadFile(ctx context.Context, _ *mcp.CallToolRequest, in slackUploadIn) (*mcp.CallToolResult, any, error) {
+	if in.Filename == "" || in.Content == "" {
+		return nil, nil, fmt.Errorf("filename and content are required")
+	}
+	data := []byte(in.Content)
+
+	// Step 1: reserve an upload URL.
+	var urlOut struct {
+		slackEnvelope
+		UploadURL string `json:"upload_url"`
+		FileID    string `json:"file_id"`
+	}
+	params := url.Values{
+		"filename": {in.Filename},
+		"length":   {strconv.Itoa(len(data))},
+	}
+	if err := c.slackGET(ctx, "files.getUploadURLExternal", params, &urlOut); err != nil {
+		return nil, nil, fmt.Errorf("reserve upload: %w", err)
+	}
+
+	// Step 2: POST the raw bytes to the reserved URL (no auth header).
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlOut.UploadURL, bytes.NewReader(data))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("upload bytes: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, nil, fmt.Errorf("upload bytes: HTTP %d", resp.StatusCode)
+	}
+
+	// Step 3: finalize + share.
+	title := in.Title
+	if title == "" {
+		title = in.Filename
+	}
+	body := map[string]any{
+		"files": []map[string]string{{"id": urlOut.FileID, "title": title}},
+	}
+	if in.Channel != "" {
+		body["channel_id"] = in.Channel
+	}
+	if in.ThreadTS != "" {
+		body["thread_ts"] = in.ThreadTS
+	}
+	if in.Comment != "" {
+		body["initial_comment"] = in.Comment
+	}
+	var doneOut struct {
+		slackEnvelope
+		Files []struct {
+			ID        string `json:"id"`
+			Permalink string `json:"permalink"`
+		} `json:"files"`
+	}
+	if err := c.slackPOST(ctx, "files.completeUploadExternal", body, &doneOut); err != nil {
+		return nil, nil, fmt.Errorf("complete upload: %w", err)
+	}
+	res := map[string]string{"file_id": urlOut.FileID, "status": "uploaded"}
+	if len(doneOut.Files) > 0 {
+		res["permalink"] = doneOut.Files[0].Permalink
+	}
+	return textResult(res)
 }
