@@ -173,7 +173,6 @@ func newMCPStatusCmd() *cobra.Command {
 				if terr != nil {
 					state = "keychain error: " + terr.Error()
 				} else if tok != "" {
-					state = "connected"
 					if ident, verr := mcpserver.Verifier(svc)(ctx, tok); verr == nil {
 						state = "connected as " + ident
 					} else {
