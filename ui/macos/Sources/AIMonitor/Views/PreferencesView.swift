@@ -49,18 +49,16 @@ struct PreferencesView: View {
                 .pickerStyle(.segmented)
                 .onChange(of: appTheme) { _, newValue in applyAppearance(newValue) }
                 .pointerCursor()
-                Toggle("Show Dock icon", isOn: $showDockIcon)
+                miniToggle("Show Dock icon", isOn: $showDockIcon)
                     .onChange(of: showDockIcon) { _, show in applyDockIconPolicy(show) }
-                    .pointerCursor()
                     .help("Also show AIMonitor in the Dock — clicking the Dock icon opens the panel. Handy when the menu-bar icon is hidden behind the notch.")
             }
             Section("Auto-switch") {
-                Toggle("Switch accounts automatically near the limit", isOn: Binding(
+                miniToggle("Switch accounts automatically near the limit", isOn: Binding(
                     get: { autoSwapOn },
                     set: { newValue in autoSwapOn = newValue; setSetting("auto_swap.enabled", newValue) }
                 ))
                 .help("When on, AIMonitor switches the active account once it hits either threshold below")
-                .pointerCursor()
                 if autoSwapOn {
                     ThresholdRow(
                         label: "Switch when 5h usage reaches %:",
@@ -75,49 +73,38 @@ struct PreferencesView: View {
                     )
                     .help("Any whole number from 1 to 100. When the active account's 7-day usage reaches it, AIMonitor switches — even if the alternatives are 5-hour-hot, since weekly caps last days while 5-hour windows recover in hours.")
                 }
-                Text("Each window has its own threshold; crossing either one triggers a switch to the account with the most remaining headroom — escaping a weekly-capped account even when the alternatives are only 5-hour-hot. If another credential manager is also running, AIMonitor recovers from token rotation automatically; to avoid both tools switching at once, turn this off and let the other tool drive.")
+                Text("Crossing either threshold switches to the account with the most remaining headroom.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            Section("Integrations") {
+            Section("MCP") {
                 if mcpServices.isEmpty {
                     Text("Loading…").font(.caption).foregroundStyle(.secondary)
                 } else {
                     ForEach(mcpServices) { svc in
                         integrationRow(svc)
                     }
-                    Text("Slack and ClickUp tools for Claude Code. Changes apply to new Claude sessions. \(mcpToolCount) tools exposed.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                 }
             }
             Section("Startup") {
-                Toggle("Launch AIMonitor at login", isOn: $autostartOn)
+                miniToggle("Launch AIMonitor at login", isOn: $autostartOn)
                     .onChange(of: autostartOn) { _, newValue in
                         applyAutostart(newValue)
                     }
-                    .pointerCursor()
                 if let msg = autostartError {
                     Text(msg).font(.caption2).foregroundStyle(.red)
                 }
             }
             Section("Updates") {
-                Toggle("Automatically check for updates", isOn: Binding(
+                miniToggle("Automatically check for updates", isOn: Binding(
                     get: { autoUpdateOn },
                     set: { newValue in autoUpdateOn = newValue; setSetting("auto_update.enabled", newValue) }
                 ))
                 .help("Check GitHub for new releases on launch and notify you")
-                .pointerCursor()
                 Text("Checks GitHub for new releases and notifies you. Updates are never installed without your confirmation.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Button("Check for Updates…", action: checkForUpdates)
-                    // Same control size as the main popover's buttons
-                    // (Refresh usage / Quit / Switch are all .small), with
-                    // the label one point larger than small's 11pt default.
-                    .controlSize(.small)
-                    .font(.system(size: 12))
-                    .pointerCursor()
+                AppTextButton("Check for Updates…", action: checkForUpdates)
                     .help("Check for a newer version now")
             }
             Section("About") {
@@ -131,11 +118,38 @@ struct PreferencesView: View {
             }
         }
         .formStyle(.grouped)
+        // Shared type scale with the main popover: 12pt body text, with
+        // .small controls — so the two windows read as one design.
+        .font(.system(size: 12))
+        // Compact switches/steppers/fields everywhere (the enable/disable
+        // toggles at regular size dwarfed the rest of the row).
+        .controlSize(.small)
+        // Tighter vertical rhythm: the grouped Form's default row height
+        // leaves airy gaps around 12pt text; 20pt rows close them up, and a
+        // 16pt header height pulls the sections (Updates ↔ About, …) closer.
+        .environment(\.defaultMinListRowHeight, 20)
+        .environment(\.defaultMinListHeaderHeight, 16)
         // No extra outer padding: the grouped form style already insets its
         // sections; doubling it wrapped everything in a thick margin (the
         // main popover gets by with 12px).
-        .frame(width: 440, height: 700)
+        .frame(width: 440, height: 600)
         .onAppear(perform: loadState)
+    }
+
+    // miniToggle renders "label … switch" with ONLY the switch scaled down
+    // (system .mini is the smallest controlSize; scaling the bare,
+    // labels-hidden switch shrinks it further without shrinking the text).
+    private func miniToggle(_ label: String, isOn: Binding<Bool>) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .scaleEffect(0.85, anchor: .trailing)
+                .pointerCursor()
+        }
     }
 
     private func loadState() {
@@ -176,63 +190,48 @@ struct PreferencesView: View {
 
     // integrationRow renders one service: status line, Connect/Disconnect,
     // Enabled + Read-only toggles, inline token paste when migration fails.
+    // integrationRow emits SIBLING form rows (no wrapping VStack: a nested
+    // container loses the grouped Form's compact-switch row treatment).
+    // Inside the single "MCP" section, each service gets a bold sub-header
+    // row; its Enabled/Read-only rows are indented underneath it.
     @ViewBuilder
     private func integrationRow(_ svc: MCPServiceStatus) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(svc.service == "slack" ? "Slack" : "ClickUp").bold()
-                Spacer()
-                if svc.connected {
-                    Button("Disconnect") { mcpDisconnect(svc.service) }
-                        .controlSize(.small)
-                        .disabled(mcpBusy != nil)
-                        .pointerCursor()
-                } else {
-                    Button(mcpBusy == svc.service ? "Connecting…" : "Connect…") { mcpConnect(svc.service) }
-                        .controlSize(.small)
-                        .disabled(mcpBusy != nil)
-                        .pointerCursor()
-                }
-            }
+        HStack {
+            Text(svc.service == "slack" ? "Slack" : "ClickUp").bold()
+            Spacer()
             if svc.connected, let ident = svc.identity {
-                Text("Connected as \(ident)")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-            } else if svc.connected {
-                Text("Connected")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-            } else {
-                Text("Not connected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let err = mcpError[svc.service] {
-                Text(err).font(.caption2).foregroundStyle(.red).textSelection(.enabled)
-            }
-            if mcpTokenPrompt == svc.service {
-                HStack(spacing: 6) {
-                    SecureField(svc.service == "slack" ? "xoxp-… user token" : "pk_… personal token", text: $mcpTokenInput)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Verify & Save") { mcpConnectWithToken(svc.service) }
-                        .controlSize(.small)
-                        .disabled(mcpTokenInput.trimmingCharacters(in: .whitespaces).isEmpty || mcpBusy != nil)
-                        .pointerCursor()
-                }
+                Text(ident).font(.caption).foregroundStyle(.secondary)
+            } else if !svc.connected {
+                Text("Not connected").font(.caption).foregroundStyle(.secondary)
             }
             if svc.connected {
-                HStack(spacing: 16) {
-                    Toggle("Enabled", isOn: mcpBinding(svc, keyPath: \.enabled, settingSuffix: "enabled"))
-                        .pointerCursor()
-                        .help("Off hides every \(svc.service) tool from Claude")
-                    Toggle("Read-only", isOn: mcpBinding(svc, keyPath: \.read_only, settingSuffix: "read_only"))
-                        .pointerCursor()
-                        .help("On hides write tools (post/create/update/comment) from Claude entirely")
-                }
-                .controlSize(.small)
+                AppTextButton("Disconnect") { mcpDisconnect(svc.service) }
+                    .disabled(mcpBusy != nil)
+            } else {
+                AppTextButton(mcpBusy == svc.service ? "Connecting…" : "Connect…") { mcpConnect(svc.service) }
+                    .disabled(mcpBusy != nil)
             }
         }
-        .padding(.vertical, 2)
+        if let err = mcpError[svc.service] {
+            Text(err).font(.caption2).foregroundStyle(.red).textSelection(.enabled)
+        }
+        if mcpTokenPrompt == svc.service {
+            HStack(spacing: 6) {
+                SecureField(svc.service == "slack" ? "xoxp-… user token" : "pk_… personal token", text: $mcpTokenInput)
+                    .textFieldStyle(.roundedBorder)
+                AppTextButton("Verify & Save") { mcpConnectWithToken(svc.service) }
+                    .disabled(mcpTokenInput.trimmingCharacters(in: .whitespaces).isEmpty || mcpBusy != nil)
+                    .pointerCursor()
+            }
+        }
+        if svc.connected {
+            miniToggle("Enabled", isOn: mcpBinding(svc, keyPath: \.enabled, settingSuffix: "enabled"))
+                .padding(.leading, 16)
+                .help("Off hides every \(svc.service) tool from Claude")
+            miniToggle("Read-only", isOn: mcpBinding(svc, keyPath: \.read_only, settingSuffix: "read_only"))
+                .padding(.leading, 16)
+                .help("On hides write tools (post/create/update/comment) from Claude entirely")
+        }
     }
 
     // mcpBinding maps a service flag to its mcp.<svc>.<suffix> setting and

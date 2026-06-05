@@ -81,12 +81,10 @@ struct PopoverRootView: View {
                         // The Preferences "Launch at login" toggle only
                         // registers the widget app — it never starts the
                         // daemon, which is why this lives on the banner.
-                        Button(daemonStarting ? "Starting…" : "Start daemon") {
+                        AppTextButton(daemonStarting ? "Starting…" : "Start daemon") {
                             startDaemon()
                         }
-                        .controlSize(.small)
                         .disabled(daemonStarting)
-                        .pointerCursor()
                         .help("Start the background daemon now and keep it running at login")
                         if let err = daemonStartError {
                             Text(err)
@@ -108,9 +106,7 @@ struct PopoverRootView: View {
                         .font(.caption2)
                         .foregroundStyle(.orange)
                     if let importAccount {
-                        Button("Import this account…") { importAccount(email) }
-                            .controlSize(.small)
-                            .pointerCursor()
+                        AppTextButton("Import this account…") { importAccount(email) }
                             .help("Register the currently signed-in account with AIMonitor")
                     }
                 }
@@ -123,15 +119,13 @@ struct PopoverRootView: View {
 
             Divider()
             HStack {
-                Button(model.refreshingUsage ? "Refreshing…" : "Refresh usage") {
+                AppTextButton(model.refreshingUsage ? "Refreshing…" : "Refresh usage") {
                     model.refreshUsage()
                 }
                 .disabled(model.refreshingUsage)
-                .pointerCursor()
                 .help("Fetch the latest 5h/7d usage for every account now")
                 Spacer()
-                Button("Quit", action: quit)
-                    .pointerCursor()
+                AppTextButton("Quit", action: quit)
                     .help("Quit the menu-bar app (the background daemon keeps running)")
             }
             .controlSize(.small)
