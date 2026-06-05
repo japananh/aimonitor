@@ -145,6 +145,11 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuAddCommentIn, any] {
 				return c.clickupAddComment
 			})},
+		{name: "clickup_delete_comment", svc: ServiceClickUp, write: true,
+			desc: "Delete a ClickUp comment by its ID",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuDeleteCommentIn, any] {
+				return c.clickupDeleteComment
+			})},
 		{name: "clickup_list_comments", svc: ServiceClickUp,
 			desc: "List the comments on a ClickUp task",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuTaskIn, any] {
