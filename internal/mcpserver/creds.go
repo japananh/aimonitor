@@ -23,6 +23,7 @@ import (
 // Service identifies an integration this MCP server can expose.
 type Service string
 
+// The supported integrations.
 const (
 	ServiceSlack   Service = "slack"
 	ServiceClickUp Service = "clickup"
