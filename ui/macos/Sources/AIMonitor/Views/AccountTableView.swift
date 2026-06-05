@@ -13,24 +13,23 @@ struct AccountTableView: View {
     var renameAccount: ((String) -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        // Tahoe (Control Center) layout: each account is a rounded
+        // "module" card floating on the glass panel — no full-width
+        // dividers between rows.
+        VStack(alignment: .leading, spacing: 8) {
             if model.accounts.isEmpty {
                 Text("No accounts. Run `aimonitor add` in a terminal.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(12)
             } else {
-                // Divider BEFORE each row (header→row1, row1→row2, …) and
-                // none after the last row, so there's a single separator
-                // between the last account and the footer (PopoverRootView
-                // adds the one before the buttons).
                 ForEach(model.accounts) { acct in
-                    Divider()
                     rowView(acct)
                 }
             }
         }
-        .padding(.bottom, 6)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 4)
     }
 
     @ViewBuilder
@@ -156,17 +155,27 @@ struct AccountTableView: View {
                     .padding(.leading, 28)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        // Soft accent tint behind the ACTIVE account so it reads at a
-        // glance (on top of the green check). Inset from the panel edges so
-        // it looks like a highlight card, not a full-bleed band; opacity 0
-        // (not a conditional view) keeps the row layout identical for all.
+        .padding(10)
+        // Control-Center-style module card. The fill uses the semantic
+        // control background (opaque, adapts per appearance) so a card
+        // reads clearly against the translucent glass in BOTH light and
+        // dark — quaternarySystemFill was too faint on the dark panel. A
+        // hairline separator stroke gives every card a crisp edge; the
+        // ACTIVE card is accent-tinted (on top of its green check).
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.accentColor.opacity(isActive ? 0.14 : 0))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.accentColor.opacity(isActive ? 0.22 : 0))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    isActive ? Color.accentColor.opacity(0.5) : Color(nsColor: .separatorColor),
+                    lineWidth: 1
+                )
         )
         .contextMenu {
             if let rename = renameAccount {
