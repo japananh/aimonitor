@@ -112,10 +112,24 @@ struct AccountTableView: View {
                     .help("Fetch \(acct.label)'s latest usage now")
 
                     if !isActive {
-                        Button("Switch") {
+                        // Spinner + disabled while a switch is in flight (it
+                        // takes a few seconds: token refresh + keychain
+                        // writes). ALL Switch buttons disable during it so a
+                        // second switch can't queue behind the first.
+                        Button {
                             model.switchTo(label: acct.label)
+                        } label: {
+                            if model.switchingLabel == acct.label {
+                                HStack(spacing: 4) {
+                                    ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
+                                    Text("Switching…")
+                                }
+                            } else {
+                                Text("Switch")
+                            }
                         }
                         .controlSize(.small)
+                        .disabled(model.switchingLabel != nil)
                         .pointerCursor()
                         .help("Make \(acct.label) the active Claude account")
                     }
