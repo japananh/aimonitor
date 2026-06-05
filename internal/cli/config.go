@@ -10,6 +10,7 @@ import (
 	"github.com/japananh/aimonitor/internal/config"
 	"github.com/japananh/aimonitor/internal/daemon"
 	"github.com/japananh/aimonitor/internal/install"
+	"github.com/japananh/aimonitor/internal/mcpserver"
 	"github.com/japananh/aimonitor/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -54,6 +55,11 @@ var configKeys = []string{
 	daemon.SettingsKeyAutoSwapGrace,
 	SettingsKeyAutoUpdateEnabled,
 	SettingsKeyUpdateSkippedVersion,
+	mcpserver.SettingsKeySlackEnabled,
+	mcpserver.SettingsKeyClickUpEnabled,
+	mcpserver.SettingsKeySlackReadOnly,
+	mcpserver.SettingsKeyClickUpReadOnly,
+	mcpserver.SettingsKeyDisabledTools,
 }
 
 // deprecatedKeys maps retired keys to their replacement. They drove the
@@ -75,7 +81,12 @@ func isStoreKey(key string) bool {
 		daemon.SettingsKeyAutoSwapThreshold7d,
 		daemon.SettingsKeyAutoSwapGrace,
 		SettingsKeyAutoUpdateEnabled,
-		SettingsKeyUpdateSkippedVersion:
+		SettingsKeyUpdateSkippedVersion,
+		mcpserver.SettingsKeySlackEnabled,
+		mcpserver.SettingsKeyClickUpEnabled,
+		mcpserver.SettingsKeySlackReadOnly,
+		mcpserver.SettingsKeyClickUpReadOnly,
+		mcpserver.SettingsKeyDisabledTools:
 		return true
 	}
 	return false
@@ -249,12 +260,25 @@ func validateStoreValue(key, value string) (string, error) {
 			return "", fmt.Errorf("%s: must be >= 0, got %d", key, n)
 		}
 		return strconv.Itoa(n), nil
-	case SettingsKeyAutoUpdateEnabled:
+	case SettingsKeyAutoUpdateEnabled,
+		mcpserver.SettingsKeySlackEnabled,
+		mcpserver.SettingsKeyClickUpEnabled,
+		mcpserver.SettingsKeySlackReadOnly,
+		mcpserver.SettingsKeyClickUpReadOnly:
 		b, err := parseBool(value)
 		if err != nil {
 			return "", err
 		}
 		return strconv.FormatBool(b), nil
+	case mcpserver.SettingsKeyDisabledTools:
+		// Free-form comma-separated tool names; normalise whitespace.
+		parts := []string{}
+		for _, p := range strings.Split(value, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				parts = append(parts, p)
+			}
+		}
+		return strings.Join(parts, ","), nil
 	case SettingsKeyUpdateSkippedVersion:
 		// A version tag the widget should stop prompting for. Free-form
 		// (a tag string); empty clears it.
@@ -275,6 +299,12 @@ func storeKeyDefault(key string) string {
 		return strconv.Itoa(daemon.DefaultAutoSwapGraceSec)
 	case SettingsKeyAutoUpdateEnabled:
 		return strconv.FormatBool(defaultAutoUpdateEnabled)
+	case mcpserver.SettingsKeySlackEnabled, mcpserver.SettingsKeyClickUpEnabled:
+		return "true"
+	case mcpserver.SettingsKeySlackReadOnly, mcpserver.SettingsKeyClickUpReadOnly:
+		return "false"
+	case mcpserver.SettingsKeyDisabledTools:
+		return ""
 	case SettingsKeyUpdateSkippedVersion:
 		return ""
 	}
