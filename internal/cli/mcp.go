@@ -47,6 +47,9 @@ func newMCPServeCmd() *cobra.Command {
 		Short:  "Run the stdio MCP server (spawned by Claude Code; not for interactive use)",
 		Hidden: true, // users interact via connect/register; Claude Code runs this
 		Args:   cobra.NoArgs,
+		// stdout belongs to the JSON-RPC stream; never let cobra print
+		// usage there, and keep error echo on stderr only.
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := openConfigStore()
 			if err != nil {

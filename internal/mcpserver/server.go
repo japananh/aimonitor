@@ -3,7 +3,10 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -198,7 +201,23 @@ func BuildServer(cfg Config, creds *CredStore) (*mcp.Server, []string) {
 
 // Serve runs the stdio MCP server until the client disconnects or ctx is
 // cancelled. This is the entrypoint for `aimonitor mcp serve`.
+//
+// A client disconnect (Claude Code ending the session) surfaces from the
+// SDK as an EOF-flavoured error — that is the NORMAL end of an MCP
+// process's life, not a failure, so it maps to nil. Anything written to
+// stdout besides JSON-RPC frames would corrupt the protocol, which is
+// also why the caller must keep cobra's usage/error printing off.
 func Serve(ctx context.Context, cfg Config, creds *CredStore) error {
 	srv, _ := BuildServer(cfg, creds)
-	return srv.Run(ctx, &mcp.StdioTransport{})
+	err := srv.Run(ctx, &mcp.StdioTransport{})
+	switch {
+	case err == nil,
+		errors.Is(err, io.EOF),
+		errors.Is(err, context.Canceled),
+		// The SDK wraps the disconnect as "server is closing: EOF" without
+		// a matchable sentinel; the suffix check catches it.
+		strings.HasSuffix(err.Error(), "EOF"):
+		return nil
+	}
+	return err
 }
