@@ -398,3 +398,14 @@ func (c *Client) clickupListComments(ctx context.Context, _ *mcp.CallToolRequest
 	}
 	return textResult(map[string]any{"comments": comments})
 }
+
+type cuDeleteCommentIn struct {
+	CommentID string `json:"comment_id" jsonschema:"comment ID (from clickup_list_comments or clickup_add_comment)"`
+}
+
+func (c *Client) clickupDeleteComment(ctx context.Context, _ *mcp.CallToolRequest, in cuDeleteCommentIn) (*mcp.CallToolResult, any, error) {
+	if err := c.clickup(ctx, http.MethodDelete, "/comment/"+url.PathEscape(in.CommentID), nil, nil, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"comment_id": in.CommentID, "status": "deleted"})
+}
