@@ -144,3 +144,49 @@ enum CLIBridge {
         try run(["update", "install"])
     }
 }
+
+// MARK: - MCP (Slack + ClickUp integrations)
+
+/// One integration's connection + config state, from `mcp status --json`.
+struct MCPServiceStatus: Decodable, Identifiable {
+    let service: String
+    let connected: Bool
+    let identity: String?
+    let error: String?
+    let enabled: Bool
+    let read_only: Bool
+    var id: String { service }
+}
+
+struct MCPStatus: Decodable {
+    let services: [MCPServiceStatus]
+    let tools: [String]
+}
+
+extension CLIBridge {
+    /// Connection state + exposed tool list. Slow-ish (verifies each token
+    /// against the live API) — call off the main thread.
+    static func mcpStatus() throws -> MCPStatus {
+        let out = try run(["mcp", "status", "--json"])
+        guard let data = out.data(using: .utf8) else {
+            throw CLIBridgeError.exitNonZero(1, "empty mcp status output")
+        }
+        return try JSONDecoder().decode(MCPStatus.self, from: data)
+    }
+
+    /// Connect via claude-bar migration. Throws when no migratable token
+    /// exists (the CLI's stdin-paste fallback hits EOF) — the UI then asks
+    /// for a pasted token and retries with mcpConnect(service:token:).
+    static func mcpConnect(service: String) throws -> String {
+        try run(["mcp", "connect", service])
+    }
+
+    /// Connect with an explicitly pasted token (verified before storing).
+    static func mcpConnect(service: String, token: String) throws -> String {
+        try run(["mcp", "connect", service, "--token", token])
+    }
+
+    static func mcpDisconnect(service: String) throws {
+        try run(["mcp", "disconnect", service])
+    }
+}
