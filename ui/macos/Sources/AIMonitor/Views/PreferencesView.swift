@@ -23,6 +23,13 @@ struct PreferencesView: View {
     @State private var threshold7d = 80
     @State private var autoUpdateOn = true
     @State private var versionText = "—"
+    // Integrations (MCP) state, loaded via `mcp status --json`.
+    @State private var mcpServices: [MCPServiceStatus] = []
+    @State private var mcpToolCount = 0
+    @State private var mcpBusy: String? = nil // service with an op in flight
+    @State private var mcpError: [String: String] = [:]
+    @State private var mcpTokenPrompt: String? = nil // service awaiting a pasted token
+    @State private var mcpTokenInput = ""
     // Appearance preference, persisted in UserDefaults; applied via NSApp.
     @AppStorage(appThemeKey) private var appTheme = defaultAppTheme
     // Dock-icon preference, persisted in UserDefaults; applied live.
@@ -72,6 +79,18 @@ struct PreferencesView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+            Section("Integrations") {
+                if mcpServices.isEmpty {
+                    Text("Loading…").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ForEach(mcpServices) { svc in
+                        integrationRow(svc)
+                    }
+                    Text("Slack and ClickUp tools for Claude Code. Changes apply to new Claude sessions. \(mcpToolCount) tools exposed.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Section("Startup") {
                 Toggle("Launch AIMonitor at login", isOn: $autostartOn)
                     .onChange(of: autostartOn) { _, newValue in
@@ -115,7 +134,7 @@ struct PreferencesView: View {
         // No extra outer padding: the grouped form style already insets its
         // sections; doubling it wrapped everything in a thick margin (the
         // main popover gets by with 12px).
-        .frame(width: 420, height: 560)
+        .frame(width: 440, height: 700)
         .onAppear(perform: loadState)
     }
 
@@ -145,12 +164,145 @@ struct PreferencesView: View {
                 threshold7d = thr7
                 versionText = ver
             }
+            reloadMCP()
         }
     }
 
     private func setSetting(_ key: String, _ on: Bool) {
         DispatchQueue.global(qos: .utility).async {
             try? CLIBridge.configSet(key, on ? "true" : "false")
+        }
+    }
+
+    // integrationRow renders one service: status line, Connect/Disconnect,
+    // Enabled + Read-only toggles, inline token paste when migration fails.
+    @ViewBuilder
+    private func integrationRow(_ svc: MCPServiceStatus) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(svc.service == "slack" ? "Slack" : "ClickUp").bold()
+                Spacer()
+                if svc.connected {
+                    Button("Disconnect") { mcpDisconnect(svc.service) }
+                        .controlSize(.small)
+                        .disabled(mcpBusy != nil)
+                        .pointerCursor()
+                } else {
+                    Button(mcpBusy == svc.service ? "Connecting…" : "Connect…") { mcpConnect(svc.service) }
+                        .controlSize(.small)
+                        .disabled(mcpBusy != nil)
+                        .pointerCursor()
+                }
+            }
+            if svc.connected, let ident = svc.identity {
+                Text("Connected as \(ident)")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            } else if svc.connected {
+                Text("Connected")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            } else {
+                Text("Not connected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let err = mcpError[svc.service] {
+                Text(err).font(.caption2).foregroundStyle(.red).textSelection(.enabled)
+            }
+            if mcpTokenPrompt == svc.service {
+                HStack(spacing: 6) {
+                    SecureField(svc.service == "slack" ? "xoxp-… user token" : "pk_… personal token", text: $mcpTokenInput)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Verify & Save") { mcpConnectWithToken(svc.service) }
+                        .controlSize(.small)
+                        .disabled(mcpTokenInput.trimmingCharacters(in: .whitespaces).isEmpty || mcpBusy != nil)
+                        .pointerCursor()
+                }
+            }
+            if svc.connected {
+                HStack(spacing: 16) {
+                    Toggle("Enabled", isOn: mcpBinding(svc, keyPath: \.enabled, settingSuffix: "enabled"))
+                        .pointerCursor()
+                        .help("Off hides every \(svc.service) tool from Claude")
+                    Toggle("Read-only", isOn: mcpBinding(svc, keyPath: \.read_only, settingSuffix: "read_only"))
+                        .pointerCursor()
+                        .help("On hides write tools (post/create/update/comment) from Claude entirely")
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    // mcpBinding maps a service flag to its mcp.<svc>.<suffix> setting and
+    // refreshes the local snapshot after writing.
+    private func mcpBinding(_ svc: MCPServiceStatus, keyPath: KeyPath<MCPServiceStatus, Bool>, settingSuffix: String) -> Binding<Bool> {
+        Binding(
+            get: { svc[keyPath: keyPath] },
+            set: { newValue in
+                let key = "mcp.\(svc.service).\(settingSuffix)"
+                DispatchQueue.global(qos: .userInitiated).async {
+                    try? CLIBridge.configSet(key, newValue ? "true" : "false")
+                    reloadMCP()
+                }
+            }
+        )
+    }
+
+    private func reloadMCP() {
+        if let st = try? CLIBridge.mcpStatus() {
+            DispatchQueue.main.async {
+                mcpServices = st.services
+                mcpToolCount = st.tools.count
+            }
+        }
+    }
+
+    private func mcpConnect(_ service: String) {
+        mcpBusy = service
+        mcpError[service] = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { DispatchQueue.main.async { mcpBusy = nil } }
+            do {
+                _ = try CLIBridge.mcpConnect(service: service)
+                reloadMCP()
+            } catch {
+                // No migratable claude-bar token → ask for a pasted one.
+                DispatchQueue.main.async {
+                    mcpTokenPrompt = service
+                    mcpTokenInput = ""
+                    mcpError[service] = "No claude-bar token to migrate — paste a token below."
+                }
+            }
+        }
+    }
+
+    private func mcpConnectWithToken(_ service: String) {
+        let token = mcpTokenInput.trimmingCharacters(in: .whitespaces)
+        mcpBusy = service
+        mcpError[service] = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { DispatchQueue.main.async { mcpBusy = nil } }
+            do {
+                _ = try CLIBridge.mcpConnect(service: service, token: token)
+                DispatchQueue.main.async {
+                    mcpTokenPrompt = nil
+                    mcpTokenInput = ""
+                }
+                reloadMCP()
+            } catch {
+                DispatchQueue.main.async { mcpError[service] = "\(error)" }
+            }
+        }
+    }
+
+    private func mcpDisconnect(_ service: String) {
+        mcpBusy = service
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { DispatchQueue.main.async { mcpBusy = nil } }
+            try? CLIBridge.mcpDisconnect(service: service)
+            reloadMCP()
         }
     }
 

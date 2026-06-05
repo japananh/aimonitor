@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -70,7 +71,8 @@ func newMCPServeCmd() *cobra.Command {
 }
 
 func newMCPConnectCmd() *cobra.Command {
-	return &cobra.Command{
+	var tokenFlag string
+	cmd := &cobra.Command{
 		Use:   "connect <slack|clickup>",
 		Short: "Connect an integration (migrates claude-bar's token, or paste one)",
 		Args:  cobra.ExactArgs(1),
@@ -85,6 +87,19 @@ func newMCPConnectCmd() *cobra.Command {
 				return err
 			}
 			verify := mcpserver.Verifier(svc)
+
+			// Non-interactive path (the widget passes the token directly).
+			if tokenFlag != "" {
+				ident, err := verify(ctx, strings.TrimSpace(tokenFlag))
+				if err != nil {
+					return fmt.Errorf("token verification failed: %w", err)
+				}
+				if err := creds.Store(svc, tokenFlag); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Connected %s — verified as %s.\n", svc, ident)
+				return nil
+			}
 
 			// 1) Try migrating claude-bar's entry (read-only; theirs stays).
 			ident, err := creds.MigrateFromClaudeBar(ctx, svc, verify)
@@ -122,6 +137,8 @@ func newMCPConnectCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tokenFlag, "token", "", "connect with this token (skips migration and the stdin prompt)")
+	return cmd
 }
 
 func newMCPDisconnectCmd() *cobra.Command {
@@ -148,7 +165,8 @@ func newMCPDisconnectCmd() *cobra.Command {
 }
 
 func newMCPStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show integration connection state and which tools are exposed",
 		Args:  cobra.NoArgs,
@@ -166,6 +184,40 @@ func newMCPStatusCmd() *cobra.Command {
 			creds, err := mcpserver.NewCredStore()
 			if err != nil {
 				return err
+			}
+			if asJSON {
+				type svcStatus struct {
+					Service   string `json:"service"`
+					Connected bool   `json:"connected"`
+					Identity  string `json:"identity,omitempty"`
+					Error     string `json:"error,omitempty"`
+					Enabled   bool   `json:"enabled"`
+					ReadOnly  bool   `json:"read_only"`
+				}
+				out := struct {
+					Services []svcStatus `json:"services"`
+					Tools    []string    `json:"tools"`
+				}{}
+				for _, svc := range mcpserver.Services {
+					st := svcStatus{Service: string(svc), Enabled: cfg.Enabled[svc], ReadOnly: cfg.ReadOnly[svc]}
+					tok, terr := creds.Token(svc)
+					switch {
+					case terr != nil:
+						st.Error = terr.Error()
+					case tok != "":
+						st.Connected = true
+						if ident, verr := mcpserver.Verifier(svc)(ctx, tok); verr == nil {
+							st.Identity = ident
+						} else {
+							st.Error = verr.Error()
+						}
+					}
+					out.Services = append(out.Services, st)
+				}
+				_, out.Tools = mcpserver.BuildServer(cfg, creds)
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(out)
 			}
 			for _, svc := range mcpserver.Services {
 				tok, terr := creds.Token(svc)
@@ -204,6 +256,8 @@ func newMCPStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
+	return cmd
 }
 
 func newMCPRegisterCmd() *cobra.Command {
