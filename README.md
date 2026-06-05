@@ -17,6 +17,7 @@
 - 🔍 **Live 5-hour and 7-day usage bars, per account** in your menu bar — server-side truth, polled from Anthropic's `/api/oauth/usage` introspection endpoint. No tokens consumed.
 - 🔀 **Silent account switching** — `aimonitor switch <label>` refreshes the OAuth access token via Anthropic's token endpoint and writes the live credential. No terminal hop, no `claude /login`.
 - 🤖 **Auto-swap on either limit** — triggers when the active account crosses the 5-hour *or* the 7-day threshold (each configurable, default 80 %). Picks the account with the most remaining headroom, and escapes a weekly-capped account even when the alternatives are only 5-hour-hot (5-hour windows recover in hours; weekly caps last days). Running `claude` sessions are never interrupted — they pick up the new credential automatically.
+- 🔌 **MCP server for Claude Code** — 28 Slack + ClickUp tools over stdio: post to channels/threads (mrkdwn + code blocks), upload files, search; ClickUp tasks, comments, and Docs (read & write). Per-service read-only mode.
 - 🤝 **Plays well with other tools.** Resolves the active account by identity, so it follows along when Claude Code or another switcher changes the live login — and tells you when that happens, or offers to import an account it doesn't yet manage.
 - 🔐 **OS-keyring credential storage** (macOS Keychain via `/usr/bin/security`, Linux libsecret). SQLite holds references; tokens never leave the keyring.
 - ⬆️ **Built-in self-update** — checks GitHub for new releases and updates via Homebrew on confirmation. No unattended installs.
@@ -75,7 +76,7 @@ aimonitor list
 aimonitor doctor
 ```
 
-Already using another switcher (e.g. claude-bar)? Import its accounts in one step instead of adding them by hand:
+Already using another account switcher? Import its accounts in one step instead of adding them by hand:
 
 ```sh
 aimonitor import
@@ -103,6 +104,9 @@ aimonitor config set autostart true                  # daemon at login
 | `auto_swap.grace_sec` | `60` | Seconds between the "auto-swap pending" notification and the actual swap, so you can wrap up a live `claude` session. `0` swaps immediately. |
 | `auto_update.enabled` | `true` | Check GitHub for new releases on launch and notify you. Updates are never installed without confirmation. |
 | `autostart` | `false` | Start the daemon at login |
+| `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | Expose that service's MCP tools to Claude Code |
+| `mcp.slack.read_only` / `mcp.clickup.read_only` | `false` | Hide the service's write tools from the tool list entirely |
+| `mcp.disabled_tools` | (empty) | Comma-separated tool names to hide individually |
 | `autoswitch` | `false` | (Legacy) tripwire-driven JSONL accumulator, superseded by the `auto_swap.*` keys. Setting it is rejected. |
 
 </details>
@@ -139,6 +143,21 @@ When the active account crosses its 5-hour **or** 7-day threshold, aimonitor fin
 
 See [`docs/architecture.md`](docs/architecture.md) for the full daemon / store / widget breakdown.
 
+## MCP server (Slack + ClickUp tools for Claude Code)
+
+aimonitor doubles as an MCP server: one stdio process serving 28 Slack and ClickUp tools to Claude Code — no extra runtimes, no background services.
+
+```sh
+aimonitor mcp connect slack     # verify + store a Slack user token (xoxp-…)
+aimonitor mcp connect clickup   # verify + store a ClickUp personal token (pk_…)
+aimonitor mcp register          # add the server to Claude Code
+```
+
+- **Slack:** post to channels and threads (mrkdwn, code blocks), upload files, search, history, thread replies, channels/users, permalinks.
+- **ClickUp:** workspace hierarchy, tasks (list/search/get/create/update), comments (add/list/delete), Docs (list/read/create/edit pages).
+- **Safety:** Claude Code's own per-tool permission prompts are the approval layer. Per-service **Enabled** / **Read-only** switches (read-only removes write tools from the tool list entirely) plus a per-tool disable list — in Preferences or via `aimonitor config`.
+- Tokens are verified against the live APIs before being stored in the OS keyring; they never touch SQLite or logs.
+
 ## Privacy & security
 
 - **No telemetry. No phone-home.** Anywhere.
@@ -151,14 +170,6 @@ See [`docs/architecture.md`](docs/architecture.md) for the full daemon / store /
 - The legacy `aimonitor probe` CLI subcommand fires a real `/v1/messages` request and is deprecated. The daemon no longer uses it.
 
 See [`docs/security.md`](docs/security.md) for the full threat model.
-
-## Roadmap
-
-Directional, not committed.
-
-- **v1.1:** daily usage chart, cost estimation per account, notarized macOS app.
-- **v1.2 (contingent on v1.1 notarization):** submit to `homebrew/cask` so `brew install aimonitor` works without tapping a third-party repo.
-- **v2.0:** Ubuntu GTK menu bar widget, second `Provider` implementation (Codex or Copilot CLI).
 
 ## Uninstall
 
@@ -199,11 +210,7 @@ On macOS the menu bar widget needs the Swift toolchain (`xcode-select --install`
 | Architecture (daemon, store, widget) | [`docs/architecture.md`](docs/architecture.md) |
 | Threat model + scrubbing rules | [`docs/security.md`](docs/security.md) |
 | Why the macOS `.app` is not yet notarized | [`docs/unsigned-app.md`](docs/unsigned-app.md) |
-| User stories shipped in v1 | [`USER_STORIES.md`](USER_STORIES.md) |
-
-## See also
-
-- [ncthanhngo/claude-bar](https://github.com/ncthanhngo/claude-bar) — sibling macOS menu-bar app and the source of patterns aimonitor learned from (keychain shell-out, OAuth refresh flow, account registry).
+| Auto-switch algorithm + thresholds | [`docs/thresholds.md`](docs/thresholds.md) |
 
 ## License
 
