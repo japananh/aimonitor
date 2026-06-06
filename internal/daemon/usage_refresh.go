@@ -129,7 +129,7 @@ func ensureFreshStash(ctx context.Context, refresher *claude.TokenRefresher, acc
 	}
 	if err := claude.StashCredential(ctx, acct.KeyringRef, rebuilt); err != nil {
 		// Non-fatal: we still hold the fresh cred to fetch with this round.
-		fmt.Fprintf(os.Stderr, "usage: persist refreshed stash for %q: %v\n", acct.Label, err)
+		fmt.Fprintf(logW, "usage: persist refreshed stash for %q: %v\n", acct.Label, err)
 	}
 	return rebuilt, nil
 }

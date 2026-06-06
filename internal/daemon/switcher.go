@@ -48,7 +48,7 @@ type Switcher struct {
 
 	// Stderr receives operational messages (e.g. "refreshing X's
 	// token...", "warning: post-swap hook failed"). Nil sends them to
-	// os.Stderr.
+	// the daemon log writer.
 	Stderr io.Writer
 }
 
@@ -435,5 +435,5 @@ func (s *Switcher) stderr() io.Writer {
 	if s.Stderr != nil {
 		return s.Stderr
 	}
-	return os.Stderr
+	return logW
 }

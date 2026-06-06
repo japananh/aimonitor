@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"os"
 	"time"
 
 	"github.com/japananh/aimonitor/internal/provider"
@@ -174,29 +173,37 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 				// never looks like abuse.
 				currentBackoff = u.MaxBackoff
 				next = u.MaxBackoff
-				fmt.Fprintf(os.Stderr, "usage: token refresh rejected; retrying in %v (re-login with `aimonitor add` if usage stays blank): %v\n", next, err)
+				fmt.Fprintf(logW, "usage: token refresh rejected; retrying in %v (re-login with `aimonitor add` if usage stays blank): %v\n", next, err)
 			case claude.IsAuthError(err):
 				// A 401 that survived a forced token refresh — the account
 				// looks deauthorized server-side. Back off hard and retry
 				// hourly; do not latch.
 				currentBackoff = u.MaxBackoff
 				next = u.MaxBackoff
-				fmt.Fprintf(os.Stderr, "usage: auth rejected after refresh; retrying in %v: %v\n", next, err)
+				fmt.Fprintf(logW, "usage: auth rejected after refresh; retrying in %v: %v\n", next, err)
 			case claude.IsThrottledError(err):
 				// A 429 is often a transient burst limit (e.g. another tool
 				// — or claude-bar — polling the same /api/oauth/usage
-				// endpoint for this account). Escalate gradually like any
-				// other error rather than jumping straight to the 1 h cap,
-				// so a brief throttle costs minutes of staleness, not an
-				// hour of blank usage bars. Sustained 429s still ramp to
-				// the cap.
-				currentBackoff = doubleCapped(currentBackoff, u.MaxBackoff)
-				next = currentBackoff
-				fmt.Fprintf(os.Stderr, "usage: throttled by Anthropic (429), backoff %v: %v\n", next, err)
+				// endpoint for this account). If Anthropic told us exactly
+				// how long to wait via Retry-After, honor it (clamped to our
+				// normal [baseline, cap] so we neither poll faster than the
+				// baseline nor wait past the 1 h cap). Otherwise escalate
+				// gradually with exponential backoff — a brief throttle costs
+				// minutes of staleness, not an hour of blank bars; sustained
+				// 429s still ramp to the cap.
+				if ra, ok := claude.ThrottleRetryAfter(err); ok {
+					next = clampDuration(ra, u.Baseline, u.MaxBackoff)
+					currentBackoff = next
+					fmt.Fprintf(logW, "usage: throttled (429) retry-after=%v → waiting %v\n", ra, next)
+				} else {
+					currentBackoff = doubleCapped(currentBackoff, u.MaxBackoff)
+					next = currentBackoff
+					fmt.Fprintf(logW, "usage: throttled (429) no retry-after → backoff %v\n", next)
+				}
 			case err != nil:
 				currentBackoff = doubleCapped(currentBackoff, u.MaxBackoff)
 				next = currentBackoff
-				fmt.Fprintf(os.Stderr, "usage: error, backoff %v: %v\n", next, err)
+				fmt.Fprintf(logW, "usage: error, backoff %v: %v\n", next, err)
 			default:
 				currentBackoff = u.Baseline
 				// Active fetch succeeded; opportunistically poll ONE inactive
@@ -344,12 +351,12 @@ func (u *UsageScheduler) fetchOneInactive(ctx context.Context) {
 	}
 	limits, err := u.Fetcher.FetchLimits(ctx, stash)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "usage: inactive %q fetch: %v\n", acct.Label, err)
+		fmt.Fprintf(logW, "usage: inactive %q fetch: %v\n", acct.Label, err)
 		return
 	}
 	limits.AccountID = acct.ID
 	if err := u.Store.PutLimits(ctx, acct.ID, limits); err != nil {
-		fmt.Fprintf(os.Stderr, "usage: inactive %q put limits: %v\n", acct.Label, err)
+		fmt.Fprintf(logW, "usage: inactive %q put limits: %v\n", acct.Label, err)
 	}
 }
 
@@ -429,4 +436,17 @@ func doubleCapped(d, maxDur time.Duration) time.Duration {
 		return maxDur
 	}
 	return doubled
+}
+
+// clampDuration constrains d to [lo, hi]. Used to fit a server-provided
+// Retry-After into our own polling envelope: never poll faster than the
+// baseline, never wait past the backoff cap.
+func clampDuration(d, lo, hi time.Duration) time.Duration {
+	if d < lo {
+		return lo
+	}
+	if d > hi {
+		return hi
+	}
+	return d
 }

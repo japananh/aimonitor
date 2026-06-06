@@ -101,6 +101,60 @@ func TestUsageFetcher_Throttled(t *testing.T) {
 	if !IsThrottledError(err) {
 		t.Errorf("err = %v, want UsageThrottledError", err)
 	}
+	// No Retry-After header on this response → no usable hint.
+	if d, ok := ThrottleRetryAfter(err); ok {
+		t.Errorf("ThrottleRetryAfter = (%v, true), want (0, false) when header absent", d)
+	}
+}
+
+func TestUsageFetcher_ThrottledRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		http.Error(w, "slow down", http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	f := &UsageFetcher{BaseURL: srv.URL, HTTP: srv.Client()}
+	_, err := f.FetchLimits(context.Background(), provider.Credential{Bytes: []byte(goodToken)})
+	if !IsThrottledError(err) {
+		t.Fatalf("err = %v, want UsageThrottledError", err)
+	}
+	d, ok := ThrottleRetryAfter(err)
+	if !ok || d != 120*time.Second {
+		t.Errorf("ThrottleRetryAfter = (%v, %v), want (2m0s, true)", d, ok)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want time.Duration
+	}{
+		{"empty", "", 0},
+		{"seconds", "120", 120 * time.Second},
+		{"zero", "0", 0},
+		{"negative", "-5", 0},
+		{"garbage", "soon", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := parseRetryAfter(c.in); got != c.want {
+				t.Errorf("parseRetryAfter(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+	// HTTP-date form: a time ~1 minute out should yield a positive,
+	// roughly-correct wait. Allow slack for clock + parse latency.
+	future := time.Now().Add(60 * time.Second).UTC().Format(http.TimeFormat)
+	if got := parseRetryAfter(future); got <= 0 || got > 61*time.Second {
+		t.Errorf("parseRetryAfter(date %q) = %v, want ~60s", future, got)
+	}
+	// A date in the past is not a usable wait.
+	past := time.Now().Add(-60 * time.Second).UTC().Format(http.TimeFormat)
+	if got := parseRetryAfter(past); got != 0 {
+		t.Errorf("parseRetryAfter(past %q) = %v, want 0", past, got)
+	}
 }
 
 func TestUsageFetcher_ContextCanceled(t *testing.T) {

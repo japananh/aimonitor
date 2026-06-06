@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/japananh/aimonitor/internal/provider"
@@ -107,7 +108,15 @@ func (f *UsageFetcher) FetchLimits(ctx context.Context, cred provider.Credential
 		return provider.Limits{}, &UsageAuthError{Status: resp.StatusCode}
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return provider.Limits{}, &UsageThrottledError{Status: resp.StatusCode}
+		// Anthropic documents a Retry-After header on 429 for the Messages
+		// API; the OAuth introspection endpoint is undocumented, so it may
+		// or may not send one. Parse it when present so the scheduler can
+		// wait exactly as long as the server asks instead of guessing with
+		// exponential backoff. RetryAfter == 0 means "no usable header".
+		return provider.Limits{}, &UsageThrottledError{
+			Status:     resp.StatusCode,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 	}
 	if resp.StatusCode >= 400 {
 		return provider.Limits{}, fmt.Errorf("usage: HTTP %d", resp.StatusCode)
@@ -159,14 +168,61 @@ func IsAuthError(err error) bool {
 
 // UsageThrottledError signals that Anthropic rate-limited the
 // introspection endpoint itself. Caller should back off aggressively.
-type UsageThrottledError struct{ Status int }
+// RetryAfter carries the server's Retry-After hint when the response
+// included a parseable one; it is zero when the header was absent or
+// unparseable, in which case the caller falls back to its own backoff.
+type UsageThrottledError struct {
+	Status     int
+	RetryAfter time.Duration
+}
 
 func (e *UsageThrottledError) Error() string {
-	return fmt.Sprintf("usage: %d throttled by Anthropic", e.Status)
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("usage: %d throttled by Anthropic (retry-after %s)", e.Status, e.RetryAfter)
+	}
+	return fmt.Sprintf("usage: %d throttled by Anthropic (no retry-after)", e.Status)
+}
+
+// parseRetryAfter interprets an HTTP Retry-After header, which RFC 7231
+// allows in two forms: delay-seconds (an integer) or an HTTP-date. Returns
+// 0 for an empty, negative, or unparseable value so the caller can tell
+// "no usable hint" from a real duration.
+func parseRetryAfter(h string) time.Duration {
+	if h == "" {
+		return 0
+	}
+	// Form 1: delay in whole seconds.
+	if secs, err := strconv.Atoi(h); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	// Form 2: an absolute HTTP-date; the wait is until then.
+	if t, err := http.ParseTime(h); err == nil {
+		d := time.Until(t)
+		if d <= 0 {
+			return 0
+		}
+		return d
+	}
+	return 0
 }
 
 // IsThrottledError reports whether err is a UsageThrottledError.
 func IsThrottledError(err error) bool {
 	var te *UsageThrottledError
 	return errors.As(err, &te)
+}
+
+// ThrottleRetryAfter returns the server-provided Retry-After hint carried
+// by a throttle error, and true when one was present. Returns (0, false)
+// when err is not a throttle error or the 429 carried no usable header —
+// the caller then falls back to its own backoff schedule.
+func ThrottleRetryAfter(err error) (time.Duration, bool) {
+	var te *UsageThrottledError
+	if errors.As(err, &te) && te.RetryAfter > 0 {
+		return te.RetryAfter, true
+	}
+	return 0, false
 }

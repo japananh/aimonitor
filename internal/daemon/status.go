@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/japananh/aimonitor/internal/claudeconfig"
@@ -184,7 +183,7 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 		} else if !errors.Is(err, store.ErrLimitsNotFound) {
 			// Real I/O error (not just "no row yet"): surface
 			// to stderr but keep publishing without limits.
-			fmt.Fprintf(os.Stderr, "status: read limits for %q: %v\n", label, err)
+			fmt.Fprintf(logW, "status: read limits for %q: %v\n", label, err)
 		}
 	}
 	b, err := json.Marshal(st)
