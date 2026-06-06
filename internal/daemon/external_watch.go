@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 	"time"
 
@@ -45,7 +44,7 @@ type ExternalSwitchWatcher struct {
 	// osascript. Injectable for tests.
 	Notify func(title, body string)
 
-	// Stderr receives operational lines. Nil → os.Stderr.
+	// Stderr receives operational lines. Nil → the daemon log writer.
 	Stderr io.Writer
 
 	// Now is the clock, injectable for tests. Nil → time.Now.
@@ -174,7 +173,7 @@ func (w *ExternalSwitchWatcher) stderr() io.Writer {
 	if w.Stderr != nil {
 		return w.Stderr
 	}
-	return os.Stderr
+	return logW
 }
 
 func (w *ExternalSwitchWatcher) now() time.Time {

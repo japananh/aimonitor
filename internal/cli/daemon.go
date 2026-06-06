@@ -56,6 +56,13 @@ func newDaemonCmd() *cobra.Command {
 // until SIGINT/SIGTERM. The CLI command stays thin; orchestration lives
 // in the daemon package.
 func runDaemon(cmd *cobra.Command) error {
+	// Route the daemon's operational log through a size-capped, rotating
+	// writer (macOS) so it can't grow the disk without bound. No-op on
+	// Linux, where systemd/journald owns log rotation.
+	if w := daemonLogWriter(); w != nil {
+		daemon.SetLogWriter(w)
+	}
+
 	cfg, err := config.Load("")
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)

@@ -92,7 +92,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Store:    s.store,
 		OnSample: auto.OnSample,
 		OnError: func(err error) {
-			fmt.Fprintf(os.Stderr, "watcher: %v\n", err)
+			fmt.Fprintf(logW, "watcher: %v\n", err)
 		},
 	})
 	if err != nil {
@@ -152,7 +152,7 @@ func (s *Server) Run(ctx context.Context) error {
 			},
 			AfterFetch: func(ctx context.Context, label string) {
 				if _, err := autoSwap.MaybeSwap(ctx, label); err != nil {
-					fmt.Fprintf(os.Stderr, "auto-swap: %v\n", err)
+					fmt.Fprintf(logW, "auto-swap: %v\n", err)
 				}
 			},
 		}

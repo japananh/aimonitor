@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -95,7 +94,7 @@ type AutoSwapper struct {
 	Provider provider.Provider
 	Switcher accountSwitcher
 
-	// Stderr surfaces operational messages. Nil → os.Stderr.
+	// Stderr surfaces operational messages. Nil → the daemon log writer.
 	Stderr io.Writer
 
 	// Now is the clock, injectable for tests. Nil → time.Now.
@@ -499,7 +498,7 @@ func (a *AutoSwapper) stderr() io.Writer {
 	if a.Stderr != nil {
 		return a.Stderr
 	}
-	return os.Stderr
+	return logW
 }
 
 // notifyMacOS posts a Notification Center banner via osascript. Best
