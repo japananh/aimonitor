@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,7 +139,7 @@ func (s *Switcher) Switch(ctx context.Context, label string) error {
 	}
 
 	if err := s.Store.UpdateAccountLastUsed(ctx, acct.ID, time.Now()); err != nil {
-		fmt.Fprintf(s.stderr(), "warning: switch ok but UpdateLastUsed failed: %v\n", err)
+		s.log().Warn("switch ok but UpdateLastUsed failed", "err", err)
 	}
 
 	// Deliberately no post-swap action on running `claude` processes.
@@ -169,7 +170,7 @@ func (s *Switcher) Switch(ctx context.Context, label string) error {
 func (s *Switcher) snapshotOutgoing(ctx context.Context, outgoing store.Account, prevLive provider.Credential) {
 	if len(prevLive.Bytes) > 0 {
 		if err := claude.StashCredential(ctx, outgoing.KeyringRef, prevLive); err != nil {
-			fmt.Fprintf(s.stderr(), "warning: snapshot outgoing %q credential: %v\n", outgoing.Label, err)
+			s.log().Warn("snapshot outgoing credential failed", "account", outgoing.Label, "err", err)
 		}
 	}
 	if outgoing.Email == "" && s.ClaudeConfig != nil {
@@ -188,7 +189,7 @@ func (s *Switcher) patchClaudeConfig(ctx context.Context, acct store.Account) er
 		return nil
 	}
 	if acct.Email == "" {
-		fmt.Fprintf(s.stderr(), "note: %q has no stored identity yet; skipping ~/.claude.json update (re-run `aimonitor add %s` to capture it)\n", acct.Label, acct.Label)
+		s.log().Info("skipping ~/.claude.json update — no stored identity yet (re-run `aimonitor add` to capture it)", "account", acct.Label)
 		return nil
 	}
 	return s.ClaudeConfig.WriteOAuthAccount(ctx, claudeconfig.OAuthAccount{
@@ -257,7 +258,7 @@ func (s *Switcher) RefreshActive(ctx context.Context, acct store.Account, force 
 		return provider.Credential{}, fmt.Errorf("active account %q has no refresh token in the live slot; re-login via `aimonitor add`", acct.Label)
 	}
 
-	fmt.Fprintf(s.stderr(), "usage: refreshing %q's access token...\n", acct.Label)
+	s.log().Info("refreshing access token", "account", acct.Label)
 	fresh, rerr := s.Refresher.Refresh(ctx, tokens.RefreshToken)
 	if rerr != nil {
 		// Another tool may have rotated the refresh token between our read
@@ -294,7 +295,7 @@ func (s *Switcher) RefreshActive(ctx context.Context, acct store.Account, force 
 	// identity-based resolution recovers; a corrupted stash does not.
 	if acct.KeyringRef != "" {
 		if !s.liveIdentityMatches(ctx, acct) {
-			fmt.Fprintf(s.stderr(), "warning: live login (~/.claude.json) is not %q; refreshed live slot but skipping stash mirror to avoid cross-account corruption\n", acct.Label)
+			s.log().Warn("live login mismatch; refreshed live slot but skipping stash mirror to avoid cross-account corruption", "account", acct.Label)
 		} else if err := claude.StashCredential(ctx, acct.KeyringRef, rebuilt); err != nil {
 			rebuilt.Zero()
 			return provider.Credential{}, fmt.Errorf("mirror refreshed tokens to %q stash: %w", acct.Label, err)
@@ -332,11 +333,11 @@ func (s *Switcher) healStash(ctx context.Context, acct store.Account, live provi
 		}
 	}
 	if !s.liveIdentityMatches(ctx, acct) {
-		fmt.Fprintf(s.stderr(), "warning: live login (~/.claude.json) is not %q; skipping stash heal to avoid cross-account corruption\n", acct.Label)
+		s.log().Warn("live login mismatch; skipping stash heal to avoid cross-account corruption", "account", acct.Label)
 		return
 	}
 	if err := claude.StashCredential(ctx, acct.KeyringRef, live); err != nil {
-		fmt.Fprintf(s.stderr(), "warning: re-sync %q stash to live blob: %v\n", acct.Label, err)
+		s.log().Warn("re-sync stash to live blob failed", "account", acct.Label, "err", err)
 	}
 }
 
@@ -374,7 +375,7 @@ func (s *Switcher) ensureFreshTokens(ctx context.Context, acct store.Account, st
 		return provider.Credential{}, fmt.Errorf("account %q has no refresh token in its stash; re-add the account with `aimonitor add`", acct.Label)
 	}
 
-	fmt.Fprintf(s.stderr(), "refreshing %q's access token...\n", acct.Label)
+	s.log().Info("refreshing access token", "account", acct.Label)
 	fresh, err := s.Refresher.Refresh(ctx, tokens.RefreshToken)
 	if err != nil {
 		if claude.IsRefreshExpired(err) {
@@ -388,7 +389,7 @@ func (s *Switcher) ensureFreshTokens(ctx context.Context, acct store.Account, st
 		return provider.Credential{}, fmt.Errorf("rebuild credential for %q: %w", acct.Label, err)
 	}
 	if err := claude.StashCredential(ctx, acct.KeyringRef, rebuilt); err != nil {
-		fmt.Fprintf(s.stderr(), "warning: persist rotated tokens for %q failed: %v\n", acct.Label, err)
+		s.log().Warn("persist rotated tokens failed", "account", acct.Label, "err", err)
 	}
 	return rebuilt, nil
 }
@@ -431,9 +432,6 @@ func (s *Switcher) acquireLock() (*filelock.FileLock, error) {
 	return filelock.Acquire(path)
 }
 
-func (s *Switcher) stderr() io.Writer {
-	if s.Stderr != nil {
-		return s.Stderr
-	}
-	return logW
+func (s *Switcher) log() *slog.Logger {
+	return loggerOver(s.Stderr)
 }

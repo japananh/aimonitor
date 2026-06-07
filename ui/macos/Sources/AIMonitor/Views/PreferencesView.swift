@@ -7,6 +7,7 @@
 
 import SwiftUI
 import ServiceManagement
+import AppKit
 
 struct PreferencesView: View {
     @ObservedObject var model: AppModel
@@ -115,6 +116,8 @@ struct PreferencesView: View {
                 Link("View on GitHub", destination: repoURL)
                     .pointerCursor()
                     .help("Open the AIMonitor repository in your browser")
+                AppTextButton("Show Logs in Finder", action: revealLogs)
+                    .help("Open the daemon log folder (~/Library/Logs/aimonitor) in Finder — handy when filing a bug report")
             }
         }
         .formStyle(.grouped)
@@ -176,6 +179,28 @@ struct PreferencesView: View {
         DispatchQueue.global(qos: .utility).async {
             try? CLIBridge.configSet(key, on ? "true" : "false")
         }
+    }
+
+    // revealLogs opens Finder at the daemon log folder
+    // (~/Library/Logs/aimonitor), selecting the main err.log when it
+    // exists so the user lands right on the file to attach to a bug
+    // report. Falls back to the folder, then the Logs root, so the button
+    // always opens *somewhere* sensible even before the daemon has logged.
+    private func revealLogs() {
+        let fm = FileManager.default
+        guard let lib = fm.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
+        let logsRoot = lib.appendingPathComponent("Logs")
+        let dir = logsRoot.appendingPathComponent("aimonitor")
+        let daemonLog = dir.appendingPathComponent("aimonitor.daemon.log")
+        let target: URL
+        if fm.fileExists(atPath: daemonLog.path) {
+            target = daemonLog
+        } else if fm.fileExists(atPath: dir.path) {
+            target = dir
+        } else {
+            target = logsRoot
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([target])
     }
 
     // integrationRow renders one service: status line, Connect/Disconnect,

@@ -42,10 +42,13 @@ const (
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <!-- Both streams go to one unified log file. The daemon logs all
+         levels (INFO/WARN/ERROR) via slog to this same file; these
+         redirects additionally capture raw Go-runtime panics. -->
     <key>StandardOutPath</key>
-    <string>%[3]s/aimonitor.daemon.out.log</string>
+    <string>%[3]s/aimonitor.daemon.log</string>
     <key>StandardErrorPath</key>
-    <string>%[3]s/aimonitor.daemon.err.log</string>
+    <string>%[3]s/aimonitor.daemon.log</string>
 </dict>
 </plist>
 `

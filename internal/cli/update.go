@@ -124,9 +124,14 @@ func updateLogPath() (string, error) {
 // to `brew update`. brew is invoked by absolute path for the same minimal-PATH
 // reason as findBrew.
 func spawnDetachedUpgrade(brew, logPath string) error {
+	// Timestamps use the same ISO-8601 local format as the daemon's slog
+	// lines (2026-06-06T19:25:39+07:00) so update.log reads consistently
+	// with aimonitor.daemon.log. RC is captured before the date call (which
+	// would otherwise reset $?).
 	script := fmt.Sprintf(`
 set +e
-echo "=== aimonitor self-update $(date) ==="
+TS() { date +%%Y-%%m-%%dT%%H:%%M:%%S%%z; }
+echo "=== aimonitor self-update $(TS) ==="
 TAP="$(%[1]q --repository)/Library/Taps/japananh/homebrew-tap"
 if [ -d "$TAP/.git" ]; then
   git -C "$TAP" pull --ff-only || %[1]q update
@@ -134,7 +139,8 @@ else
   %[1]q update
 fi
 %[1]q upgrade --cask aimonitor
-echo "=== done (exit $?) ==="
+RC=$?
+echo "=== done $(TS) (exit $RC) ==="
 `, brew)
 
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)

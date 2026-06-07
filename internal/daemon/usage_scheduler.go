@@ -173,14 +173,14 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 				// never looks like abuse.
 				currentBackoff = u.MaxBackoff
 				next = u.MaxBackoff
-				fmt.Fprintf(logW, "usage: token refresh rejected; retrying in %v (re-login with `aimonitor add` if usage stays blank): %v\n", next, err)
+				logger.Warn("token refresh rejected; re-login with `aimonitor add` if usage stays blank", "retry_in", next, "err", err)
 			case claude.IsAuthError(err):
 				// A 401 that survived a forced token refresh — the account
 				// looks deauthorized server-side. Back off hard and retry
 				// hourly; do not latch.
 				currentBackoff = u.MaxBackoff
 				next = u.MaxBackoff
-				fmt.Fprintf(logW, "usage: auth rejected after refresh; retrying in %v: %v\n", next, err)
+				logger.Warn("auth rejected after refresh", "retry_in", next, "err", err)
 			case claude.IsThrottledError(err):
 				// A 429 is often a transient burst limit (e.g. another tool
 				// — or claude-bar — polling the same /api/oauth/usage
@@ -194,16 +194,16 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 				if ra, ok := claude.ThrottleRetryAfter(err); ok {
 					next = clampDuration(ra, u.Baseline, u.MaxBackoff)
 					currentBackoff = next
-					fmt.Fprintf(logW, "usage: throttled (429) retry-after=%v → waiting %v\n", ra, next)
+					logger.Warn("usage throttled", "status", 429, "retry_after", ra, "wait", next)
 				} else {
 					currentBackoff = doubleCapped(currentBackoff, u.MaxBackoff)
 					next = currentBackoff
-					fmt.Fprintf(logW, "usage: throttled (429) no retry-after → backoff %v\n", next)
+					logger.Warn("usage throttled", "status", 429, "retry_after", "none", "wait", next)
 				}
 			case err != nil:
 				currentBackoff = doubleCapped(currentBackoff, u.MaxBackoff)
 				next = currentBackoff
-				fmt.Fprintf(logW, "usage: error, backoff %v: %v\n", next, err)
+				logger.Warn("usage fetch error", "backoff", next, "err", err)
 			default:
 				currentBackoff = u.Baseline
 				// Active fetch succeeded; opportunistically poll ONE inactive
@@ -351,12 +351,12 @@ func (u *UsageScheduler) fetchOneInactive(ctx context.Context) {
 	}
 	limits, err := u.Fetcher.FetchLimits(ctx, stash)
 	if err != nil {
-		fmt.Fprintf(logW, "usage: inactive %q fetch: %v\n", acct.Label, err)
+		logger.Warn("inactive usage fetch failed", "account", acct.Label, "err", err)
 		return
 	}
 	limits.AccountID = acct.ID
 	if err := u.Store.PutLimits(ctx, acct.ID, limits); err != nil {
-		fmt.Fprintf(logW, "usage: inactive %q put limits: %v\n", acct.Label, err)
+		logger.Error("inactive put limits failed", "account", acct.Label, "err", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -142,7 +143,7 @@ func (w *ExternalSwitchWatcher) flagExternal(ctx context.Context, from, to strin
 	now := w.now()
 	w.lastExternal = now
 
-	fmt.Fprintf(w.stderr(), "external-switch: active account changed %q → %q outside aimonitor\n", from, to)
+	w.log().Info("external switch detected", "from", from, "to", to)
 
 	if err := w.Store.InsertSwitchAudit(ctx, store.SwitchAuditRecord{
 		Ts:        now,
@@ -151,7 +152,7 @@ func (w *ExternalSwitchWatcher) flagExternal(ctx context.Context, from, to strin
 		Trigger:   store.TriggerExternal,
 		Reason:    "live credential changed outside aimonitor (another credential manager or `claude /login`)",
 	}); err != nil {
-		fmt.Fprintf(w.stderr(), "external-switch: record audit: %v\n", err)
+		w.log().Warn("external switch record audit failed", "err", err)
 	}
 
 	if now.Sub(w.lastNotified) >= externalNotifyCooldown {
@@ -169,11 +170,8 @@ func (w *ExternalSwitchWatcher) notify(title, body string) {
 	notifyMacOS(title, body)
 }
 
-func (w *ExternalSwitchWatcher) stderr() io.Writer {
-	if w.Stderr != nil {
-		return w.Stderr
-	}
-	return logW
+func (w *ExternalSwitchWatcher) log() *slog.Logger {
+	return loggerOver(w.Stderr)
 }
 
 func (w *ExternalSwitchWatcher) now() time.Time {

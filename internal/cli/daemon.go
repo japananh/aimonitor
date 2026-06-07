@@ -91,11 +91,13 @@ func runDaemon(cmd *cobra.Command) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "aimonitor daemon running; Ctrl-C to stop")
+	// No stdout banner here: the daemon's lifecycle ("daemon started" /
+	// "daemon stopped") is logged through slog by the Server itself, so it
+	// lands — timestamped — in the daemon log rather than as untimestamped
+	// noise in the launchd stdout file.
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "daemon stopped")
 
 	// Compile-time signal that the imports above are used.
 	_ = provider.Provider(nil)

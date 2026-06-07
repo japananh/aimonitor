@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -186,8 +187,8 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 		return false, fmt.Errorf("auto-swap: pick candidate: %w", err)
 	}
 	if !found {
-		fmt.Fprintf(a.stderr(), "auto-swap: no candidate better than active on the %s window — all accounts near limit (active=%q at %.1f%%)\n",
-			binding, activeLabel, activePct)
+		a.log().Info("auto-swap no candidate",
+			"window", binding, "active", activeLabel, "pct", activePct)
 		a.pending = nil
 		a.cooldownUntil = a.now().Add(cooldownAfterExhausted)
 		a.notify(
@@ -207,8 +208,9 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 	// once. Subsequent ticks reuse the same deadline.
 	if a.pending == nil || a.pending.target != cand.Label {
 		a.pending = &pendingSwap{target: cand.Label, deadline: a.now().Add(time.Duration(graceSec) * time.Second)}
-		fmt.Fprintf(a.stderr(), "auto-swap: armed — %q at %.1f%% of its %s limit (>= %.0f%%), will switch to %q in %ds\n",
-			activeLabel, activePct, binding, threshold, cand.Label, graceSec)
+		a.log().Info("auto-swap armed",
+			"account", activeLabel, "pct", activePct, "window", binding,
+			"threshold", threshold, "target", cand.Label, "in_sec", graceSec)
 		a.notify(
 			fmt.Sprintf("Auto-swap in %ds", graceSec),
 			fmt.Sprintf("%q hit %.0f%% of its %s limit. Switching to %q — running sessions will follow automatically.", activeLabel, activePct, binding, cand.Label),
@@ -291,7 +293,7 @@ func (a *AutoSwapper) refreshStaleCandidates(ctx context.Context, activeID int64
 			continue // already fresh enough to trust
 		}
 		if _, err := a.RefreshUsage(ctx, acct); err != nil {
-			fmt.Fprintf(a.stderr(), "auto-swap: refresh candidate %q: %v\n", acct.Label, err)
+			a.log().Warn("auto-swap refresh candidate failed", "account", acct.Label, "err", err)
 		}
 		done++
 		if done >= maxJITRefresh {
@@ -303,8 +305,9 @@ func (a *AutoSwapper) refreshStaleCandidates(ctx context.Context, activeID int64
 // fireSwap performs the switch, records the audit row, arms the
 // post-swap cooldown, and clears the pending state. Caller holds a.mu.
 func (a *AutoSwapper) fireSwap(ctx context.Context, activeLabel string, activePct float64, binding windowKind, cand candidate) (bool, error) {
-	fmt.Fprintf(a.stderr(), "auto-swap: %q at %.1f%% of its %s limit, switching to %q (5h %.1f%%, 7d %.1f%%)\n",
-		activeLabel, activePct, binding, cand.Label, cand.FiveHourPct, cand.SevenDayPct)
+	a.log().Info("auto-swap switching",
+		"account", activeLabel, "pct", activePct, "window", binding,
+		"target", cand.Label, "target_5h", cand.FiveHourPct, "target_7d", cand.SevenDayPct)
 	if err := a.Switcher.Switch(ctx, cand.Label); err != nil {
 		return false, fmt.Errorf("auto-swap: switch to %q: %w", cand.Label, err)
 	}
@@ -494,11 +497,8 @@ func (a *AutoSwapper) notify(title, body string) {
 	notifyMacOS(title, body)
 }
 
-func (a *AutoSwapper) stderr() io.Writer {
-	if a.Stderr != nil {
-		return a.Stderr
-	}
-	return logW
+func (a *AutoSwapper) log() *slog.Logger {
+	return loggerOver(a.Stderr)
 }
 
 // notifyMacOS posts a Notification Center banner via osascript. Best
