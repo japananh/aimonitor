@@ -7,8 +7,9 @@ import (
 	"testing"
 )
 
-// TestSetLogWriter_Format confirms the daemon logger emits logrus-style
-// slog text — time/level/msg/fields — so every line is dated and parseable.
+// TestSetLogWriter_Format confirms the daemon logger emits logrus's
+// TTY/FullTimestamp style — `LEVL[timestamp] message key=val` — so every
+// line is dated and reads the way the team reads logs.
 func TestSetLogWriter_Format(t *testing.T) {
 	var buf bytes.Buffer
 	SetLogWriter(&buf)
@@ -16,10 +17,20 @@ func TestSetLogWriter_Format(t *testing.T) {
 
 	logger.Info("usage throttled", "status", 429, "wait", "5m0s")
 
-	got := buf.String()
-	for _, want := range []string{"time=", "level=INFO", `msg="usage throttled"`, "status=429", "wait=5m0s"} {
+	got := strings.TrimSpace(buf.String())
+	// Leads with INFO[<timestamp>] — the level code then the bracketed time.
+	if !strings.HasPrefix(got, "INFO[") {
+		t.Errorf("log line should start with INFO[…], got %q", got)
+	}
+	for _, want := range []string{"] usage throttled", "status=429", "wait=5m0s"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("log line %q missing %q", strings.TrimSpace(got), want)
+			t.Errorf("log line %q missing %q", got, want)
+		}
+	}
+	// Must NOT carry slog's logfmt scaffolding anymore.
+	for _, absent := range []string{"time=", "level=", "msg="} {
+		if strings.Contains(got, absent) {
+			t.Errorf("log line %q should not contain logfmt %q", got, absent)
 		}
 	}
 }
@@ -49,10 +60,11 @@ func TestLogger_ConcurrentWritesNoInterleave(t *testing.T) {
 	if len(lines) != n {
 		t.Fatalf("got %d lines, want %d (torn/merged writes?)", len(lines), n)
 	}
-	// Every line must be a complete record: starts with time=, carries the
-	// msg, and ends with its own i= field (proving no two writes interleaved).
+	// Every line must be a complete record: starts with the INFO[…] level,
+	// carries the message, and ends with its own i= field (proving no two
+	// writes interleaved).
 	for _, ln := range lines {
-		if !strings.HasPrefix(ln, "time=") || !strings.Contains(ln, `msg=tick`) || !strings.Contains(ln, "i=") {
+		if !strings.HasPrefix(ln, "INFO[") || !strings.Contains(ln, "tick") || !strings.Contains(ln, "i=") {
 			t.Fatalf("malformed/interleaved line: %q", ln)
 		}
 	}
