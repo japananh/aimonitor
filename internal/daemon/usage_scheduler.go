@@ -269,12 +269,16 @@ func (u *UsageScheduler) tickOnce(ctx context.Context) error {
 		limits, err = u.Fetcher.FetchLimits(ctx, cred)
 	}
 	if err != nil {
-		// Park the active account on a 429 so the badge shows it and the
-		// candidate pool excludes it; the Run loop still applies its own
-		// backoff to the schedule.
-		recordThrottle(ctx, u.Store, acct, err)
+		// NB: deliberately do NOT cooldown the ACTIVE account on a 429. Active
+		// is always polled (it's the one in use) and is never a swap candidate,
+		// so a cooldown would have zero functional effect — it would only paint
+		// a misleading "cooling" badge on the account you're coding against. The
+		// Run loop's own backoff already handles the throttle. Cooldown is for
+		// *candidates* (set by the inactive poller + JIT candidate refresh).
 		return err
 	}
+	// Clear any cooldown the account carried as a candidate before it became
+	// active — a successful active fetch proves it's serving requests again.
 	clearThrottle(ctx, u.Store, acct)
 	limits.AccountID = acct.ID
 	if err := u.Store.PutLimits(ctx, acct.ID, limits); err != nil {
