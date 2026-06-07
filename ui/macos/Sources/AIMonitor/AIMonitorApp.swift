@@ -76,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if UserDefaults.standard.bool(forKey: showDockIconKey) {
             applyDockIconPolicy(true)
         }
+        setupMainMenu()
         setupStatusItem()
         setupPanel()
         // Keep the menu-bar title in sync with the active account. status
@@ -142,6 +143,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return event
         }
+    }
+
+    // setupMainMenu installs a minimal main menu with an Edit submenu.
+    // Without it, an LSUIElement/accessory app has no menu defining the
+    // standard ⌘C/⌘X/⌘V/⌘A key equivalents, so those shortcuts never fire
+    // even on selectable text (`.textSelection(.enabled)`). The items use
+    // the standard responder-chain selectors (copy:, cut:, …) with nil
+    // target, so they route to whatever text view is first responder in the
+    // key panel. The menu itself is never shown (accessory app).
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        NSApp.mainMenu = mainMenu
     }
 
     private func setupStatusItem() {
