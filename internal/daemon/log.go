@@ -2,25 +2,35 @@ package daemon
 
 import (
 	"io"
+	"log/slog"
 	"os"
 )
 
-// logW is where the daemon writes its operational log lines (the
-// "usage:", "auto-swap:", "watcher:" messages). It defaults to os.Stderr
-// so foreground runs and tests behave as before; `aimonitor daemon run`
-// under launchd swaps in a size-capped, self-rotating file writer via
-// SetLogWriter so the daemon log can never grow the disk without bound.
+// logger is the daemon's structured logger. It defaults to a text handler
+// on stderr (foreground runs and tests); `aimonitor daemon run` swaps in a
+// file-backed, size-capped handler via SetLogWriter at startup.
 //
-// A package var (not a field threaded through every component) is the
-// lightest indirection that lets one call site at startup redirect every
-// daemon log line at once.
-var logW io.Writer = os.Stderr
+// slog's TextHandler emits logrus-style lines —
+// `time=2026-06-06T18:52:47.550+07:00 level=INFO msg="…" key=val` — with
+// millisecond timestamps, so every line is dated and machine-parseable
+// without us formatting timestamps by hand.
+var logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-// SetLogWriter redirects all subsequent daemon log output. Call once at
-// daemon startup, before Run. Passing nil resets to os.Stderr.
+// SetLogWriter routes all subsequent daemon logs to w. Call once at daemon
+// startup, before Run. Passing nil resets to stderr.
 func SetLogWriter(w io.Writer) {
 	if w == nil {
 		w = os.Stderr
 	}
-	logW = w
+	logger = slog.New(slog.NewTextHandler(w, nil))
+}
+
+// loggerOver returns a logger writing to w, or the package logger when w is
+// nil. Components keep an optional Stderr writer for test injection; this
+// bridges that to slog without each component caching its own handler.
+func loggerOver(w io.Writer) *slog.Logger {
+	if w == nil {
+		return logger
+	}
+	return slog.New(slog.NewTextHandler(w, nil))
 }

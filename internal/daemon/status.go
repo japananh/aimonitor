@@ -182,8 +182,8 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 			st.LimitsFetchedAt = l.FetchedAt
 		} else if !errors.Is(err, store.ErrLimitsNotFound) {
 			// Real I/O error (not just "no row yet"): surface
-			// to stderr but keep publishing without limits.
-			fmt.Fprintf(logW, "status: read limits for %q: %v\n", label, err)
+			// it but keep publishing without limits.
+			logger.Error("status read limits", "account", label, "err", err)
 		}
 	}
 	b, err := json.Marshal(st)

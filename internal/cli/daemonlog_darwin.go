@@ -23,11 +23,20 @@ import (
 // Returns nil if the home dir can't be resolved, in which case the caller
 // leaves the default os.Stderr writer in place.
 func daemonLogWriter() io.Writer {
+	// Interactive run (`aimonitor daemon run` in a terminal): leave logs on
+	// stderr so the developer sees them live. Only redirect to the capped
+	// file when stderr is NOT a TTY — i.e. under launchd, whose
+	// StandardErrorPath is the regular file we want to own.
+	if fi, err := os.Stderr.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+		return nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
-	path := filepath.Join(home, "Library", "Logs", "aimonitor", "aimonitor.daemon.err.log")
+	path := filepath.Join(home, "Library", "Logs", "aimonitor", "aimonitor.daemon.log")
+	// slog's TextHandler (installed by daemon.SetLogWriter) timestamps each
+	// line itself, so this writer just needs to rotate/cap the bytes.
 	return &lumberjack.Logger{
 		Filename:   path,
 		MaxSize:    5, // megabytes before rotating

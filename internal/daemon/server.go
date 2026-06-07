@@ -77,6 +77,13 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 // the foreground loop. When ctx cancels, both unwind: the publisher's
 // ticker loop returns, and the watcher's event loop exits.
 func (s *Server) Run(ctx context.Context) error {
+	// A startup line marks each daemon (re)start in the log — useful for
+	// "when did it last restart?" when reading a bug report, and it gives
+	// the timestamped log writer an immediate line to emit on every boot
+	// (the steady-state daemon is otherwise silent on success).
+	logger.Info("daemon started", "pid", os.Getpid())
+	defer logger.Info("daemon stopped", "pid", os.Getpid())
+
 	auto, err := NewAutoSwitcher(AutoSwitcherConfig{
 		Store:    s.store,
 		Provider: s.provider,
@@ -92,7 +99,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Store:    s.store,
 		OnSample: auto.OnSample,
 		OnError: func(err error) {
-			fmt.Fprintf(logW, "watcher: %v\n", err)
+			logger.Error("watcher error", "err", err)
 		},
 	})
 	if err != nil {
@@ -152,7 +159,7 @@ func (s *Server) Run(ctx context.Context) error {
 			},
 			AfterFetch: func(ctx context.Context, label string) {
 				if _, err := autoSwap.MaybeSwap(ctx, label); err != nil {
-					fmt.Fprintf(logW, "auto-swap: %v\n", err)
+					logger.Error("auto-swap loop error", "err", err)
 				}
 			},
 		}

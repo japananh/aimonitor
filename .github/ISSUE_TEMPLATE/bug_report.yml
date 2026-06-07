@@ -97,6 +97,7 @@ body:
     attributes:
       label: Relevant logs
       description: |
-        Daemon logs live at `~/Library/Logs/aimonitor/` (macOS). The update helper logs to
-        `~/Library/Logs/aimonitor/update.log`. Paste anything relevant — double-check for secrets first.
+        The daemon log is `~/Library/Logs/aimonitor/aimonitor.daemon.log` (macOS); the update
+        helper logs to `~/Library/Logs/aimonitor/update.log`. In the app, Preferences → About →
+        "Show Logs in Finder" opens this folder. Paste anything relevant — double-check for secrets first.
       render: text
