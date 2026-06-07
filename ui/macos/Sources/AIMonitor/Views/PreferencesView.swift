@@ -121,6 +121,11 @@ struct PreferencesView: View {
             }
         }
         .formStyle(.grouped)
+        // Make every label selectable (the modifier propagates to all
+        // descendant Text), so users can drag-select and ⌘C any value —
+        // version, MCP identity, error strings — for a bug report. Pairs
+        // with the app's Edit menu, which defines the ⌘C key equivalent.
+        .textSelection(.enabled)
         // Tahoe restyle: NO pinned font, controlSize, or row-height
         // overrides — the grouped Form renders at the system's default
         // type scale (13pt body on macOS 26) so the window matches
