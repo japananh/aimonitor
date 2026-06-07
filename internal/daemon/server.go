@@ -149,6 +149,10 @@ func (s *Server) Run(ctx context.Context) error {
 			},
 		}
 
+		// Threshold notifier: warns the user as the active account nears its
+		// limit when auto-swap is OFF (auto-swap posts its own banners when ON).
+		notifier := &ThresholdNotifier{Store: s.store}
+
 		usage := &UsageScheduler{
 			Store:         s.store,
 			Provider:      s.provider,
@@ -161,6 +165,7 @@ func (s *Server) Run(ctx context.Context) error {
 				if _, err := autoSwap.MaybeSwap(ctx, label); err != nil {
 					logger.Error("auto-swap loop error", "err", err)
 				}
+				notifier.Evaluate(ctx, label)
 			},
 		}
 		go func() { _ = usage.Run(ctx) }()

@@ -53,6 +53,9 @@ var configKeys = []string{
 	daemon.SettingsKeyAutoSwapThreshold,
 	daemon.SettingsKeyAutoSwapThreshold7d,
 	daemon.SettingsKeyAutoSwapGrace,
+	daemon.SettingsKeyNotifyEnabled,
+	daemon.SettingsKeyNotifyWarnPct,
+	daemon.SettingsKeyNotifyCritPct,
 	SettingsKeyAutoUpdateEnabled,
 	SettingsKeyUpdateSkippedVersion,
 	mcpserver.SettingsKeySlackEnabled,
@@ -80,6 +83,9 @@ func isStoreKey(key string) bool {
 		daemon.SettingsKeyAutoSwapThreshold,
 		daemon.SettingsKeyAutoSwapThreshold7d,
 		daemon.SettingsKeyAutoSwapGrace,
+		daemon.SettingsKeyNotifyEnabled,
+		daemon.SettingsKeyNotifyWarnPct,
+		daemon.SettingsKeyNotifyCritPct,
 		SettingsKeyAutoUpdateEnabled,
 		SettingsKeyUpdateSkippedVersion,
 		mcpserver.SettingsKeySlackEnabled,
@@ -260,6 +266,21 @@ func validateStoreValue(key, value string) (string, error) {
 			return "", fmt.Errorf("%s: must be >= 0, got %d", key, n)
 		}
 		return strconv.Itoa(n), nil
+	case daemon.SettingsKeyNotifyEnabled:
+		b, err := parseBool(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.FormatBool(b), nil
+	case daemon.SettingsKeyNotifyWarnPct, daemon.SettingsKeyNotifyCritPct:
+		f, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return "", fmt.Errorf("%s: not a number: %q", key, value)
+		}
+		if f <= 0 || f > 100 {
+			return "", fmt.Errorf("%s: must be in (0, 100], got %v", key, f)
+		}
+		return strconv.FormatFloat(f, 'f', -1, 64), nil
 	case SettingsKeyAutoUpdateEnabled,
 		mcpserver.SettingsKeySlackEnabled,
 		mcpserver.SettingsKeyClickUpEnabled,
@@ -297,6 +318,12 @@ func storeKeyDefault(key string) string {
 		return strconv.FormatFloat(daemon.DefaultAutoSwapThreshold7d, 'f', -1, 64)
 	case daemon.SettingsKeyAutoSwapGrace:
 		return strconv.Itoa(daemon.DefaultAutoSwapGraceSec)
+	case daemon.SettingsKeyNotifyEnabled:
+		return strconv.FormatBool(daemon.DefaultNotifyEnabled)
+	case daemon.SettingsKeyNotifyWarnPct:
+		return strconv.FormatFloat(daemon.DefaultNotifyWarnPct, 'f', -1, 64)
+	case daemon.SettingsKeyNotifyCritPct:
+		return strconv.FormatFloat(daemon.DefaultNotifyCritPct, 'f', -1, 64)
 	case SettingsKeyAutoUpdateEnabled:
 		return strconv.FormatBool(defaultAutoUpdateEnabled)
 	case mcpserver.SettingsKeySlackEnabled, mcpserver.SettingsKeyClickUpEnabled:

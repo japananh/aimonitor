@@ -23,6 +23,10 @@ struct PreferencesView: View {
     @State private var threshold5h = 80
     @State private var threshold7d = 80
     @State private var autoUpdateOn = true
+    // Threshold notifications (active only when auto-switch is off).
+    @State private var notifyOn = true
+    @State private var notifyWarn = 80
+    @State private var notifyCrit = 95
     @State private var versionText = "—"
     // Integrations (MCP) state, loaded via `mcp status --json`.
     @State private var mcpServices: [MCPServiceStatus] = []
@@ -75,6 +79,30 @@ struct PreferencesView: View {
                     .help("Any whole number from 1 to 100. When the active account's 7-day usage reaches it, AIMonitor switches — even if the alternatives are 5-hour-hot, since weekly caps last days while 5-hour windows recover in hours.")
                 }
                 Text("Crossing either threshold switches to the account with the most remaining headroom.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Notifications") {
+                miniToggle("Warn me as the active account nears its limit", isOn: Binding(
+                    get: { notifyOn },
+                    set: { newValue in notifyOn = newValue; setSetting("notify.enabled", newValue) }
+                ))
+                .help("Posts a macOS notification when the active account crosses the levels below. Active only when auto-switch is off — with it on, auto-switch's own notifications cover the same moment.")
+                if notifyOn {
+                    ThresholdRow(
+                        label: "Warn at %:",
+                        settingsKey: "notify.warn_pct",
+                        value: $notifyWarn
+                    )
+                    .help("Whole number 1–100. A notification fires the first time the active account reaches this on either window.")
+                    ThresholdRow(
+                        label: "Critical at %:",
+                        settingsKey: "notify.crit_pct",
+                        value: $notifyCrit
+                    )
+                    .help("Whole number 1–100. A stronger notification fires when usage reaches this level.")
+                }
+                Text("Heads-up only when auto-switch is off — otherwise auto-switch's own notifications cover it.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -160,6 +188,9 @@ struct PreferencesView: View {
             let upd = (try? CLIBridge.configGet("auto_update.enabled")) != "false"
             let thr5 = Int((try? CLIBridge.configGet("auto_swap.threshold_pct")) ?? "80") ?? 80
             let thr7 = Int((try? CLIBridge.configGet("auto_swap.threshold_7d_pct")) ?? "80") ?? 80
+            let notif = (try? CLIBridge.configGet("notify.enabled")) != "false"
+            let warn = Int((try? CLIBridge.configGet("notify.warn_pct")) ?? "80") ?? 80
+            let crit = Int((try? CLIBridge.configGet("notify.crit_pct")) ?? "95") ?? 95
             // Just the version number for About — no commit/build date.
             // (The `aimonitor version` CLI still prints those for diagnostics.)
             var ver = "version unavailable"
@@ -174,6 +205,9 @@ struct PreferencesView: View {
                 autoUpdateOn = upd
                 threshold5h = thr5
                 threshold7d = thr7
+                notifyOn = notif
+                notifyWarn = warn
+                notifyCrit = crit
                 versionText = ver
             }
             reloadMCP()
