@@ -139,6 +139,8 @@ func newConfigCmd() *cobra.Command {
 				return nil
 			},
 		},
+		newConfigExportCmd(),
+		newConfigImportCmd(),
 	)
 	return cmd
 }
