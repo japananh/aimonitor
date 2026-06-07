@@ -93,5 +93,15 @@ func (s *Store) PutLimits(ctx context.Context, accountID int64, l provider.Limit
 	if err != nil {
 		return fmt.Errorf("write oauth_usage: %w", err)
 	}
+
+	// Append a trend point for the sparkline. Best-effort: oauth_usage is
+	// the authoritative snapshot the UI renders now; usage_history is a
+	// convenience time series, so a dropped point must never fail the
+	// upsert the caller actually cares about.
+	_ = s.AppendUsageHistory(ctx, accountID, UsageSample{
+		Ts:          l.FetchedAt,
+		FiveHourPct: l.FiveHourPct,
+		SevenDayPct: l.SevenDayPct,
+	})
 	return nil
 }
