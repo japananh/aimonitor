@@ -40,6 +40,14 @@ struct LimitsRow: Hashable {
     let fetchedAt: Date
 }
 
+/// UsageSamplePoint is one point in an account's utilization time series
+/// (the usage_history table), powering the sparkline trend.
+struct UsageSamplePoint: Hashable {
+    let ts: Date
+    let fiveHourPct: Double
+    let sevenDayPct: Double
+}
+
 /// ProbeRow mirrors a relevant subset of probe_results.
 struct ProbeRow: Hashable {
     let accountID: Int64
@@ -219,6 +227,38 @@ final class SQLiteReader {
                 fetchedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 5)) / 1000.0)
             )
             out[acct] = row
+        }
+        return out
+    }
+
+    /// Returns the utilization time series for every account since `since`,
+    /// grouped by account id and ordered oldest-first within each group.
+    /// One query (index-backed on account_id, ts), grouped in Swift — far
+    /// cheaper than one query per account on the 2s poll.
+    func usageHistory(since: Date) throws -> [Int64: [UsageSamplePoint]] {
+        let sql = """
+            SELECT account_id, ts, five_hour_pct, seven_day_pct
+              FROM usage_history
+             WHERE ts >= ?
+             ORDER BY account_id ASC, ts ASC
+            """
+        var stmt: OpaquePointer?
+        let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        if rc != SQLITE_OK {
+            throw SQLiteReaderError.prepareFailed(rc, String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, Int64(since.timeIntervalSince1970 * 1000.0))
+
+        var out: [Int64: [UsageSamplePoint]] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let acct = sqlite3_column_int64(stmt, 0)
+            let point = UsageSamplePoint(
+                ts: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 1)) / 1000.0),
+                fiveHourPct: sqlite3_column_double(stmt, 2),
+                sevenDayPct: sqlite3_column_double(stmt, 3)
+            )
+            out[acct, default: []].append(point)
         }
         return out
     }

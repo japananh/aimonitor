@@ -17,6 +17,10 @@ final class AppModel: ObservableObject {
     // Per-account rate-limit snapshots keyed by account id, for the
     // per-account 5h/7d bars. A row may be stale (see LimitsRow.fetchedAt).
     @Published var limitsByAccount: [Int64: LimitsRow] = [:]
+    // Per-account utilization time series (last ~24h) for the sparkline
+    // trend. Keyed by account id; empty until the daemon has logged a couple
+    // of points.
+    @Published var historyByAccount: [Int64: [UsageSamplePoint]] = [:]
     // True while a manual "Refresh usage" (all-accounts) fetch is in flight.
     @Published var refreshingUsage = false
     /// Label of the account a Switch is currently in flight for (nil when
@@ -78,7 +82,7 @@ final class AppModel: ObservableObject {
 
     func refresh() async {
         let path = dbPath
-        let result: Result<(DaemonStatus?, [AccountRow], [ProbeRow], [Int64: LimitsRow]), Error> = await withCheckedContinuation { cont in
+        let result: Result<(DaemonStatus?, [AccountRow], [ProbeRow], [Int64: LimitsRow], [Int64: [UsageSamplePoint]]), Error> = await withCheckedContinuation { cont in
             workQueue.async {
                 do {
                     let r = try SQLiteReader(path: path)
@@ -86,18 +90,23 @@ final class AppModel: ObservableObject {
                     let accs = try r.listAccounts()
                     let pr = try r.listProbes()
                     let lim = try r.limits()
-                    cont.resume(returning: .success((st, accs, pr, lim)))
+                    // Last 24h of trend for the sparkline. One query, grouped
+                    // by account; bounded (~288 points/account at the 5-min
+                    // cadence) so it's cheap on the 2s poll.
+                    let hist = try r.usageHistory(since: Date().addingTimeInterval(-24 * 3600))
+                    cont.resume(returning: .success((st, accs, pr, lim, hist)))
                 } catch {
                     cont.resume(returning: .failure(error))
                 }
             }
         }
         switch result {
-        case .success(let (st, accs, pr, lim)):
+        case .success(let (st, accs, pr, lim, hist)):
             self.status = st
             self.accounts = accs
             self.probes = pr
             self.limitsByAccount = lim
+            self.historyByAccount = hist
             self.lastError = nil
         case .failure(let err):
             self.lastError = "\(err)"

@@ -139,6 +139,15 @@ struct AccountTableView: View {
             // round-robin when their token is valid).
             if let lim = model.limitsByAccount[acct.id] {
                 UsageBars(limits: lim)
+                // 24h trend of the 5h window, when we have enough points.
+                // Aligns under the bars (28pt left inset matches the bar
+                // labels) so it reads as part of the same block.
+                let series = (model.historyByAccount[acct.id] ?? []).map { $0.fiveHourPct }
+                if series.count >= 2 {
+                    Sparkline(values: series, color: sparkColor(for: lim.fiveHourPct))
+                        .padding(.leading, 28)
+                        .padding(.top, 1)
+                }
             } else {
                 Text("no usage data yet")
                     .font(.caption2)
@@ -181,6 +190,17 @@ struct AccountTableView: View {
             if let rename = renameAccount {
                 Button("Rename…") { rename(acct.label) }
             }
+        }
+    }
+
+    // Severity tint for the sparkline, matching UsageBars' green/amber/red
+    // thresholds so the trend line and the current-value bar agree at a
+    // glance. AppKit system colors adapt to the active appearance.
+    private func sparkColor(for pct: Double) -> Color {
+        switch pct {
+        case ..<60: return Color(nsColor: .systemGreen)
+        case ..<85: return Color(nsColor: .systemYellow)
+        default: return Color(nsColor: .systemRed)
         }
     }
 }
