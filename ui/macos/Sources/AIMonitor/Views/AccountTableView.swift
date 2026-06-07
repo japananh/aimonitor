@@ -50,6 +50,20 @@ struct AccountTableView: View {
                         }
                         // Account name — the largest text in the row.
                         Text(acct.label).font(.headline)
+                        // Cooling badge: the account was 429'd and is parked
+                        // (skipped by the poller + excluded from auto-swap)
+                        // until the countdown elapses.
+                        if let until = acct.cooldownUntil, until > Date() {
+                            Text("⏳ \(cooldownLabel(until))")
+                                .font(.caption2)
+                                .foregroundStyle(Color(nsColor: .systemOrange))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule().fill(Color(nsColor: .systemOrange).opacity(0.15))
+                                )
+                                .help(acct.cooldownReason ?? "Rate-limited — paused until the cooldown ends")
+                        }
                         // Rename button right next to the name.
                         if let rename = renameAccount {
                             Button {
@@ -191,6 +205,17 @@ struct AccountTableView: View {
                 Button("Rename…") { rename(acct.label) }
             }
         }
+    }
+
+    // "cooling 4m" / "cooling 1h 5m" — how long until the 429 park lifts.
+    private func cooldownLabel(_ until: Date) -> String {
+        let secs = Int(until.timeIntervalSinceNow)
+        if secs <= 0 { return "cooling" }
+        let h = secs / 3600
+        let m = (secs % 3600) / 60
+        if h > 0 { return "cooling \(h)h \(m)m" }
+        if m > 0 { return "cooling \(m)m" }
+        return "cooling <1m"
     }
 
     // Severity tint for the sparkline, matching UsageBars' green/amber/red

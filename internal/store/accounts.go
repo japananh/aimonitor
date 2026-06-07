@@ -28,12 +28,19 @@ type Account struct {
 	KeyringRef       string
 	CreatedAt        time.Time
 	LastUsedAt       time.Time // zero value if never used
+
+	// CooldownUntil parks the account after a 429 (rate limit): until it
+	// passes, the background poller skips the account and auto-swap won't
+	// pick it. Zero == not cooling. CooldownReason is a short label for the
+	// widget badge (e.g. "rate-limited (429)").
+	CooldownUntil  time.Time
+	CooldownReason string
 }
 
 // accountColumns is the canonical SELECT list, shared by every read so
 // the column order can't drift from the scan order. COALESCE guards the
 // nullable/added columns so pre-0003 rows scan cleanly.
-const accountColumns = `id, provider, label, COALESCE(email,''), COALESCE(organization_uuid,''), COALESCE(organization_name,''), keyring_ref, created_at, COALESCE(last_used_at, 0)`
+const accountColumns = `id, provider, label, COALESCE(email,''), COALESCE(organization_uuid,''), COALESCE(organization_name,''), keyring_ref, created_at, COALESCE(last_used_at, 0), COALESCE(cooldown_until, 0), COALESCE(cooldown_reason, '')`
 
 // ErrAccountNotFound is returned by GetAccountByLabel / GetAccountByID
 // when no matching row exists.
@@ -139,6 +146,38 @@ func (s *Store) UpdateAccountLastUsed(ctx context.Context, id int64, ts time.Tim
 	return nil
 }
 
+// SetCooldown parks accountID until `until`, with a short human reason. Used
+// after a 429 so the poller and auto-swap leave the account alone while it's
+// throttled. Idempotent — re-setting just moves the deadline.
+func (s *Store) SetCooldown(ctx context.Context, id int64, until time.Time, reason string) error {
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE accounts SET cooldown_until = ?, cooldown_reason = ? WHERE id = ?`,
+		until.UnixMilli(), reason, id,
+	)
+	if err != nil {
+		return fmt.Errorf("set cooldown: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrAccountNotFound
+	}
+	return nil
+}
+
+// ClearCooldown removes any cooldown on accountID. Called on a successful
+// fetch. Cheap and idempotent: the WHERE only touches a currently-cooling
+// row, so the steady-state success path writes nothing.
+func (s *Store) ClearCooldown(ctx context.Context, id int64) error {
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE accounts SET cooldown_until = NULL, cooldown_reason = NULL
+		  WHERE id = ? AND cooldown_until IS NOT NULL`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("clear cooldown: %w", err)
+	}
+	return nil
+}
+
 // RenameAccount changes an account's label. Returns ErrAccountNotFound if
 // no row matches oldLabel; returns an error wrapping the UNIQUE failure
 // if newLabel collides.
@@ -188,14 +227,17 @@ type rowScanner interface {
 // scanAccountRow decodes one row in accountColumns order.
 func scanAccountRow(r rowScanner) (Account, error) {
 	var a Account
-	var createdAt, lastUsedAt int64
-	err := r.Scan(&a.ID, &a.Provider, &a.Label, &a.Email, &a.OrganizationUUID, &a.OrganizationName, &a.KeyringRef, &createdAt, &lastUsedAt)
+	var createdAt, lastUsedAt, cooldownUntil int64
+	err := r.Scan(&a.ID, &a.Provider, &a.Label, &a.Email, &a.OrganizationUUID, &a.OrganizationName, &a.KeyringRef, &createdAt, &lastUsedAt, &cooldownUntil, &a.CooldownReason)
 	if err != nil {
 		return Account{}, err
 	}
 	a.CreatedAt = time.UnixMilli(createdAt)
 	if lastUsedAt != 0 {
 		a.LastUsedAt = time.UnixMilli(lastUsedAt)
+	}
+	if cooldownUntil != 0 {
+		a.CooldownUntil = time.UnixMilli(cooldownUntil)
 	}
 	return a, nil
 }

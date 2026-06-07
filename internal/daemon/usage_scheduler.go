@@ -269,8 +269,13 @@ func (u *UsageScheduler) tickOnce(ctx context.Context) error {
 		limits, err = u.Fetcher.FetchLimits(ctx, cred)
 	}
 	if err != nil {
+		// Park the active account on a 429 so the badge shows it and the
+		// candidate pool excludes it; the Run loop still applies its own
+		// backoff to the schedule.
+		recordThrottle(ctx, u.Store, acct, err)
 		return err
 	}
+	clearThrottle(ctx, u.Store, acct)
 	limits.AccountID = acct.ID
 	if err := u.Store.PutLimits(ctx, acct.ID, limits); err != nil {
 		return fmt.Errorf("put limits: %w", err)
@@ -324,9 +329,15 @@ func (u *UsageScheduler) fetchOneInactive(ctx context.Context) {
 	if err != nil || len(accounts) == 0 {
 		return
 	}
+	now := time.Now()
 	var inactive []store.Account
 	for _, a := range accounts {
 		if activeFound && a.ID == activeAcct.ID {
+			continue
+		}
+		// Skip accounts parked after a 429 — polling one mid-cooldown just
+		// earns another 429 and deepens the throttle.
+		if a.CooldownUntil.After(now) {
 			continue
 		}
 		inactive = append(inactive, a)
@@ -351,9 +362,11 @@ func (u *UsageScheduler) fetchOneInactive(ctx context.Context) {
 	}
 	limits, err := u.Fetcher.FetchLimits(ctx, stash)
 	if err != nil {
+		recordThrottle(ctx, u.Store, acct, err)
 		logger.Warn("inactive usage fetch failed", "account", acct.Label, "err", err)
 		return
 	}
+	clearThrottle(ctx, u.Store, acct)
 	limits.AccountID = acct.ID
 	if err := u.Store.PutLimits(ctx, acct.ID, limits); err != nil {
 		logger.Error("inactive put limits failed", "account", acct.Label, "err", err)
