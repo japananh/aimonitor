@@ -35,8 +35,8 @@ func daemonLogWriter() io.Writer {
 		return nil
 	}
 	path := filepath.Join(home, "Library", "Logs", "aimonitor", "aimonitor.daemon.log")
-	// slog's TextHandler (installed by daemon.SetLogWriter) timestamps each
-	// line itself, so this writer just needs to rotate/cap the bytes.
+	// The daemon's slog handler (installed by daemon.SetLogWriter) timestamps
+	// each line itself, so this writer just needs to rotate/cap the bytes.
 	return &lumberjack.Logger{
 		Filename:   path,
 		MaxSize:    5, // megabytes before rotating
