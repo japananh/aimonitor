@@ -289,10 +289,16 @@ func (a *AutoSwapper) refreshStaleCandidates(ctx context.Context, activeID int64
 		if acct.ID == activeID {
 			continue
 		}
+		// Don't spend a refresh on an account that's parked after a 429 —
+		// pickCandidate will exclude it anyway.
+		if acct.CooldownUntil.After(a.now()) {
+			continue
+		}
 		if lim, err := a.Store.GetLimits(ctx, acct.ID); err == nil && a.now().Sub(lim.FetchedAt) <= candidateFreshWindow {
 			continue // already fresh enough to trust
 		}
 		if _, err := a.RefreshUsage(ctx, acct); err != nil {
+			recordThrottle(ctx, a.Store, acct, err)
 			a.log().Warn("auto-swap refresh candidate failed", "account", acct.Label, "err", err)
 		}
 		done++
@@ -380,6 +386,11 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 	var tier1, tier2, uncertain []candidate
 	for _, acct := range accounts {
 		if acct.ID == activeID {
+			continue
+		}
+		// Parked after a 429: it would just 429 again on use, so it's not a
+		// real candidate however much headroom its stored snapshot shows.
+		if acct.CooldownUntil.After(now) {
 			continue
 		}
 		lim, err := a.Store.GetLimits(ctx, acct.ID)

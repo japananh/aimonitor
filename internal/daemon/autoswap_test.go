@@ -91,6 +91,38 @@ func TestAutoSwap_PrefersFreshKnownCandidate(t *testing.T) {
 	}
 }
 
+// A candidate parked after a 429 must be excluded even when its stored usage
+// is the lowest of all — it would just 429 again on use. Here the cooled
+// account has the best headroom (5%) but is parked; the swap must pick the
+// available-but-warmer account (40%) instead.
+func TestAutoSwap_SkipsCooledCandidate(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	cooled, _ := s.CreateAccount(ctx, store.Account{Label: "cooled", KeyringRef: "ref-c"})
+	warm, _ := s.CreateAccount(ctx, store.Account{Label: "warm", KeyringRef: "ref-w"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95})
+	_ = s.PutLimits(ctx, cooled.ID, provider.Limits{FiveHourPct: 5})  // best headroom…
+	_ = s.PutLimits(ctx, warm.ID, provider.Limits{FiveHourPct: 40})   // …but only this one is usable
+	// Park the low-usage account for the next hour.
+	if err := s.SetCooldown(ctx, cooled.ID, time.Now().Add(time.Hour), "rate-limited (429)"); err != nil {
+		t.Fatal(err)
+	}
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if !swapped {
+		t.Fatalf("expected a swap (active 95%% over threshold)")
+	}
+	if len(fsw.switched) != 1 || fsw.switched[0] != "warm" {
+		t.Errorf("switched to %v, want [warm] — cooled candidate must be excluded", fsw.switched)
+	}
+}
+
 func TestAutoSwap_BelowThreshold_NoSwap(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()

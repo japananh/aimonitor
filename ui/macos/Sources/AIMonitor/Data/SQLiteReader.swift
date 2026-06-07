@@ -25,6 +25,11 @@ struct AccountRow: Identifiable, Hashable {
     let email: String?
     let organizationName: String?
     let lastUsedAt: Date?
+    // Set while the account is parked after a 429 (rate limit). nil/past ==
+    // not cooling. Drives the "cooling" badge + tells the user why auto-swap
+    // is skipping it.
+    let cooldownUntil: Date?
+    let cooldownReason: String?
 }
 
 /// LimitsRow mirrors a row of oauth_usage: a per-account rate-limit
@@ -128,7 +133,7 @@ final class SQLiteReader {
     }
 
     func listAccounts() throws -> [AccountRow] {
-        let sql = "SELECT id, label, email, organization_name, last_used_at FROM accounts ORDER BY label"
+        let sql = "SELECT id, label, email, organization_name, last_used_at, cooldown_until, cooldown_reason FROM accounts ORDER BY label"
         var stmt: OpaquePointer?
         let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
         if rc != SQLITE_OK {
@@ -136,20 +141,24 @@ final class SQLiteReader {
         }
         defer { sqlite3_finalize(stmt) }
 
+        func optMsDate(_ col: Int32) -> Date? {
+            if sqlite3_column_type(stmt, col) == SQLITE_NULL { return nil }
+            let ms = sqlite3_column_int64(stmt, col)
+            return Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        }
+
         var rows: [AccountRow] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             let id = sqlite3_column_int64(stmt, 0)
             let label = String(cString: sqlite3_column_text(stmt, 1))
             let email = Self.optText(stmt, 2)
             let org = Self.optText(stmt, 3)
-            let lastUsedAt: Date?
-            if sqlite3_column_type(stmt, 4) == SQLITE_NULL {
-                lastUsedAt = nil
-            } else {
-                let ms = sqlite3_column_int64(stmt, 4)
-                lastUsedAt = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-            }
-            rows.append(AccountRow(id: id, label: label, email: email, organizationName: org, lastUsedAt: lastUsedAt))
+            rows.append(AccountRow(
+                id: id, label: label, email: email, organizationName: org,
+                lastUsedAt: optMsDate(4),
+                cooldownUntil: optMsDate(5),
+                cooldownReason: Self.optText(stmt, 6)
+            ))
         }
         return rows
     }
