@@ -5,17 +5,35 @@
 import AppKit
 import SwiftUI
 
-/// severityColor maps utilization (0..100) to the bar/trend tint, with one set
-/// of thresholds used everywhere: green <60, amber <85, red ≥85. Deliberately
-/// MUTED tones — the full-saturation .systemGreen/.systemYellow/.systemRed read
-/// as garish ("chói") on the small bars. These mid-tone RGBs stay legible in
-/// both light and dark appearance.
+/// severityColor maps utilization (0..100) to the bar/trend tint, one set of
+/// thresholds everywhere: green <60, amber <85, red ≥85. Softer than the
+/// full-saturation .systemGreen/.systemYellow/.systemRed (which read as garish),
+/// and APPEARANCE-AWARE: a slightly deeper shade on light backgrounds, a
+/// brighter one on dark — so it reads well whether the user is in light or dark.
 func severityColor(for pct: Double) -> Color {
     switch pct {
-    case ..<60: return Color(red: 0.40, green: 0.64, blue: 0.46) // sage green
-    case ..<85: return Color(red: 0.84, green: 0.66, blue: 0.36) // muted amber
-    default:    return Color(red: 0.80, green: 0.44, blue: 0.42) // soft red
+    case ..<60:
+        return adaptiveColor(
+            light: NSColor(red: 0.13, green: 0.78, blue: 0.34, alpha: 1),
+            dark: NSColor(red: 0.46, green: 0.95, blue: 0.58, alpha: 1))
+    case ..<85:
+        return adaptiveColor(
+            light: NSColor(red: 0.98, green: 0.80, blue: 0.12, alpha: 1),
+            dark: NSColor(red: 1.00, green: 0.92, blue: 0.40, alpha: 1))
+    default:
+        return adaptiveColor(
+            light: NSColor(red: 0.90, green: 0.22, blue: 0.20, alpha: 1),
+            dark: NSColor(red: 1.00, green: 0.46, blue: 0.42, alpha: 1))
     }
+}
+
+/// adaptiveColor returns a Color that resolves to `light` under the Aqua
+/// appearance and `dark` under Dark Aqua, so fixed RGBs don't look wrong in one
+/// of the two modes the user switches between.
+func adaptiveColor(light: NSColor, dark: NSColor) -> Color {
+    Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+    })
 }
 
 /// UserDefaults key for the appearance preference: "system", "light", "dark".

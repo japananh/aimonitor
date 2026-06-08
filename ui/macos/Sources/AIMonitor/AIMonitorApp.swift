@@ -302,7 +302,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         p.level = .popUpMenu
         p.backgroundColor = .clear
         p.isOpaque = false
-        p.hasShadow = true
+        // OS window shadow OFF: on this borderless transparent panel it renders
+        // as a heavy dark rim, not a soft shadow. PanelChrome draws its own soft
+        // shadow inside a transparent margin instead (controllable color/blur).
+        p.hasShadow = false
         p.hidesOnDeactivate = false
         p.isReleasedWhenClosed = false
         p.isMovable = false
@@ -355,16 +358,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button, let bwin = button.window else { return }
         let b = bwin.convertToScreen(button.convert(button.bounds, to: nil))
         let size = panel.frame.size
-        var x = b.maxX - size.width
-        // Anchor the top edge to visibleFrame.maxY — the exact bottom of the
-        // menu bar — so the panel sits flush. The status-item button's own
-        // frame floats a few px above that line, so anchoring to b.minY
-        // either leaves a sliver of space or overlaps the bar.
-        var y = b.minY - size.height // fallback when no screen is resolvable
+        // The window carries a transparent panelShadowMargin around the visible
+        // card (room for the soft shadow). Compensate by that margin so the
+        // CARD — not the padded window — aligns flush under the icon: shift the
+        // window right and up by the margin.
+        let m = panelShadowMargin
+        var x = b.maxX - size.width + m
+        // Anchor the card's top edge to visibleFrame.maxY — the exact bottom of
+        // the menu bar — so it sits flush. (b.minY fallback when no screen.)
+        var y = b.minY - size.height + m
         if let screen = bwin.screen ?? NSScreen.main {
             let vf = screen.visibleFrame
-            y = vf.maxY - size.height
-            x = max(vf.minX + 4, min(x, vf.maxX - size.width - 4))
+            y = vf.maxY - size.height + m
+            x = max(vf.minX + 4, min(x, vf.maxX - size.width - 4 + m))
             y = max(vf.minY + 4, y)
         }
         panel.setFrameOrigin(NSPoint(x: x, y: y))

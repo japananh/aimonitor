@@ -14,13 +14,31 @@ import SwiftUI
 
 /// Corner radius of the floating panel — Tahoe rounds popovers/menus more
 /// generously than the pre-26 12pt.
-private let panelCornerRadius: CGFloat = 16
+let panelCornerRadius: CGFloat = 16
+
+/// Transparent margin around the panel, giving the soft drop shadow room to
+/// render (the window background is clear, so this shows the desktop).
+/// positionPanel compensates by this much so the visible card — not the
+/// padded window — stays anchored under the menu-bar icon.
+let panelShadowMargin: CGFloat = 14
 
 extension View {
-    /// The popover panel's chrome: solid window background, rounded corners.
+    /// The popover panel's chrome: solid window background, rounded corners, a
+    /// subtle system separator hairline (like the Preferences window), and a
+    /// SOFT drop shadow drawn by us into a transparent margin — the OS window
+    /// shadow is off because on a borderless transparent panel it rims dark.
     func panelChrome() -> some View {
         self
             .background(Color(nsColor: .windowBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: panelCornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: panelCornerRadius, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
+            // Soft shadow + transparent margin so it has room to render. The
+            // window background is clear, so the margin shows the desktop, not a
+            // dark box.
+            .shadow(color: .black.opacity(0.20), radius: 9, x: 0, y: 3)
+            .padding(panelShadowMargin)
     }
 }
