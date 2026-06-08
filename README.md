@@ -14,9 +14,11 @@
 
 ## Features
 
-- 🔍 **Live 5-hour and 7-day usage bars, per account** in your menu bar — server-side truth, polled from Anthropic's `/api/oauth/usage` introspection endpoint. No tokens consumed.
+- 🔍 **Live 5-hour and 7-day usage bars, per account** in your menu bar — server-side truth, polled from Anthropic's `/api/oauth/usage` introspection endpoint. No tokens consumed. A compact trend line (`↗ +21% in 45m`) shows how fast each account is climbing.
 - 🔀 **Silent account switching** — `aimonitor switch <label>` refreshes the OAuth access token via Anthropic's token endpoint and writes the live credential. No terminal hop, no `claude /login`.
-- 🤖 **Auto-swap on either limit** — triggers when the active account crosses the 5-hour *or* the 7-day threshold (each configurable, default 80 %). Picks the account with the most remaining headroom, and escapes a weekly-capped account even when the alternatives are only 5-hour-hot (5-hour windows recover in hours; weekly caps last days). Running `claude` sessions are never interrupted — they pick up the new credential automatically.
+- 🤖 **Auto-swap on either limit** — triggers when the active account crosses the 5-hour *or* the 7-day threshold (each configurable, default 80 %). Picks the account with the most **overall** headroom — balanced across both windows, so it won't hop onto an account that's about to run out on the other one. Exhausted accounts are skipped; an account that gets rate-limited (429) is parked until it recovers; and if the active account hits 100 %, the swap fires immediately. Running `claude` sessions are never interrupted — they pick up the new credential automatically.
+- 🔔 **Threshold notifications** — a heads-up notification as the active account nears its limit (warn/critical levels, configurable). Active when auto-swap is off; with auto-swap on, its own swap notifications cover it.
+- 💾 **Export / import** — back up settings, or migrate your accounts to another machine. Credentials are bundled only on request, encrypted under a passphrase (Argon2id + AES-256-GCM). `aimonitor config export` / `import`, or Preferences → Backup.
 - 🔌 **MCP server for Claude Code** — 28 Slack + ClickUp tools over stdio: post to channels/threads (mrkdwn + code blocks), upload files, search; ClickUp tasks, comments, and Docs (read & write). Per-service read-only mode.
 - 🤝 **Plays well with other tools.** Resolves the active account by identity, so it follows along when Claude Code or another switcher changes the live login — and tells you when that happens, or offers to import an account it doesn't yet manage.
 - 🔐 **OS-keyring credential storage** (macOS Keychain via `/usr/bin/security`, Linux libsecret). SQLite holds references; tokens never leave the keyring.
@@ -93,6 +95,16 @@ aimonitor config set auto_swap.threshold_7d_pct 80   # 7-day threshold, default 
 aimonitor config set autostart true                  # daemon at login
 ```
 
+### Back up / move to another machine
+
+```sh
+aimonitor config export --out backup.json                       # settings only (no secrets)
+AIMONITOR_PASSPHRASE=… aimonitor config export --include-tokens --out full.json   # + encrypted credentials
+AIMONITOR_PASSPHRASE=… aimonitor config import full.json         # restore on the other machine
+```
+
+With `--include-tokens` the bundle carries your account logins, encrypted under the passphrase (Argon2id + AES-256-GCM) — restoring it on another machine means `claude` works there without re-login, so treat that file like a password. The plain export contains no credentials. The same actions live in Preferences → Backup.
+
 <details>
 <summary><b>Full config keys</b></summary>
 
@@ -102,6 +114,9 @@ aimonitor config set autostart true                  # daemon at login
 | `auto_swap.threshold_pct` | `80` | 5-hour utilization (%) at which to auto-swap |
 | `auto_swap.threshold_7d_pct` | `80` | 7-day utilization (%) at which to auto-swap |
 | `auto_swap.grace_sec` | `60` | Seconds between the "auto-swap pending" notification and the actual swap, so you can wrap up a live `claude` session. `0` swaps immediately. |
+| `notify.enabled` | `true` | Notify as the active account nears its limit (only when auto-swap is off) |
+| `notify.warn_pct` | `80` | Utilization (%) for the warning notification |
+| `notify.crit_pct` | `95` | Utilization (%) for the critical notification |
 | `auto_update.enabled` | `true` | Check GitHub for new releases on launch and notify you. Updates are never installed without confirmation. |
 | `autostart` | `false` | Start the daemon at login |
 | `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | Expose that service's MCP tools to Claude Code |
