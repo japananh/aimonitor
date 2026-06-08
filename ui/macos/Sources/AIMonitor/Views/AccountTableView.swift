@@ -161,6 +161,7 @@ struct AccountTableView: View {
                     Sparkline(values: series, color: sparkColor(for: lim.fiveHourPct))
                         .padding(.leading, 28)
                         .padding(.top, 1)
+                        .help(sparkHelp(series))
                 }
             } else {
                 Text("no usage data yet")
@@ -216,6 +217,19 @@ struct AccountTableView: View {
         if h > 0 { return "cooling \(h)h \(m)m" }
         if m > 0 { return "cooling \(m)m" }
         return "cooling <1m"
+    }
+
+    // sparkHelp describes the trend line on hover: what it plots, plus the
+    // first→latest values and the peak so the shape has concrete numbers.
+    private func sparkHelp(_ s: [Double]) -> String {
+        guard let first = s.first, let last = s.last else {
+            return "5-hour usage over recent history."
+        }
+        let peak = s.max() ?? last
+        return String(
+            format: "5-hour usage over recent history: %.0f%% → %.0f%% (peak %.0f%%). Rising means this account is burning through its 5-hour window; flat means steady.",
+            first, last, peak
+        )
     }
 
     // Severity tint for the sparkline, matching UsageBars' green/amber/red
