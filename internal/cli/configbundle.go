@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/argon2"
 
 	"github.com/japananh/aimonitor/internal/daemon"
 	"github.com/japananh/aimonitor/internal/provider"
@@ -28,8 +29,25 @@ import (
 // it doesn't understand rather than silently mis-restoring.
 const bundleVersion = 1
 
-// pbkdf2Iters is the PBKDF2-HMAC-SHA256 work factor for the token passphrase.
-// 600k matches current OWASP guidance for PBKDF2-SHA256.
+// KDF identifiers stored in the bundle's `kdf` field so import can pick the
+// right derivation. New exports use Argon2id; pbkdf2 is kept for decrypting
+// bundles written by v1.1.1 (which shipped PBKDF2).
+const (
+	kdfArgon2id = "argon2id"
+	kdfPBKDF2   = "pbkdf2-sha256"
+)
+
+// Argon2id parameters — memory-hard, OWASP-recommended baseline
+// (m=19 MiB, t=2, p=1). Memory-hardness blunts the GPU/ASIC advantage that
+// makes PBKDF2 weaker against offline brute force of a leaked bundle.
+const (
+	argon2Memory  uint32 = 19456 // KiB (19 MiB)
+	argon2Time    uint32 = 2
+	argon2Threads uint8  = 1
+)
+
+// pbkdf2Iters is the legacy PBKDF2-HMAC-SHA256 work factor — only used now to
+// decrypt v1.1.1 bundles whose envelope omits the iteration count.
 const pbkdf2Iters = 600_000
 
 // exportBundle is the on-disk shape of `aimonitor config export`. Settings and
@@ -57,8 +75,13 @@ type exportAccount struct {
 // to derive a 32-byte key, AES-256-GCM to seal. The plaintext is a JSON
 // map[label]base64(stash-bytes). Salt and nonce are random per export.
 type encryptedTokens struct {
-	KDF        string `json:"kdf"` // "pbkdf2-sha256"
-	Iter       int    `json:"iter"`
+	KDF string `json:"kdf"` // "argon2id" (new) or "pbkdf2-sha256" (v1.1.1)
+	// Argon2id parameters (kdf == "argon2id").
+	Memory  uint32 `json:"memory,omitempty"`  // KiB
+	Time    uint32 `json:"time,omitempty"`    // iterations
+	Threads uint8  `json:"threads,omitempty"` // parallelism
+	// PBKDF2 iteration count (kdf == "pbkdf2-sha256").
+	Iter       int    `json:"iter,omitempty"`
 	Salt       string `json:"salt"`       // base64
 	Nonce      string `json:"nonce"`      // base64
 	Ciphertext string `json:"ciphertext"` // base64
@@ -92,7 +115,7 @@ By default NO credentials are included — the bundle is safe to share, but the
 restored accounts need a credential before they can be used.
 
 With --include-tokens, each account's OAuth credential is bundled too,
-encrypted under a passphrase (PBKDF2-SHA256 + AES-256-GCM). Set the passphrase
+encrypted under a passphrase (Argon2id + AES-256-GCM). Set the passphrase
 via AIMONITOR_PASSPHRASE or --passphrase-file. THIS FILE THEN CONTAINS LIVE
 CLAUDE CREDENTIALS — treat it like a password.`,
 		Args: cobra.NoArgs,
@@ -344,10 +367,7 @@ func encryptTokens(plain []byte, passphrase string) (*encryptedTokens, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("salt: %w", err)
 	}
-	key, err := pbkdf2.Key(sha256.New, passphrase, salt, pbkdf2Iters, 32)
-	if err != nil {
-		return nil, fmt.Errorf("derive key: %w", err)
-	}
+	key := argon2.IDKey([]byte(passphrase), salt, argon2Time, argon2Memory, argon2Threads, 32)
 	gcm, err := newGCM(key)
 	if err != nil {
 		return nil, err
@@ -358,8 +378,10 @@ func encryptTokens(plain []byte, passphrase string) (*encryptedTokens, error) {
 	}
 	ct := gcm.Seal(nil, nonce, plain, nil)
 	return &encryptedTokens{
-		KDF:        "pbkdf2-sha256",
-		Iter:       pbkdf2Iters,
+		KDF:        kdfArgon2id,
+		Memory:     argon2Memory,
+		Time:       argon2Time,
+		Threads:    argon2Threads,
 		Salt:       base64.StdEncoding.EncodeToString(salt),
 		Nonce:      base64.StdEncoding.EncodeToString(nonce),
 		Ciphertext: base64.StdEncoding.EncodeToString(ct),
@@ -379,13 +401,31 @@ func decryptTokens(t *encryptedTokens, passphrase string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode ciphertext: %w", err)
 	}
-	iter := t.Iter
-	if iter <= 0 {
-		iter = pbkdf2Iters
-	}
-	key, err := pbkdf2.Key(sha256.New, passphrase, salt, iter, 32)
-	if err != nil {
-		return nil, fmt.Errorf("derive key: %w", err)
+	var key []byte
+	switch t.KDF {
+	case kdfArgon2id:
+		m, ti, th := t.Memory, t.Time, t.Threads
+		if m == 0 {
+			m = argon2Memory
+		}
+		if ti == 0 {
+			ti = argon2Time
+		}
+		if th == 0 {
+			th = argon2Threads
+		}
+		key = argon2.IDKey([]byte(passphrase), salt, ti, m, th, 32)
+	case kdfPBKDF2, "":
+		iter := t.Iter
+		if iter <= 0 {
+			iter = pbkdf2Iters
+		}
+		var derr error
+		if key, derr = pbkdf2.Key(sha256.New, passphrase, salt, iter, 32); derr != nil {
+			return nil, fmt.Errorf("derive key: %w", derr)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported kdf %q", t.KDF)
 	}
 	gcm, err := newGCM(key)
 	if err != nil {
