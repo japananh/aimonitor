@@ -127,6 +127,10 @@ changelog:
 # HOMEBREW_TAP_TOKEN secret on the aimonitor repo's release workflow.
 homebrew_casks:
   - name: aimonitor
+    # auto = skip the cask push on prereleases (and snapshots), so a -beta/-rc
+    # tag never updates the stable cask in the tap — `brew upgrade` users stay
+    # on the last full release. Stable tags still publish the cask.
+    skip_upload: "auto"
     repository:
       owner: japananh
       name: homebrew-tap
