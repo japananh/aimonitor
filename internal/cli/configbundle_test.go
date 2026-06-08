@@ -12,8 +12,9 @@ func TestEncryptTokens_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encryptTokens: %v", err)
 	}
-	if enc.KDF != kdfArgon2id || enc.Memory != argon2Memory || enc.Time != argon2Time ||
-		enc.Threads != argon2Threads || enc.Salt == "" || enc.Nonce == "" || enc.Ciphertext == "" {
+	if enc.Cipher != cipherAES256GCM || enc.KDF.Algorithm != kdfArgon2id ||
+		enc.KDF.MemoryKiB != argon2Memory || enc.KDF.Iterations != argon2Time ||
+		enc.KDF.Parallelism != argon2Threads || enc.KDF.Salt == "" || enc.Nonce == "" || enc.Data == "" {
 		t.Fatalf("encrypted envelope incomplete/not argon2id: %+v", enc)
 	}
 	got, err := decryptTokens(enc, "correct horse battery staple")
@@ -41,13 +42,13 @@ func TestDecryptTokens_TamperedCiphertext(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Flip a byte of the base64 ciphertext.
-	b := []byte(enc.Ciphertext)
+	b := []byte(enc.Data)
 	if b[0] == 'A' {
 		b[0] = 'B'
 	} else {
 		b[0] = 'A'
 	}
-	enc.Ciphertext = string(b)
+	enc.Data = string(b)
 	if _, err := decryptTokens(enc, "pw"); err == nil {
 		t.Fatal("decrypt of tampered ciphertext must fail (GCM auth)")
 	}
@@ -58,7 +59,7 @@ func TestDecryptTokens_TamperedCiphertext(t *testing.T) {
 func TestEncryptTokens_FreshSaltNoncePerExport(t *testing.T) {
 	a, _ := encryptTokens([]byte("x"), "pw")
 	b, _ := encryptTokens([]byte("x"), "pw")
-	if a.Salt == b.Salt || a.Nonce == b.Nonce || a.Ciphertext == b.Ciphertext {
+	if a.KDF.Salt == b.KDF.Salt || a.Nonce == b.Nonce || a.Data == b.Data {
 		t.Fatal("salt/nonce/ciphertext must be unique per export")
 	}
 }

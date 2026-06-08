@@ -361,7 +361,7 @@ struct PreferencesView: View {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return false
         }
-        return obj["tokens"] != nil
+        return obj["encrypted_accounts"] != nil
     }
 
     // integrationRow renders one service: status line, Connect/Disconnect,
