@@ -262,7 +262,7 @@ struct PreferencesView: View {
     // MARK: - Backup (export / import)
 
     private func exportSettings() {
-        guard let url = backupSavePanel(defaultName: "aimonitor-settings.json") else { return }
+        guard let url = backupSavePanel(defaultName: defaultBackupName()) else { return }
         runBackup(reload: false) {
             try CLIBridge.configExport(to: url.path, includeTokens: false, passphrase: nil)
             return "Exported settings to \(url.lastPathComponent)."
@@ -275,7 +275,7 @@ struct PreferencesView: View {
             info: "The export will include your account credentials, encrypted with this passphrase. You'll need the same passphrase to import — it can't be recovered."
         ) else { return }
         if pass.isEmpty { backupMessage = "Export cancelled: passphrase was empty."; return }
-        guard let url = backupSavePanel(defaultName: "aimonitor-full.json") else { return }
+        guard let url = backupSavePanel(defaultName: defaultBackupName()) else { return }
         runBackup(reload: false) {
             try CLIBridge.configExport(to: url.path, includeTokens: true, passphrase: pass)
             return "Exported settings + encrypted credentials to \(url.lastPathComponent)."
@@ -315,6 +315,13 @@ struct PreferencesView: View {
                 if reload { loadState() }
             }
         }
+    }
+
+    // Default export filename: aimonitor-<unix epoch millis>.json — unique per
+    // export so successive backups don't silently overwrite.
+    private func defaultBackupName() -> String {
+        let ms = Int(Date().timeIntervalSince1970 * 1000)
+        return "aimonitor-\(ms).json"
     }
 
     private func backupSavePanel(defaultName: String) -> URL? {
