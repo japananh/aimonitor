@@ -153,15 +153,16 @@ struct AccountTableView: View {
             // round-robin when their token is valid).
             if let lim = model.limitsByAccount[acct.id] {
                 UsageBars(limits: lim)
-                // 24h trend of the 5h window, when we have enough points.
-                // Aligns under the bars (28pt left inset matches the bar
-                // labels) so it reads as part of the same block.
-                let series = (model.historyByAccount[acct.id] ?? []).map { $0.fiveHourPct }
-                if series.count >= 2 {
-                    Sparkline(values: series, color: sparkColor(for: lim.fiveHourPct))
+                // Compact 5h trend: "↗ +21% in 45m" — the change in 5-hour usage
+                // over the span we have data for. Conveys "climbing fast?" in one
+                // line without a chart. Aligned under the bars (28pt inset).
+                let hist = model.historyByAccount[acct.id] ?? []
+                if let trend = trendLabel(hist) {
+                    Text(trend.text)
+                        .font(.caption2)
+                        .foregroundStyle(trend.color)
                         .padding(.leading, 28)
-                        .padding(.top, 1)
-                        .help(sparkHelp(series))
+                        .help(sparkHelp(hist))
                 }
             } else {
                 Text("no usage data yet")
@@ -219,17 +220,54 @@ struct AccountTableView: View {
         return "cooling <1m"
     }
 
-    // sparkHelp describes the trend line on hover: what it plots, plus the
-    // first→latest values and the peak so the shape has concrete numbers.
-    private func sparkHelp(_ s: [Double]) -> String {
-        guard let first = s.first, let last = s.last else {
-            return "5-hour usage over recent history."
+    // trendLabel summarises the 5-hour usage change over the span we have
+    // data for, as "↗ +21% in 45m" / "↘ −5% in 1h" / "→ steady · 45m". Returns
+    // nil when there aren't enough points to say anything. Rising tints by the
+    // current severity (so hot+climbing draws the eye); falling is green.
+    private func trendLabel(_ hist: [UsageSamplePoint]) -> (text: String, color: Color)? {
+        guard let firstP = hist.first, let lastP = hist.last, hist.count >= 2 else {
+            return nil
         }
-        let peak = s.max() ?? last
+        let delta = lastP.fiveHourPct - firstP.fiveHourPct
+        let span = humanSpan(lastP.ts.timeIntervalSince(firstP.ts))
+        // RISING and FALLING both tint by the current 5h level — same
+        // green/amber/red palette + thresholds as the 5h bar — so a trend at a
+        // high level reads red/amber even while it's dropping (it's recovering,
+        // but still hot); it only goes green once it's actually back in the safe
+        // zone. STEADY is muted gray. ±2pp deadband so noise isn't a fake trend.
+        let color = sparkColor(for: lastP.fiveHourPct)
+        if delta >= 2 {
+            return (String(format: "↗ +%.0f%% in %@", delta, span), color)
+        }
+        if delta <= -2 {
+            return (String(format: "↘ %.0f%% in %@", delta, span), color)
+        }
+        return (String(format: "→ steady · %@", span), .secondary)
+    }
+
+    // sparkHelp describes the trend on hover: what it plots, the real time
+    // span it actually covers (so a few-minutes line isn't mistaken for a day),
+    // and the first→latest values plus the peak.
+    private func sparkHelp(_ hist: [UsageSamplePoint]) -> String {
+        guard let firstP = hist.first, let lastP = hist.last else {
+            return "Recent 5-hour usage."
+        }
+        let vals = hist.map { $0.fiveHourPct }
+        let peak = vals.max() ?? lastP.fiveHourPct
+        let span = humanSpan(lastP.ts.timeIntervalSince(firstP.ts))
         return String(
-            format: "5-hour usage over recent history: %.0f%% → %.0f%% (peak %.0f%%). Rising means this account is burning through its 5-hour window; flat means steady.",
-            first, last, peak
+            format: "This account's 5-hour usage over the last %@: went from %.0f%% to %.0f%% (highest %.0f%%). The line goes up as the 5-hour limit fills, and drops when the window resets.",
+            span, firstP.fiveHourPct, lastP.fiveHourPct, peak
         )
+    }
+
+    // humanSpan renders an elapsed duration compactly: "45s", "12m", "3h 20m".
+    private func humanSpan(_ secs: TimeInterval) -> String {
+        let s = Int(secs)
+        if s < 60 { return "\(s)s" }
+        if s < 3600 { return "\(s / 60)m" }
+        let h = s / 3600, m = (s % 3600) / 60
+        return m > 0 ? "\(h)h \(m)m" : "\(h)h"
     }
 
     // Severity tint for the sparkline, matching UsageBars' green/amber/red
