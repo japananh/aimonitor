@@ -336,8 +336,8 @@ func TestAutoSwap_WeeklyCapped_SwitchesTo5hHotButWeeklyHealthy(t *testing.T) {
 	hotA, _ := s.CreateAccount(ctx, store.Account{Label: "hot-a", KeyringRef: "ref-b"})
 	hotB, _ := s.CreateAccount(ctx, store.Account{Label: "hot-b", KeyringRef: "ref-c"})
 	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 97})
-	_ = s.PutLimits(ctx, hotA.ID, provider.Limits{FiveHourPct: 85, SevenDayPct: 30})
-	_ = s.PutLimits(ctx, hotB.ID, provider.Limits{FiveHourPct: 90, SevenDayPct: 20})
+	_ = s.PutLimits(ctx, hotA.ID, provider.Limits{FiveHourPct: 85, SevenDayPct: 30}) // max 85
+	_ = s.PutLimits(ctx, hotB.ID, provider.Limits{FiveHourPct: 90, SevenDayPct: 20}) // max 90
 	immediateSwap(t, s)
 
 	a, fsw, _ := withAutoSwapStubs(t, s)
@@ -345,10 +345,11 @@ func TestAutoSwap_WeeklyCapped_SwitchesTo5hHotButWeeklyHealthy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MaybeSwap: %v", err)
 	}
-	// Binding window is 7d → lowest 7d wins (hot-b at 20%), even though its
-	// 5h (90%) is hotter than hot-a's (85%).
-	if !swapped || len(fsw.switched) != 1 || fsw.switched[0] != "hot-b" {
-		t.Errorf("want switch to hot-b (lowest 7d); swapped=%v switched=%v", swapped, fsw.switched)
+	// Escaping a 7d cap, both candidates are 5h-warm — pick the MORE balanced
+	// one (hot-a, max 85%) over the one with the lowest 7d (hot-b at 20% but
+	// 5h=90%, about to cash out). Min-headroom keeps the target usable.
+	if !swapped || len(fsw.switched) != 1 || fsw.switched[0] != "hot-a" {
+		t.Errorf("want switch to hot-a (most overall headroom); swapped=%v switched=%v", swapped, fsw.switched)
 	}
 }
 

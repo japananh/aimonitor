@@ -444,9 +444,17 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 		})
 		return tier1[0], true, nil
 	case len(tier2) > 0:
+		// Rank by MOST overall headroom — lowest max(5h, 7d) — not by the
+		// binding window alone. Picking purely the lowest binding pct can land
+		// on an account that's healthy on the binding window but nearly
+		// exhausted on the OTHER one (e.g. escaping a 7d cap into an account
+		// whose 5h is already 93%), which then can't serve requests anyway.
+		// Balancing both windows keeps the swap target actually usable.
 		sort.Slice(tier2, func(i, j int) bool {
-			if tier2[i].pct(binding) != tier2[j].pct(binding) {
-				return tier2[i].pct(binding) < tier2[j].pct(binding)
+			mi := max(tier2[i].FiveHourPct, tier2[i].SevenDayPct)
+			mj := max(tier2[j].FiveHourPct, tier2[j].SevenDayPct)
+			if mi != mj {
+				return mi < mj
 			}
 			return tier2[i].LastUsedMs < tier2[j].LastUsedMs
 		})
