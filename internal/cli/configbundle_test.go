@@ -2,6 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"crypto/pbkdf2"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 )
@@ -12,8 +16,10 @@ func TestEncryptTokens_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encryptTokens: %v", err)
 	}
-	if enc.KDF != "pbkdf2-sha256" || enc.Iter != pbkdf2Iters || enc.Salt == "" || enc.Nonce == "" || enc.Ciphertext == "" {
-		t.Fatalf("encrypted envelope incomplete: %+v", enc)
+	// New exports use Argon2id with the OWASP params, not PBKDF2.
+	if enc.KDF != kdfArgon2id || enc.Memory != argon2Memory || enc.Time != argon2Time ||
+		enc.Threads != argon2Threads || enc.Salt == "" || enc.Nonce == "" || enc.Ciphertext == "" {
+		t.Fatalf("encrypted envelope incomplete/not argon2id: %+v", enc)
 	}
 	got, err := decryptTokens(enc, "correct horse battery staple")
 	if err != nil {
@@ -21,6 +27,40 @@ func TestEncryptTokens_RoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(got, plain) {
 		t.Fatalf("round-trip mismatch: got %q want %q", got, plain)
+	}
+}
+
+// A bundle written by v1.1.1 (PBKDF2) must still decrypt — built here exactly
+// as the old code did, then read back through the kdf-aware decryptTokens.
+func TestDecryptTokens_PBKDF2Backcompat(t *testing.T) {
+	plain := []byte(`{"gem1":"YWJjZA=="}`)
+	pass := "old-bundle-pass"
+	salt := make([]byte, 16)
+	_, _ = rand.Read(salt)
+	key, err := pbkdf2.Key(sha256.New, pass, salt, pbkdf2Iters, 32)
+	if err != nil {
+		t.Fatalf("pbkdf2: %v", err)
+	}
+	gcm, err := newGCM(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	_, _ = rand.Read(nonce)
+	ct := gcm.Seal(nil, nonce, plain, nil)
+	old := &encryptedTokens{
+		KDF:        kdfPBKDF2,
+		Iter:       pbkdf2Iters,
+		Salt:       base64.StdEncoding.EncodeToString(salt),
+		Nonce:      base64.StdEncoding.EncodeToString(nonce),
+		Ciphertext: base64.StdEncoding.EncodeToString(ct),
+	}
+	got, err := decryptTokens(old, pass)
+	if err != nil {
+		t.Fatalf("decrypt v1.1.1 (pbkdf2) bundle: %v", err)
+	}
+	if !bytes.Equal(got, plain) {
+		t.Fatalf("backcompat mismatch: got %q want %q", got, plain)
 	}
 }
 
