@@ -43,8 +43,11 @@ enum CLIBridge {
     }
 
     /// Runs `aimonitor <args>` and returns stdout. Throws on non-zero exit.
+    /// `extraEnv` is merged onto the process environment — used to pass a
+    /// passphrase via AIMONITOR_PASSPHRASE without putting it on the argv (where
+    /// it'd show in `ps`).
     @discardableResult
-    static func run(_ args: [String]) throws -> String {
+    static func run(_ args: [String], extraEnv: [String: String] = [:]) throws -> String {
         let task = Process()
         if let path = resolveBinaryPath() {
             task.executableURL = URL(fileURLWithPath: path)
@@ -52,6 +55,11 @@ enum CLIBridge {
         } else {
             task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             task.arguments = ["aimonitor"] + args
+        }
+        if !extraEnv.isEmpty {
+            var env = ProcessInfo.processInfo.environment
+            for (k, v) in extraEnv { env[k] = v }
+            task.environment = env
         }
 
         let stdoutPipe = Pipe()
@@ -117,6 +125,27 @@ enum CLIBridge {
     /// Writes a config value.
     static func configSet(_ key: String, _ value: String) throws {
         try run(["config", "set", key, value])
+    }
+
+    /// Exports settings (and, with a passphrase, encrypted credentials) to a
+    /// bundle file. Passphrase goes via the environment, never argv.
+    static func configExport(to path: String, includeTokens: Bool, passphrase: String?) throws {
+        var args = ["config", "export", "--out", path]
+        var env: [String: String] = [:]
+        if includeTokens {
+            args.append("--include-tokens")
+            if let p = passphrase { env["AIMONITOR_PASSPHRASE"] = p }
+        }
+        try run(args, extraEnv: env)
+    }
+
+    /// Imports a bundle. When it carries encrypted credentials, `passphrase`
+    /// must be supplied. Returns the CLI's stdout summary.
+    @discardableResult
+    static func configImport(from path: String, passphrase: String?) throws -> String {
+        var env: [String: String] = [:]
+        if let p = passphrase { env["AIMONITOR_PASSPHRASE"] = p }
+        return try run(["config", "import", path], extraEnv: env)
     }
 
     /// Result of `aimonitor update check --json`. `notes` is omitted by the

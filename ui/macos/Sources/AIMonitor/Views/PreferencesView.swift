@@ -28,6 +28,8 @@ struct PreferencesView: View {
     @State private var notifyWarn = 80
     @State private var notifyCrit = 95
     @State private var versionText = "—"
+    // Last export/import result or error, shown under the Backup buttons.
+    @State private var backupMessage: String?
     // Integrations (MCP) state, loaded via `mcp status --json`.
     @State private var mcpServices: [MCPServiceStatus] = []
     @State private var mcpToolCount = 0
@@ -136,10 +138,25 @@ struct PreferencesView: View {
                 AppTextButton("Check for Updates…", action: checkForUpdates)
                     .help("Check for a newer version now")
             }
+            Section("Backup") {
+                AppTextButton("Export Settings…", action: exportSettings)
+                    .help("Save your auto-switch + notification settings and account list to a file. No credentials — safe to share.")
+                AppTextButton("Export with Credentials…", action: exportWithTokens)
+                    .help("Also include each account's login, encrypted with a passphrase. The file then holds live Claude credentials — keep it safe.")
+                AppTextButton("Import…", action: importBundle)
+                    .help("Restore settings (and credentials, if the file has them) from an export file.")
+                if let msg = backupMessage {
+                    Text(msg)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
             Section("About") {
+                // Match the row labels (e.g. "Launch AIMonitor at login"): the
+                // default body font + primary color, not the smaller secondary
+                // caption it used to be.
                 Text(versionText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                 Link("View on GitHub", destination: repoURL)
                     .pointerCursor()
@@ -240,6 +257,104 @@ struct PreferencesView: View {
             target = logsRoot
         }
         NSWorkspace.shared.activateFileViewerSelecting([target])
+    }
+
+    // MARK: - Backup (export / import)
+
+    private func exportSettings() {
+        guard let url = backupSavePanel(defaultName: "aimonitor-settings.json") else { return }
+        runBackup(reload: false) {
+            try CLIBridge.configExport(to: url.path, includeTokens: false, passphrase: nil)
+            return "Exported settings to \(url.lastPathComponent)."
+        }
+    }
+
+    private func exportWithTokens() {
+        guard let pass = passphrasePrompt(
+            title: "Choose a passphrase",
+            info: "The export will include your account credentials, encrypted with this passphrase. You'll need the same passphrase to import — it can't be recovered."
+        ) else { return }
+        if pass.isEmpty { backupMessage = "Export cancelled: passphrase was empty."; return }
+        guard let url = backupSavePanel(defaultName: "aimonitor-full.json") else { return }
+        runBackup(reload: false) {
+            try CLIBridge.configExport(to: url.path, includeTokens: true, passphrase: pass)
+            return "Exported settings + encrypted credentials to \(url.lastPathComponent)."
+        }
+    }
+
+    private func importBundle() {
+        guard let url = backupOpenPanel() else { return }
+        var passphrase: String?
+        if bundleHasTokens(url) {
+            guard let p = passphrasePrompt(
+                title: "Enter the passphrase",
+                info: "This file contains encrypted credentials. Enter the passphrase used when it was exported."
+            ) else { return }
+            passphrase = p
+        }
+        runBackup(reload: true) {
+            let out = try CLIBridge.configImport(from: url.path, passphrase: passphrase)
+            let summary = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            return summary.isEmpty ? "Imported \(url.lastPathComponent)." : summary
+        }
+    }
+
+    // runBackup runs a CLI backup op off the main thread, then publishes the
+    // result (or error) to backupMessage. reload=true re-reads settings after
+    // an import so the toggles reflect the restored values.
+    private func runBackup(reload: Bool, _ work: @escaping () throws -> String) {
+        backupMessage = "Working…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let message: String
+            do { message = try work() } catch {
+                DispatchQueue.main.async { backupMessage = "Failed: \(error.localizedDescription)" }
+                return
+            }
+            DispatchQueue.main.async {
+                backupMessage = message
+                if reload { loadState() }
+            }
+        }
+    }
+
+    private func backupSavePanel(defaultName: String) -> URL? {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = defaultName
+        panel.canCreateDirectories = true
+        panel.title = "Export aimonitor configuration"
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    private func backupOpenPanel() -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.title = "Import aimonitor configuration"
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    // passphrasePrompt shows a modal with a masked field; nil on Cancel.
+    private func passphrasePrompt(title: String, info: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = info
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+    }
+
+    // bundleHasTokens peeks at the JSON for an encrypted-credentials block, so
+    // import only asks for a passphrase when one is actually needed.
+    private func bundleHasTokens(_ url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        return obj["tokens"] != nil
     }
 
     // integrationRow renders one service: status line, Connect/Disconnect,
