@@ -102,6 +102,39 @@ func TestEncryptTokens_FreshSaltNoncePerExport(t *testing.T) {
 	}
 }
 
+// v2: full records (identity + token) come straight out of the decrypted blob.
+func TestDecodeAccountRecords_V2(t *testing.T) {
+	in := []encAccount{{
+		exportAccount: exportAccount{Label: "gem1", Email: "a@b.co", OrganizationUUID: "u1", OrganizationName: "Org"},
+		Token:         "dG9rZW4=",
+	}}
+	plain, _ := json.Marshal(in)
+	got, err := decodeAccountRecords(exportBundle{Version: 2}, plain)
+	if err != nil {
+		t.Fatalf("decode v2: %v", err)
+	}
+	if len(got) != 1 || got[0].Label != "gem1" || got[0].Email != "a@b.co" ||
+		got[0].OrganizationUUID != "u1" || got[0].OrganizationName != "Org" || got[0].Token != "dG9rZW4=" {
+		t.Fatalf("v2 record not preserved: %+v", got)
+	}
+}
+
+// v1: identities come from the plaintext accounts list, tokens from the map.
+func TestDecodeAccountRecords_V1Backcompat(t *testing.T) {
+	plain, _ := json.Marshal(map[string]string{"gem1": "dG9rZW4="})
+	b := exportBundle{
+		Version:  1,
+		Accounts: []exportAccount{{Label: "gem1", Email: "a@b.co", OrganizationUUID: "u1"}},
+	}
+	got, err := decodeAccountRecords(b, plain)
+	if err != nil {
+		t.Fatalf("decode v1: %v", err)
+	}
+	if len(got) != 1 || got[0].Label != "gem1" || got[0].Email != "a@b.co" || got[0].Token != "dG9rZW4=" {
+		t.Fatalf("v1 record not reconstructed: %+v", got)
+	}
+}
+
 // A v1 bundle round-trips through JSON unchanged on the fields import reads.
 func TestExportBundle_JSONRoundTrip(t *testing.T) {
 	in := exportBundle{
