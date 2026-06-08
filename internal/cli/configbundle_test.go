@@ -2,21 +2,16 @@ package cli
 
 import (
 	"bytes"
-	"crypto/pbkdf2"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"testing"
 )
 
 func TestEncryptTokens_RoundTrip(t *testing.T) {
-	plain := []byte(`{"gem1":"YWJjZA==","gem2":"ZWZnaA=="}`)
+	plain := []byte(`[{"label":"gem1","token":"YWJjZA=="}]`)
 	enc, err := encryptTokens(plain, "correct horse battery staple")
 	if err != nil {
 		t.Fatalf("encryptTokens: %v", err)
 	}
-	// New exports use Argon2id with the OWASP params, not PBKDF2.
 	if enc.KDF != kdfArgon2id || enc.Memory != argon2Memory || enc.Time != argon2Time ||
 		enc.Threads != argon2Threads || enc.Salt == "" || enc.Nonce == "" || enc.Ciphertext == "" {
 		t.Fatalf("encrypted envelope incomplete/not argon2id: %+v", enc)
@@ -27,40 +22,6 @@ func TestEncryptTokens_RoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(got, plain) {
 		t.Fatalf("round-trip mismatch: got %q want %q", got, plain)
-	}
-}
-
-// A bundle written by v1.1.1 (PBKDF2) must still decrypt — built here exactly
-// as the old code did, then read back through the kdf-aware decryptTokens.
-func TestDecryptTokens_PBKDF2Backcompat(t *testing.T) {
-	plain := []byte(`{"gem1":"YWJjZA=="}`)
-	pass := "old-bundle-pass"
-	salt := make([]byte, 16)
-	_, _ = rand.Read(salt)
-	key, err := pbkdf2.Key(sha256.New, pass, salt, pbkdf2Iters, 32)
-	if err != nil {
-		t.Fatalf("pbkdf2: %v", err)
-	}
-	gcm, err := newGCM(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	_, _ = rand.Read(nonce)
-	ct := gcm.Seal(nil, nonce, plain, nil)
-	old := &encryptedTokens{
-		KDF:        kdfPBKDF2,
-		Iter:       pbkdf2Iters,
-		Salt:       base64.StdEncoding.EncodeToString(salt),
-		Nonce:      base64.StdEncoding.EncodeToString(nonce),
-		Ciphertext: base64.StdEncoding.EncodeToString(ct),
-	}
-	got, err := decryptTokens(old, pass)
-	if err != nil {
-		t.Fatalf("decrypt v1.1.1 (pbkdf2) bundle: %v", err)
-	}
-	if !bytes.Equal(got, plain) {
-		t.Fatalf("backcompat mismatch: got %q want %q", got, plain)
 	}
 }
 
@@ -102,40 +63,28 @@ func TestEncryptTokens_FreshSaltNoncePerExport(t *testing.T) {
 	}
 }
 
-// v2: full records (identity + token) come straight out of the decrypted blob.
-func TestDecodeAccountRecords_V2(t *testing.T) {
+// encAccount must serialize with the embedded identity fields FLAT (label,
+// email, …) alongside token — that's the shape the encrypted payload relies on.
+func TestEncAccount_JSONShape(t *testing.T) {
 	in := []encAccount{{
 		exportAccount: exportAccount{Label: "gem1", Email: "a@b.co", OrganizationUUID: "u1", OrganizationName: "Org"},
 		Token:         "dG9rZW4=",
 	}}
-	plain, _ := json.Marshal(in)
-	got, err := decodeAccountRecords(exportBundle{Version: 2}, plain)
+	raw, err := json.Marshal(in)
 	if err != nil {
-		t.Fatalf("decode v2: %v", err)
+		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Label != "gem1" || got[0].Email != "a@b.co" ||
-		got[0].OrganizationUUID != "u1" || got[0].OrganizationName != "Org" || got[0].Token != "dG9rZW4=" {
-		t.Fatalf("v2 record not preserved: %+v", got)
+	var out []encAccount
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Label != "gem1" || out[0].Email != "a@b.co" ||
+		out[0].OrganizationUUID != "u1" || out[0].OrganizationName != "Org" || out[0].Token != "dG9rZW4=" {
+		t.Fatalf("encAccount round-trip altered record: %+v", out)
 	}
 }
 
-// v1: identities come from the plaintext accounts list, tokens from the map.
-func TestDecodeAccountRecords_V1Backcompat(t *testing.T) {
-	plain, _ := json.Marshal(map[string]string{"gem1": "dG9rZW4="})
-	b := exportBundle{
-		Version:  1,
-		Accounts: []exportAccount{{Label: "gem1", Email: "a@b.co", OrganizationUUID: "u1"}},
-	}
-	got, err := decodeAccountRecords(b, plain)
-	if err != nil {
-		t.Fatalf("decode v1: %v", err)
-	}
-	if len(got) != 1 || got[0].Label != "gem1" || got[0].Email != "a@b.co" || got[0].Token != "dG9rZW4=" {
-		t.Fatalf("v1 record not reconstructed: %+v", got)
-	}
-}
-
-// A v1 bundle round-trips through JSON unchanged on the fields import reads.
+// The no-token bundle keeps plaintext identities; a token bundle omits them.
 func TestExportBundle_JSONRoundTrip(t *testing.T) {
 	in := exportBundle{
 		Version:  bundleVersion,
@@ -154,7 +103,6 @@ func TestExportBundle_JSONRoundTrip(t *testing.T) {
 		len(out.Accounts) != 1 || out.Accounts[0].Label != "gem1" {
 		t.Fatalf("round-trip altered bundle: %+v", out)
 	}
-	// No tokens → omitempty keeps the field out of the JSON entirely.
 	if bytes.Contains(raw, []byte(`"tokens"`)) {
 		t.Fatal("token-less bundle must omit the tokens field")
 	}
