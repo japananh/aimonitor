@@ -28,7 +28,7 @@ struct AccountTableView: View {
                 }
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 16)
         .padding(.bottom, 4)
     }
 

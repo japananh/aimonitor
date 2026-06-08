@@ -60,8 +60,8 @@ struct PopoverRootView: View {
                 .pointerCursor()
                 .help("Preferences — auto-switch, updates, and startup settings")
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
             .padding(.bottom, 8)
 
             // When the daemon hasn't published recently the rows below are
@@ -123,9 +123,9 @@ struct PopoverRootView: View {
                 AppTextButton("Quit", action: quit)
                     .help("Quit the menu-bar app (the background daemon keeps running)")
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
             .padding(.top, 8)
-            .padding(.bottom, 12)
+            .padding(.bottom, 14)
 
             if let err = model.lastError {
                 Text(err)
@@ -138,7 +138,7 @@ struct PopoverRootView: View {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(Color.red.opacity(0.12))
                     )
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 16)
                     .padding(.bottom, 10)
             }
         }
@@ -158,7 +158,7 @@ struct PopoverRootView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.orange.opacity(0.12))
         )
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 16)
         .padding(.bottom, 8)
     }
 
