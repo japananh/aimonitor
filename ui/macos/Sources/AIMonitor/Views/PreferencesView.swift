@@ -139,10 +139,8 @@ struct PreferencesView: View {
                     .help("Check for a newer version now")
             }
             Section("Backup") {
-                AppTextButton("Export Settings…", action: exportSettings)
-                    .help("Save your auto-switch + notification settings and account list to a file. No credentials — safe to share.")
-                AppTextButton("Export with Credentials…", action: exportWithTokens)
-                    .help("Also include each account's login, encrypted with a passphrase. The file then holds live Claude credentials — keep it safe.")
+                AppTextButton("Export…", action: exportFlow)
+                    .help("Save your settings to a file — optionally including account logins, encrypted with a passphrase.")
                 AppTextButton("Import…", action: importBundle)
                     .help("Restore settings (and credentials, if the file has them) from an export file.")
                 if let msg = backupMessage {
@@ -261,6 +259,25 @@ struct PreferencesView: View {
 
     // MARK: - Backup (export / import)
 
+    // exportFlow is the single entry point: pick what to export (Bitwarden-style
+    // — one Export action, choose mode), then run the matching handler.
+    private func exportFlow() {
+        let alert = NSAlert()
+        alert.messageText = "Export configuration"
+        alert.informativeText = "“Settings only” is safe to share. “With credentials” also bundles your account logins, encrypted with a passphrase — that file is a live login, keep it safe."
+        alert.addButton(withTitle: "Settings Only")
+        alert.addButton(withTitle: "With Credentials…")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            exportSettings()
+        case .alertSecondButtonReturn:
+            exportWithTokens()
+        default:
+            break
+        }
+    }
+
     private func exportSettings() {
         guard let url = backupSavePanel(defaultName: defaultBackupName()) else { return }
         runBackup(reload: false) {
@@ -361,7 +378,7 @@ struct PreferencesView: View {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return false
         }
-        return obj["encrypted_accounts"] != nil
+        return (obj["encrypted"] as? Bool) == true
     }
 
     // integrationRow renders one service: status line, Connect/Disconnect,

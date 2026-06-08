@@ -12,9 +12,9 @@ func TestEncryptTokens_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encryptTokens: %v", err)
 	}
-	if enc.Cipher != cipherAES256GCM || enc.KDF.Algorithm != kdfArgon2id ||
-		enc.KDF.MemoryKiB != argon2Memory || enc.KDF.Iterations != argon2Time ||
-		enc.KDF.Parallelism != argon2Threads || enc.KDF.Salt == "" || enc.Nonce == "" || enc.Data == "" {
+	if enc.Cipher != cipherAES256GCM || enc.KDF != kdfArgon2id ||
+		enc.KDFMemoryKiB != argon2Memory || enc.KDFIterations != argon2Time ||
+		enc.KDFParallelism != argon2Threads || enc.Salt == "" || enc.Nonce == "" || enc.Data == "" {
 		t.Fatalf("encrypted envelope incomplete/not argon2id: %+v", enc)
 	}
 	got, err := decryptTokens(enc, "correct horse battery staple")
@@ -59,7 +59,7 @@ func TestDecryptTokens_TamperedCiphertext(t *testing.T) {
 func TestEncryptTokens_FreshSaltNoncePerExport(t *testing.T) {
 	a, _ := encryptTokens([]byte("x"), "pw")
 	b, _ := encryptTokens([]byte("x"), "pw")
-	if a.KDF.Salt == b.KDF.Salt || a.Nonce == b.Nonce || a.Data == b.Data {
+	if a.Salt == b.Salt || a.Nonce == b.Nonce || a.Data == b.Data {
 		t.Fatal("salt/nonce/ciphertext must be unique per export")
 	}
 }
@@ -100,11 +100,12 @@ func TestExportBundle_JSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Version != bundleVersion || out.Settings["auto_swap.enabled"] != "false" ||
+	if out.Version != bundleVersion || out.Encrypted || out.Settings["auto_swap.enabled"] != "false" ||
 		len(out.Accounts) != 1 || out.Accounts[0].Label != "gem1" {
 		t.Fatalf("round-trip altered bundle: %+v", out)
 	}
-	if bytes.Contains(raw, []byte(`"tokens"`)) {
-		t.Fatal("token-less bundle must omit the tokens field")
+	// No credentials → no ciphertext field, and encrypted is false.
+	if bytes.Contains(raw, []byte(`"data"`)) {
+		t.Fatal("plaintext bundle must omit the data field")
 	}
 }
