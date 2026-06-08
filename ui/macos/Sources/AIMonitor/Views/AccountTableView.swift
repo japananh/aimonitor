@@ -270,14 +270,8 @@ struct AccountTableView: View {
         return m > 0 ? "\(h)h \(m)m" : "\(h)h"
     }
 
-    // Severity tint for the sparkline, matching UsageBars' green/amber/red
-    // thresholds so the trend line and the current-value bar agree at a
-    // glance. AppKit system colors adapt to the active appearance.
+    // Trend tint shares the bar's severityColor (Theme.swift) so they agree.
     private func sparkColor(for pct: Double) -> Color {
-        switch pct {
-        case ..<60: return Color(nsColor: .systemGreen)
-        case ..<85: return Color(nsColor: .systemYellow)
-        default: return Color(nsColor: .systemRed)
-        }
+        severityColor(for: pct)
     }
 }

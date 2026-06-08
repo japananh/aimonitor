@@ -59,15 +59,10 @@ struct UsageBars: View {
         }
     }
 
-    // green < 60, amber < 85, red ≥ 85 — claude-bar's palette for absolute
-    // rate-limit utilization. AppKit system colors so they adapt to the OS
-    // appearance (and our light/dark/inherit theme) rather than being fixed.
+    // Muted green/amber/red by utilization — shared severityColor (Theme.swift)
+    // so the bar matches the trend label and isn't garish.
     private func color(for pct: Double) -> Color {
-        switch pct {
-        case ..<60: return Color(nsColor: .systemGreen)
-        case ..<85: return Color(nsColor: .systemYellow)
-        default: return Color(nsColor: .systemRed)
-        }
+        severityColor(for: pct)
     }
 
     private func resetCountdown(_ resetAt: Date) -> String {
