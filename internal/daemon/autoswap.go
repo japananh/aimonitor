@@ -149,9 +149,6 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 		a.pending = nil
 		return false, nil
 	}
-	if a.now().Before(a.cooldownUntil) {
-		return false, nil
-	}
 	if activeLabel == "" {
 		return false, nil
 	}
@@ -169,6 +166,17 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 			return false, nil // no data on the active account yet
 		}
 		return false, err
+	}
+
+	// activeExhausted: the active account has hit a hard limit (>=100%) on a
+	// window. That's an emergency — `claude` can't run — so it overrides both
+	// the post-swap cooldown and the grace window below: get off it NOW.
+	activeExhausted := activeLim.FiveHourPct >= exhaustedPct || activeLim.SevenDayPct >= exhaustedPct
+
+	// Post-swap cooldown normally suppresses re-evaluation (anti-ping-pong),
+	// but never when the active account is exhausted.
+	if a.now().Before(a.cooldownUntil) && !activeExhausted {
+		return false, nil
 	}
 	// Active is back below threshold on BOTH windows (window reset, or the
 	// user swapped manually): cancel any armed swap. Either window at/over
@@ -199,8 +207,10 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 		return false, nil
 	}
 
-	// Grace disabled (grace_sec=0): swap immediately.
-	if graceSec <= 0 {
+	// Swap immediately when grace is disabled (grace_sec=0) OR the active
+	// account is already exhausted (no point waiting out a grace window on an
+	// account that can't serve requests).
+	if graceSec <= 0 || activeExhausted {
 		return a.fireSwap(ctx, activeLabel, activePct, binding, cand)
 	}
 

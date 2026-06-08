@@ -123,6 +123,31 @@ func TestAutoSwap_SkipsCooledCandidate(t *testing.T) {
 	}
 }
 
+// An exhausted (>=100%) active account must swap away IMMEDIATELY — bypassing
+// both the post-swap cooldown and the grace window — because it can't serve
+// requests. This is the "BE1 hit 5h 100% but didn't switch" fix.
+func TestAutoSwap_ExhaustedBypassesCooldownAndGrace(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "r-a"})
+	cool, _ := s.CreateAccount(ctx, store.Account{Label: "cool", KeyringRef: "r-c"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 100}) // exhausted
+	_ = s.PutLimits(ctx, cool.ID, provider.Limits{FiveHourPct: 10})
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	// Inside the post-swap cooldown, and grace left at its 60s default — neither
+	// must stop an exhausted account from being rescued.
+	a.cooldownUntil = a.now().Add(time.Minute)
+
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if !swapped || len(fsw.switched) != 1 || fsw.switched[0] != "cool" {
+		t.Fatalf("exhausted active must swap now despite cooldown+grace; swapped=%v switched=%v", swapped, fsw.switched)
+	}
+}
+
 func TestAutoSwap_BelowThreshold_NoSwap(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
