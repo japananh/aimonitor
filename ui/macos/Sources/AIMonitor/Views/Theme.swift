@@ -3,6 +3,20 @@
 // NSApp.appearance (nil = inherit from the OS).
 
 import AppKit
+import SwiftUI
+
+/// severityColor maps utilization (0..100) to the bar/trend tint, with one set
+/// of thresholds used everywhere: green <60, amber <85, red ≥85. Deliberately
+/// MUTED tones — the full-saturation .systemGreen/.systemYellow/.systemRed read
+/// as garish ("chói") on the small bars. These mid-tone RGBs stay legible in
+/// both light and dark appearance.
+func severityColor(for pct: Double) -> Color {
+    switch pct {
+    case ..<60: return Color(red: 0.40, green: 0.64, blue: 0.46) // sage green
+    case ..<85: return Color(red: 0.84, green: 0.66, blue: 0.36) // muted amber
+    default:    return Color(red: 0.80, green: 0.44, blue: 0.42) // soft red
+    }
+}
 
 /// UserDefaults key for the appearance preference: "system", "light", "dark".
 let appThemeKey = "appTheme"
