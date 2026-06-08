@@ -47,20 +47,24 @@ const (
 	argon2Threads uint8  = 1
 )
 
-// exportBundle is the on-disk shape of `aimonitor config export`. Exactly one
-// of EncryptedAccounts / Accounts is set:
-//   - `aimonitor config export`                  → Accounts (plaintext, shareable)
-//   - `aimonitor config export --include-tokens`  → EncryptedAccounts (identities
-//     AND credentials sealed under a passphrase; nothing identifying in plaintext)
+// exportBundle is the on-disk shape of `aimonitor config export`. Layout
+// follows Bitwarden's encrypted-export style: a top-level `encrypted` flag, and
+// when set, the crypto fields (cipher/kdf/salt/nonce/data) sit flat alongside
+// settings. `data` is the ciphertext of a JSON []encAccount.
+//
+//	encrypted=false → Accounts holds plaintext identities (shareable, no secrets)
+//	encrypted=true  → identities AND credentials are sealed in `data`; the
+//	                  plaintext reveals only version + settings
 type exportBundle struct {
 	Version    int               `json:"version"`
 	ExportedAt string            `json:"exported_at,omitempty"`
+	Encrypted  bool              `json:"encrypted"`
 	Settings   map[string]string `json:"settings"`
-	// Accounts: plaintext identities — only in the no-credentials bundle.
+	// Accounts: plaintext identities — only when !Encrypted.
 	Accounts []exportAccount `json:"accounts,omitempty"`
-	// EncryptedAccounts: the passphrase-encrypted account records (identities +
-	// credentials) — only in the --include-tokens bundle.
-	EncryptedAccounts *encryptedBlob `json:"encrypted_accounts,omitempty"`
+	// Crypto fields flatten to the top level (Bitwarden-style) when Encrypted;
+	// the embedded pointer is nil (and omitted) otherwise.
+	*cryptoEnvelope
 }
 
 // exportAccount is an account's identity. In the no-credentials bundle these are
@@ -74,30 +78,25 @@ type exportAccount struct {
 	OrganizationName string `json:"organization_name,omitempty"`
 }
 
-// encAccount is a full account record — identity + credential — that gets
-// sealed inside EncryptedAccounts. Hidden until the passphrase decrypts it.
+// encAccount is a full account record — identity + credential — sealed into the
+// ciphertext. Hidden until the passphrase decrypts it.
 type encAccount struct {
 	exportAccount
 	Token string `json:"token"` // base64(stash bytes)
 }
 
-// encryptedBlob is a self-describing sealed payload: a KDF derives a 32-byte
-// key from the passphrase, then AES-256-GCM encrypts. The decrypted Data is a
-// JSON []encAccount. Field names spell out the scheme so the file is legible.
-type encryptedBlob struct {
-	Cipher string    `json:"cipher"` // "aes-256-gcm"
-	KDF    kdfParams `json:"kdf"`
-	Nonce  string    `json:"nonce"` // base64, AES-GCM nonce
-	Data   string    `json:"data"`  // base64, ciphertext of the JSON records
-}
-
-// kdfParams records how the key was derived, so import reproduces it exactly.
-type kdfParams struct {
-	Algorithm   string `json:"algorithm"`   // "argon2id"
-	MemoryKiB   uint32 `json:"memory_kib"`  // Argon2id m
-	Iterations  uint32 `json:"iterations"`  // Argon2id t
-	Parallelism uint8  `json:"parallelism"` // Argon2id p
-	Salt        string `json:"salt"`        // base64
+// cryptoEnvelope is the self-describing seal: a KDF derives a 32-byte key from
+// the passphrase, AES-256-GCM encrypts. Field names spell out the scheme so the
+// file is legible. Embedded into exportBundle so these sit at the top level.
+type cryptoEnvelope struct {
+	Cipher         string `json:"cipher"`          // "aes-256-gcm"
+	KDF            string `json:"kdf"`             // "argon2id"
+	KDFMemoryKiB   uint32 `json:"kdf_memory_kib"`  // Argon2id m
+	KDFIterations  uint32 `json:"kdf_iterations"`  // Argon2id t
+	KDFParallelism uint8  `json:"kdf_parallelism"` // Argon2id p
+	Salt           string `json:"salt"`            // base64
+	Nonce          string `json:"nonce"`           // base64, AES-GCM nonce
+	Data           string `json:"data"`            // base64, ciphertext of the records
 }
 
 // exportedSettingKeys is the behavioral preferences worth carrying between
@@ -220,7 +219,8 @@ func runConfigExport(ctx context.Context, cmd *cobra.Command, s *store.Store, in
 		if err != nil {
 			return err
 		}
-		bundle.EncryptedAccounts = enc
+		bundle.Encrypted = true
+		bundle.cryptoEnvelope = enc
 	} else {
 		// No passphrase to encrypt with → identities stay plaintext. This is
 		// the explicitly-shareable, no-secrets bundle.
@@ -288,7 +288,7 @@ func runConfigImport(ctx context.Context, cmd *cobra.Command, s *store.Store, pa
 
 	// 2. Accounts — restored only when the bundle carries credentials, so we
 	// never create a credential-less, unusable row.
-	if bundle.EncryptedAccounts == nil {
+	if !bundle.Encrypted || bundle.cryptoEnvelope == nil {
 		if len(bundle.Accounts) > 0 {
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"\nBundle has no credentials — these %d accounts must be re-added with `aimonitor add`:\n", len(bundle.Accounts))
@@ -303,7 +303,7 @@ func runConfigImport(ctx context.Context, cmd *cobra.Command, s *store.Store, pa
 	if err != nil {
 		return err
 	}
-	plain, err := decryptTokens(bundle.EncryptedAccounts, pass)
+	plain, err := decryptTokens(bundle.cryptoEnvelope, pass)
 	if err != nil {
 		return err
 	}
@@ -393,7 +393,7 @@ func resolvePassphrase(passFile string) (string, error) {
 	return "", errors.New("a passphrase is required: set $AIMONITOR_PASSPHRASE or pass --passphrase-file <path>")
 }
 
-func encryptTokens(plain []byte, passphrase string) (*encryptedBlob, error) {
+func encryptTokens(plain []byte, passphrase string) (*cryptoEnvelope, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("salt: %w", err)
@@ -408,25 +408,23 @@ func encryptTokens(plain []byte, passphrase string) (*encryptedBlob, error) {
 		return nil, fmt.Errorf("nonce: %w", err)
 	}
 	ct := gcm.Seal(nil, nonce, plain, nil)
-	return &encryptedBlob{
-		Cipher: cipherAES256GCM,
-		KDF: kdfParams{
-			Algorithm:   kdfArgon2id,
-			MemoryKiB:   argon2Memory,
-			Iterations:  argon2Time,
-			Parallelism: argon2Threads,
-			Salt:        base64.StdEncoding.EncodeToString(salt),
-		},
-		Nonce: base64.StdEncoding.EncodeToString(nonce),
-		Data:  base64.StdEncoding.EncodeToString(ct),
+	return &cryptoEnvelope{
+		Cipher:         cipherAES256GCM,
+		KDF:            kdfArgon2id,
+		KDFMemoryKiB:   argon2Memory,
+		KDFIterations:  argon2Time,
+		KDFParallelism: argon2Threads,
+		Salt:           base64.StdEncoding.EncodeToString(salt),
+		Nonce:          base64.StdEncoding.EncodeToString(nonce),
+		Data:           base64.StdEncoding.EncodeToString(ct),
 	}, nil
 }
 
-func decryptTokens(t *encryptedBlob, passphrase string) ([]byte, error) {
-	if t.KDF.Algorithm != kdfArgon2id {
-		return nil, fmt.Errorf("unsupported kdf %q", t.KDF.Algorithm)
+func decryptTokens(t *cryptoEnvelope, passphrase string) ([]byte, error) {
+	if t.KDF != kdfArgon2id {
+		return nil, fmt.Errorf("unsupported kdf %q", t.KDF)
 	}
-	salt, err := base64.StdEncoding.DecodeString(t.KDF.Salt)
+	salt, err := base64.StdEncoding.DecodeString(t.Salt)
 	if err != nil {
 		return nil, fmt.Errorf("decode salt: %w", err)
 	}
@@ -438,7 +436,7 @@ func decryptTokens(t *encryptedBlob, passphrase string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode data: %w", err)
 	}
-	m, ti, th := t.KDF.MemoryKiB, t.KDF.Iterations, t.KDF.Parallelism
+	m, ti, th := t.KDFMemoryKiB, t.KDFIterations, t.KDFParallelism
 	if m == 0 {
 		m = argon2Memory
 	}
