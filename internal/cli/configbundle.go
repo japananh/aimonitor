@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/pbkdf2"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -25,41 +23,26 @@ import (
 	"github.com/japananh/aimonitor/internal/store"
 )
 
-// bundleVersion is the format version this build WRITES. Import accepts this
-// and older versions it still understands (see bundleVersionMin).
+// bundleVersion guards against importing a file this build doesn't understand.
+// No back-compat with older formats is carried — there are no released users
+// yet, so the format is just "the current one".
 //
-//	v1 (≤1.1.1): account identities plaintext; tokens (if any) = encrypted
-//	             map[label]base64(stash).
-//	v2:          with --include-tokens, the FULL account records — label,
-//	             email, org, AND token — live inside the encrypted blob, so the
-//	             plaintext file reveals only version + settings. The no-token
-//	             bundle still lists plaintext identities (it has no passphrase
-//	             to encrypt with; it's the explicitly-shareable variant).
-const (
-	bundleVersion    = 2
-	bundleVersionMin = 1
-)
+// With --include-tokens the FULL account records (label, email, org, org_uuid,
+// AND token) live inside the encrypted blob, so the plaintext file reveals only
+// version + settings. The no-token bundle lists plaintext identities (it has no
+// passphrase to encrypt with — the explicitly-shareable variant).
+const bundleVersion = 1
 
-// KDF identifiers stored in the bundle's `kdf` field so import can pick the
-// right derivation. New exports use Argon2id; pbkdf2 is kept for decrypting
-// bundles written by v1.1.1 (which shipped PBKDF2).
-const (
-	kdfArgon2id = "argon2id"
-	kdfPBKDF2   = "pbkdf2-sha256"
-)
+// kdfArgon2id is the only KDF. It's still recorded in the envelope's `kdf`
+// field so the scheme is self-describing if it ever needs to change.
+const kdfArgon2id = "argon2id"
 
-// Argon2id parameters — memory-hard, OWASP-recommended baseline
-// (m=19 MiB, t=2, p=1). Memory-hardness blunts the GPU/ASIC advantage that
-// makes PBKDF2 weaker against offline brute force of a leaked bundle.
+// Argon2id parameters — memory-hard, OWASP baseline (m=19 MiB, t=2, p=1).
 const (
 	argon2Memory  uint32 = 19456 // KiB (19 MiB)
 	argon2Time    uint32 = 2
 	argon2Threads uint8  = 1
 )
-
-// pbkdf2Iters is the legacy PBKDF2-HMAC-SHA256 work factor — only used now to
-// decrypt v1.1.1 bundles whose envelope omits the iteration count.
-const pbkdf2Iters = 600_000
 
 // exportBundle is the on-disk shape of `aimonitor config export`. Settings and
 // account identities are plaintext (safe to share); credentials, when present
@@ -99,13 +82,10 @@ type encAccount struct {
 // plaintext is a JSON []encAccount in v2 (identities + tokens) or a
 // map[label]base64 in v1. Salt and nonce are random per export.
 type encryptedTokens struct {
-	KDF string `json:"kdf"` // "argon2id" (new) or "pbkdf2-sha256" (v1.1.1)
-	// Argon2id parameters (kdf == "argon2id").
-	Memory  uint32 `json:"memory,omitempty"`  // KiB
-	Time    uint32 `json:"time,omitempty"`    // iterations
-	Threads uint8  `json:"threads,omitempty"` // parallelism
-	// PBKDF2 iteration count (kdf == "pbkdf2-sha256").
-	Iter       int    `json:"iter,omitempty"`
+	KDF        string `json:"kdf"`     // "argon2id"
+	Memory     uint32 `json:"memory"`  // Argon2id m (KiB)
+	Time       uint32 `json:"time"`    // Argon2id t (iterations)
+	Threads    uint8  `json:"threads"` // Argon2id p (parallelism)
 	Salt       string `json:"salt"`       // base64
 	Nonce      string `json:"nonce"`      // base64
 	Ciphertext string `json:"ciphertext"` // base64
@@ -276,8 +256,8 @@ func runConfigImport(ctx context.Context, cmd *cobra.Command, s *store.Store, pa
 	if err := json.Unmarshal(raw, &bundle); err != nil {
 		return fmt.Errorf("parse bundle: %w", err)
 	}
-	if bundle.Version < bundleVersionMin || bundle.Version > bundleVersion {
-		return fmt.Errorf("unsupported bundle version %d (this build understands %d–%d)", bundle.Version, bundleVersionMin, bundleVersion)
+	if bundle.Version != bundleVersion {
+		return fmt.Errorf("unsupported bundle version %d (this build understands %d)", bundle.Version, bundleVersion)
 	}
 
 	// 1. Settings — always restored. Validate each through the same path as
@@ -318,9 +298,9 @@ func runConfigImport(ctx context.Context, cmd *cobra.Command, s *store.Store, pa
 	if err != nil {
 		return err
 	}
-	recs, err := decodeAccountRecords(bundle, plain)
-	if err != nil {
-		return err
+	var recs []encAccount
+	if err := json.Unmarshal(plain, &recs); err != nil {
+		return fmt.Errorf("parse decrypted records: %w", err)
 	}
 
 	var added, refreshed, failed int
@@ -345,30 +325,6 @@ func runConfigImport(ctx context.Context, cmd *cobra.Command, s *store.Store, pa
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Accounts: %d added, %d refreshed, %d failed.\n", added, refreshed, failed)
 	return nil
-}
-
-// decodeAccountRecords reconstructs full records (identity + token) from a
-// decrypted payload, handling both bundle formats: v2 sealed the records whole;
-// v1 sealed only a label→token map, with identities in the plaintext list.
-func decodeAccountRecords(bundle exportBundle, plain []byte) ([]encAccount, error) {
-	if bundle.Version >= 2 {
-		var recs []encAccount
-		if err := json.Unmarshal(plain, &recs); err != nil {
-			return nil, fmt.Errorf("parse decrypted records: %w", err)
-		}
-		return recs, nil
-	}
-	var tokenMap map[string]string
-	if err := json.Unmarshal(plain, &tokenMap); err != nil {
-		return nil, fmt.Errorf("parse decrypted tokens: %w", err)
-	}
-	var recs []encAccount
-	for _, a := range bundle.Accounts {
-		if tok, ok := tokenMap[a.Label]; ok {
-			recs = append(recs, encAccount{exportAccount: a, Token: tok})
-		}
-	}
-	return recs, nil
 }
 
 // restoreAccount creates or refreshes an account from an identity + credential
@@ -467,32 +423,20 @@ func decryptTokens(t *encryptedTokens, passphrase string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode ciphertext: %w", err)
 	}
-	var key []byte
-	switch t.KDF {
-	case kdfArgon2id:
-		m, ti, th := t.Memory, t.Time, t.Threads
-		if m == 0 {
-			m = argon2Memory
-		}
-		if ti == 0 {
-			ti = argon2Time
-		}
-		if th == 0 {
-			th = argon2Threads
-		}
-		key = argon2.IDKey([]byte(passphrase), salt, ti, m, th, 32)
-	case kdfPBKDF2, "":
-		iter := t.Iter
-		if iter <= 0 {
-			iter = pbkdf2Iters
-		}
-		var derr error
-		if key, derr = pbkdf2.Key(sha256.New, passphrase, salt, iter, 32); derr != nil {
-			return nil, fmt.Errorf("derive key: %w", derr)
-		}
-	default:
+	if t.KDF != kdfArgon2id {
 		return nil, fmt.Errorf("unsupported kdf %q", t.KDF)
 	}
+	m, ti, th := t.Memory, t.Time, t.Threads
+	if m == 0 {
+		m = argon2Memory
+	}
+	if ti == 0 {
+		ti = argon2Time
+	}
+	if th == 0 {
+		th = argon2Threads
+	}
+	key := argon2.IDKey([]byte(passphrase), salt, ti, m, th, 32)
 	gcm, err := newGCM(key)
 	if err != nil {
 		return nil, err
