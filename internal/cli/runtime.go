@@ -55,7 +55,7 @@ func withRuntime(ctx context.Context, fn func(ctx context.Context, s *store.Stor
 	if err != nil {
 		return err
 	}
-	defer func() { _ = s.Close() }()
+	defer s.Close()
 
 	p, err := claudeProvider()
 	if err != nil {

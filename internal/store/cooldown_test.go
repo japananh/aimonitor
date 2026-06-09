@@ -12,7 +12,7 @@ func TestCooldown_SetClearRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer func() { _ = s.Close() }()
+	defer s.Close()
 	ctx := context.Background()
 
 	acct, err := s.CreateAccount(ctx, Account{Label: "a", KeyringRef: "r"})
@@ -48,7 +48,7 @@ func TestCooldown_SetClearRoundTrip(t *testing.T) {
 
 func TestCooldown_SetMissingAccount(t *testing.T) {
 	s, _ := Open(":memory:")
-	defer func() { _ = s.Close() }()
+	defer s.Close()
 	if err := s.SetCooldown(context.Background(), 999, time.Now(), "x"); !errors.Is(err, ErrAccountNotFound) {
 		t.Errorf("SetCooldown on missing account = %v, want ErrAccountNotFound", err)
 	}

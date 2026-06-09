@@ -102,7 +102,7 @@ func (s *Store) ListSwitchAudit(ctx context.Context, n int) ([]SwitchAuditRecord
 	if err != nil {
 		return nil, fmt.Errorf("query switch_audit: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []SwitchAuditRecord
 	for rows.Next() {

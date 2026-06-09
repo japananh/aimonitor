@@ -56,7 +56,7 @@ func newMCPServeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
+			defer s.Close()
 			cfg, err := mcpserver.LoadConfig(cmd.Context(), s)
 			if err != nil {
 				return fmt.Errorf("load mcp config: %w", err)
@@ -176,7 +176,7 @@ func newMCPStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer func() { _ = s.Close() }()
+			defer s.Close()
 			cfg, err := mcpserver.LoadConfig(ctx, s)
 			if err != nil {
 				return err

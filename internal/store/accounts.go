@@ -117,7 +117,7 @@ func (s *Store) ListAccounts(ctx context.Context) ([]Account, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []Account
 	for rows.Next() {

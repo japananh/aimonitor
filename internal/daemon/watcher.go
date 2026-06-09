@@ -83,7 +83,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		return fmt.Errorf("fsnotify: %w", err)
 	}
 	w.fsn = fsn
-	defer func() { _ = fsn.Close() }()
+	defer fsn.Close()
 
 	if err := w.bootstrap(ctx); err != nil {
 		return err
@@ -206,7 +206,7 @@ func (w *Watcher) processFile(ctx context.Context, path string) {
 		w.reportError(fmt.Errorf("open %q: %w", path, err))
 		return
 	}
-	defer func() { _ = f.Close() }()
+	defer f.Close()
 
 	info, err := f.Stat()
 	if err != nil {

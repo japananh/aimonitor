@@ -214,7 +214,7 @@ func getStoreSetting(ctx context.Context, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = s.Close() }()
+	defer s.Close()
 
 	v, err := s.GetSetting(ctx, key)
 	if errors.Is(err, store.ErrSettingNotFound) {
@@ -238,7 +238,7 @@ func setStoreSetting(ctx context.Context, key, value string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = s.Close() }()
+	defer s.Close()
 	return s.PutSetting(ctx, key, norm)
 }
 
