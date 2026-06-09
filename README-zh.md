@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/japananh/aimonitor?sort=semver)](https://github.com/japananh/aimonitor/releases)
 
-> [English](README.md) | **简体中文** | [Tiếng Việt](README-vi.md)
+> [English](README.md) | **简体中文** | [繁體中文](README-zh-TW.md) | [Tiếng Việt](README-vi.md)
 
 <img src="docs/popover.png" alt="菜单栏弹窗：每个账户的 5h/7d 用量条" width="340">
 
