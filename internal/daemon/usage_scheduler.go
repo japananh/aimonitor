@@ -96,10 +96,6 @@ type UsageScheduler struct {
 	// rand is seeded per-scheduler so tests can substitute a deterministic
 	// source. Default uses the package math/rand/v2 global source.
 	rand *rand.Rand
-
-	// inactiveRR is the round-robin cursor for background-polling inactive
-	// accounts' usage — one per successful active tick (see fetchOneInactive).
-	inactiveRR int
 }
 
 // defaults applies the production constants to any field left zero. Lets
@@ -206,15 +202,14 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 				logger.Warn("usage fetch error", "backoff", next, "err", err)
 			default:
 				currentBackoff = u.Baseline
-				// Active fetch succeeded; opportunistically poll ONE inactive
-				// account (round-robin) so the per-account usage bars stay
-				// populated. Valid-token-only and best-effort — see
-				// fetchOneInactive. Skipped during speedup so a near-limit
-				// active account doesn't drag inactive polling to a fast cadence.
+				// Only the ACTIVE account is polled in the background. Inactive
+				// accounts are fetched on demand — when the popover opens, and at
+				// swap-decision time (refreshStaleCandidates) — not on a
+				// continuous round-robin, which would keep hitting Anthropic for
+				// shared accounts nobody's looking at. Speed up only while the
+				// active account is near its limit.
 				if pct, ok := u.activePct(ctx); ok && pct >= u.SpeedupAtPct {
 					next = u.SpeedupInterval
-				} else {
-					u.fetchOneInactive(ctx)
 				}
 			}
 			timer.Reset(u.jittered(next))
@@ -302,79 +297,6 @@ func (u *UsageScheduler) liveCredential(ctx context.Context, acct store.Account,
 		return u.RefreshActive(ctx, acct, force)
 	}
 	return u.Provider.ActiveCredential(ctx)
-}
-
-// fetchOneInactive polls usage for ONE inactive account per call,
-// round-robin, so the per-account usage bars stay populated without
-// fetching every account every tick.
-//
-// It uses ONLY the account's stashed access token, and only while that
-// token is still valid. It deliberately never refreshes an inactive
-// account's token: a refresh rotates the refresh token and would
-// invalidate any other credential manager's copy of the same account
-// (Claude Code, a second menu-bar app), triggering cross-tool token churn.
-// An expired stash is left untouched — the account keeps its last-known
-// usage and the UI marks it stale. The account's data refreshes naturally
-// the next time aimonitor switches to it (the switch re-stashes a fresh
-// blob) or the user re-imports.
-//
-// Entirely best-effort: any failure is swallowed (logged at most) so
-// background inactive polling can never disrupt the active schedule.
-func (u *UsageScheduler) fetchOneInactive(ctx context.Context) {
-	resolve := u.ResolveActive
-	if resolve == nil {
-		resolve = u.activeAccount
-	}
-	activeAcct, activeFound, err := resolve(ctx)
-	if err != nil {
-		return
-	}
-	accounts, err := u.Store.ListAccounts(ctx)
-	if err != nil || len(accounts) == 0 {
-		return
-	}
-	now := time.Now()
-	var inactive []store.Account
-	for _, a := range accounts {
-		if activeFound && a.ID == activeAcct.ID {
-			continue
-		}
-		// Skip accounts parked after a 429 — polling one mid-cooldown just
-		// earns another 429 and deepens the throttle.
-		if a.CooldownUntil.After(now) {
-			continue
-		}
-		inactive = append(inactive, a)
-	}
-	if len(inactive) == 0 {
-		return
-	}
-	acct := inactive[u.inactiveRR%len(inactive)]
-	u.inactiveRR++
-
-	stash, err := claude.RetrieveStash(ctx, acct.KeyringRef)
-	if err != nil {
-		return
-	}
-	defer stash.Zero()
-	tokens, err := claude.ParseCredential(stash)
-	if err != nil {
-		return
-	}
-	if claude.IsExpired(tokens.ExpiresAt) {
-		return // valid-token-only: never refresh an inactive (shared) token
-	}
-	limits, err := u.Fetcher.FetchLimits(ctx, stash)
-	if err != nil {
-		recordThrottle(ctx, u.Store, acct, err)
-		logger.Warn("inactive usage fetch failed", "account", acct.Label, "err", err)
-		return
-	}
-	clearThrottle(ctx, u.Store, acct)
-	limits.AccountID = acct.ID
-	if err := u.Store.PutLimits(ctx, acct.ID, limits); err != nil {
-		logger.Error("inactive put limits failed", "account", acct.Label, "err", err)
-	}
 }
 
 // activeAccount finds the account row whose stashed credential bytes
