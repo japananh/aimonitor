@@ -26,10 +26,15 @@ linters:
         - fmt.Fprintln
         - fmt.Fprint
         # Close() on a defer is the conventional Go idiom; its error on a
-        # resource we're done with isn't actionable. Excluding it lets us write
-        # a plain `defer x.Close()` instead of wrapping each in a closure.
-        # (bodyclose still enforces that resp.Body IS closed.)
-        - (io.Closer).Close
+        # resource we're done with isn't actionable. errcheck matches by
+        # concrete receiver type (not the io.Closer interface), so list each
+        # type we `defer x.Close()` on. Lets us write a plain `defer x.Close()`
+        # instead of wrapping every one in a closure. (bodyclose still enforces
+        # that resp.Body IS closed.)
+        - (*database/sql.Rows).Close
+        - (*os.File).Close
+        - (*github.com/fsnotify/fsnotify.Watcher).Close
+        - (*github.com/japananh/aimonitor/internal/store.Store).Close
   exclusions:
     rules:
       # Cobra RunE handlers take (cmd, args) by signature even when neither
