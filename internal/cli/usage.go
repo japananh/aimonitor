@@ -30,15 +30,14 @@ func newUsageRefreshCmd() *cobra.Command {
 		Long: `Fetch and store current usage, refreshing an account's stashed token if
 it has expired.
 
-With no argument, refreshes every account except the active one
+With no argument, refreshes EVERY account, including the active one
 (best-effort — per-account failures are reported but don't fail the run).
 
 With a <label>, refreshes just that account and FAILS (non-zero exit) if
 the fetch can't complete, so the caller sees the error.
 
-The active account is never refreshed here — it's kept fresh by the
-daemon, and rotating its stash out-of-band would desync it from the live
-keychain slot. Naming the active account is an error.`,
+The active account is refreshed through the Switcher's locked live path so
+its stash stays in sync with the live keychain slot.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withRuntime(cmd.Context(), func(ctx context.Context, s *store.Store, p provider.Provider) error {
@@ -93,8 +92,9 @@ func runUsageRefresh(ctx context.Context, cmd *cobra.Command, s *store.Store, p 
 		return nil
 	}
 
-	// Identify the active account so we can skip it (its stash must not be
-	// rotated out-of-band; the daemon keeps it fresh).
+	// Identify the active account so it can be refreshed through the safe
+	// live-refresh path (which keeps its stash in sync with the live slot)
+	// rather than the stash-rotating RefreshAccountUsage.
 	cc, _ := claudeconfig.New()
 	activeID := int64(-1)
 	if active, found, rErr := daemon.ResolveActiveAccount(ctx, s, p, cc); rErr == nil && found {
@@ -103,15 +103,17 @@ func runUsageRefresh(ctx context.Context, cmd *cobra.Command, s *store.Store, p 
 
 	fetcher := claude.NewUsageFetcher()
 	refresher := claude.NewTokenRefresher()
+	sw := daemon.NewSwitcher(s, p)
 
-	var refreshed, skipped, failed int
+	var refreshed, failed int
 	for _, acct := range accounts {
+		var lim provider.Limits
+		var err error
 		if acct.ID == activeID {
-			fmt.Fprintf(cmd.OutOrStdout(), "%-18s active — kept fresh by the daemon, skipped\n", acct.Label)
-			skipped++
-			continue
+			lim, err = daemon.RefreshActiveUsage(ctx, s, sw, fetcher, acct)
+		} else {
+			lim, err = daemon.RefreshAccountUsage(ctx, s, fetcher, refresher, acct)
 		}
-		lim, err := daemon.RefreshAccountUsage(ctx, s, fetcher, refresher, acct)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "%-18s failed: %v\n", acct.Label, err)
 			failed++
@@ -120,6 +122,6 @@ func runUsageRefresh(ctx context.Context, cmd *cobra.Command, s *store.Store, p 
 		fmt.Fprintf(cmd.OutOrStdout(), "%-18s 5h %.0f%%  7d %.0f%%\n", acct.Label, lim.FiveHourPct, lim.SevenDayPct)
 		refreshed++
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "\n%d refreshed, %d skipped, %d failed.\n", refreshed, skipped, failed)
+	fmt.Fprintf(cmd.OutOrStdout(), "\n%d refreshed, %d failed.\n", refreshed, failed)
 	return nil
 }
