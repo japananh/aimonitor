@@ -16,11 +16,10 @@ import (
 // stashed credential, refreshing (and re-stashing) the stashed access token
 // first if it has expired.
 //
-// Unlike the background round-robin (UsageScheduler.fetchOneInactive, which
-// is valid-token-only), this DOES rotate an expired token. Rotation can
-// invalidate another credential manager's copy of the same account, so this
-// is for user-initiated refreshes and swap-time decisions only — never
-// background polling.
+// This DOES rotate an expired token. Rotation can invalidate another
+// credential manager's copy of the same account, so it's for user-initiated
+// refreshes (popover open, "Refresh usage") and swap-time candidate refresh
+// only — inactive accounts are not polled continuously in the background.
 //
 // It must NOT be called for the active account: rotating the active stash
 // here would desync it from the live keychain slot. Use
