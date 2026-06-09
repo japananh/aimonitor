@@ -339,6 +339,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Fresh data the moment it opens, without waiting for the 2s tick.
         Task { @MainActor in await model.refresh() }
+        // Inactive accounts aren't polled in the background — fetch them now
+        // that the popover is open (throttled in the model). The daemon keeps
+        // the active account fresh on its own cadence.
+        model.refreshInactiveOnOpen()
         // Activate so the status item's window geometry is realised before we
         // read it for positioning (same reason the old popover needed it).
         NSApp.activate(ignoringOtherApps: true)
