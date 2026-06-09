@@ -37,11 +37,13 @@ struct PopoverRootView: View {
                 // centers line up with each other and with the title — SF
                 // Symbols have differing intrinsic heights, so without an equal
                 // frame they'd sit at slightly different vertical positions.
-                HStack(alignment: .center, spacing: 10) {
+                HStack(alignment: .center, spacing: 8) {
                     if let addAccount {
                         headerIcon("plus", help: "Add a Claude account to AIMonitor", action: addAccount)
                     }
-                    headerIcon("ladybug", help: "Report a bug — opens a new GitHub issue") {
+                    // ladybug's glyph sits ~1px low vs plus/gearshape even when
+                    // framed — nudge it up so the three line up optically.
+                    headerIcon("ladybug", help: "Report a bug — opens a new GitHub issue", yNudge: -1) {
                         NSWorkspace.shared.open(URL(string: "https://github.com/japananh/aimonitor/issues/new?template=bug_report.yml")!)
                     }
                     headerIcon("gearshape", help: "Preferences — auto-switch, updates, and startup settings", action: openPreferences)
@@ -152,11 +154,12 @@ struct PopoverRootView: View {
     // headerIcon is a uniform-size icon button for the title row, so all the
     // action glyphs share one frame and align on a single centered line.
     @ViewBuilder
-    private func headerIcon(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
+    private func headerIcon(_ systemName: String, help: String, yNudge: CGFloat = 0, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 14))
-                .frame(width: 22, height: 22)
+                .frame(width: 18, height: 20)
+                .offset(y: yNudge) // render-only nudge; doesn't shift layout
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
