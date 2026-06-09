@@ -23,7 +23,9 @@ When the active account's 5-hour **or** 7-day utilization reaches its
 threshold, a switch arms: a desktop notification announces the target and
 the swap fires after `grace_sec` (time to wrap up a thought — running
 `claude` sessions are never interrupted; they adopt the new credential
-automatically).
+automatically). If the active account is already **exhausted** (100 % on
+the binding window), the swap fires immediately — no grace delay — to
+rescue sessions that can't make a request.
 
 An armed switch cancels only when the active account drops back below the
 threshold on **both** windows — a 5-hour reset doesn't clear a weekly cap.
@@ -50,7 +52,8 @@ put and notifies that no account has more headroom.
 ## Anti-thrash guards
 
 - 5-minute cooldown after every auto-switch (the fresh account's numbers
-  are re-fetched before it can be judged).
+  are re-fetched before it can be judged). An active account that hits
+  100 % bypasses this cooldown — a rescue can't wait out the window.
 - 10-minute cooldown after a "no candidate" decision.
 - A manual switch (CLI or widget) always wins; auto-switch re-evaluates
   from the new active account.
