@@ -27,38 +27,25 @@ struct PopoverRootView: View {
             // Top bar: the "Accounts" title and the settings gear on one
             // line (gear right-aligned). Replaces the old footer
             // "Preferences…" text button and the account table's own header.
-            HStack {
+            HStack(alignment: .center, spacing: 0) {
                 // Panel title — bigger than the account-row headlines so the
                 // hierarchy reads title > account name > email > org.
                 Text("Accounts")
                     .font(.headline)
                 Spacer()
-                // Add account: instructions dialog (the actual login happens
-                // in the browser via `claude /login`; the import banner then
-                // captures it).
-                if let addAccount {
-                    Button(action: addAccount) {
-                        Image(systemName: "plus")
+                // Action icons. Each is a uniform square so their glyph
+                // centers line up with each other and with the title — SF
+                // Symbols have differing intrinsic heights, so without an equal
+                // frame they'd sit at slightly different vertical positions.
+                HStack(alignment: .center, spacing: 10) {
+                    if let addAccount {
+                        headerIcon("plus", help: "Add a Claude account to AIMonitor", action: addAccount)
                     }
-                    .buttonStyle(.borderless)
-                    .pointerCursor()
-                    .help("Add a Claude account to AIMonitor")
+                    headerIcon("ladybug", help: "Report a bug — opens a new GitHub issue") {
+                        NSWorkspace.shared.open(URL(string: "https://github.com/japananh/aimonitor/issues/new?template=bug_report.yml")!)
+                    }
+                    headerIcon("gearshape", help: "Preferences — auto-switch, updates, and startup settings", action: openPreferences)
                 }
-                // Bug report: opens a pre-filled GitHub issue (bug template).
-                Button {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/japananh/aimonitor/issues/new?template=bug_report.yml")!)
-                } label: {
-                    Image(systemName: "ladybug")
-                }
-                .buttonStyle(.borderless)
-                .pointerCursor()
-                .help("Report a bug — opens a new GitHub issue")
-                Button(action: openPreferences) {
-                    Image(systemName: "gearshape")
-                }
-                .buttonStyle(.borderless)
-                .pointerCursor()
-                .help("Preferences — auto-switch, updates, and startup settings")
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -160,6 +147,21 @@ struct PopoverRootView: View {
         )
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
+    }
+
+    // headerIcon is a uniform-size icon button for the title row, so all the
+    // action glyphs share one frame and align on a single centered line.
+    @ViewBuilder
+    private func headerIcon(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14))
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .pointerCursor()
+        .help(help)
     }
 
     // daemonDown is true when no status has been published, or the last
