@@ -28,7 +28,7 @@ func TestUsageHistory_AppendAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	ctx := context.Background()
 	id := newAccountForHistory(t, s, "acct")
 
@@ -73,7 +73,7 @@ func TestUsageHistory_PrunesOldPointsOnAppend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	ctx := context.Background()
 	id := newAccountForHistory(t, s, "acct")
 
@@ -106,7 +106,7 @@ func TestPutLimits_RecordsHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	ctx := context.Background()
 	id := newAccountForHistory(t, s, "acct")
 
