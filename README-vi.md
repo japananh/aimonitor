@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/japananh/aimonitor?sort=semver)](https://github.com/japananh/aimonitor/releases)
 
-> [English](README.md) | [中文](README-zh.md) | **Tiếng Việt**
+> [English](README.md) | [简体中文](README-zh.md) | **Tiếng Việt**
 
 <img src="docs/popover.png" alt="Popover trên menu bar: thanh usage 5h/7d theo từng account" width="340">
 
