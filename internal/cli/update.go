@@ -147,7 +147,7 @@ echo "=== done $(TS) (exit $RC) ==="
 	if err != nil {
 		return fmt.Errorf("open update log: %w", err)
 	}
-	defer func() { _ = logFile.Close() }() // child dup'd the fd; parent can close
+	defer logFile.Close() // child dup'd the fd; parent can close
 
 	c := exec.Command("/bin/bash", "-c", script)
 	c.Stdout = logFile

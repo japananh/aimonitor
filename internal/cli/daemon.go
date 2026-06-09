@@ -72,7 +72,7 @@ func runDaemon(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = s.Close() }()
+	defer s.Close()
 
 	p, err := claudeProvider()
 	if err != nil {

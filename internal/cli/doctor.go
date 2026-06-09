@@ -57,7 +57,7 @@ func runDoctor(cmd *cobra.Command) error {
 		printChecks(out, checks)
 		return errors.New("doctor: critical failure (sqlite)")
 	}
-	defer func() { _ = s.Close() }()
+	defer s.Close()
 	checks = append(checks, doctorCheck{"sqlite open", true, s.Path})
 
 	// Provider register.

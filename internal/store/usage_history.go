@@ -65,7 +65,7 @@ func (s *Store) ListUsageHistory(ctx context.Context, accountID int64, since tim
 	if err != nil {
 		return nil, fmt.Errorf("list usage_history: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var out []UsageSample
 	for rows.Next() {

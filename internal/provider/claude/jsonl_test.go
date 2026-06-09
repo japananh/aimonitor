@@ -83,7 +83,7 @@ func TestParseReader_FixtureFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open fixture: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer f.Close()
 
 	var samples []Sample
 	var lastProgress int64
