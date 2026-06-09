@@ -2,213 +2,140 @@
 
 # aimonitor
 
-**Giám sát phiên Claude Code nhiều tài khoản và đổi tài khoản ngầm, cho macOS & Linux.**
+**Giám sát usage & tự động đổi tài khoản Claude Code (nhiều account) cho macOS và Linux.**
 
 [![CI](https://github.com/japananh/aimonitor/actions/workflows/ci.yml/badge.svg)](https://github.com/japananh/aimonitor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/japananh/aimonitor?sort=semver)](https://github.com/japananh/aimonitor/releases)
 
-</div>
-
 > [English](README.md) | [中文](README-zh.md) | **Tiếng Việt**
+
+<img src="docs/popover.png" alt="Popover trên menu bar: thanh usage 5h/7d theo từng account" width="340">
+
+</div>
 
 ## Tính năng
 
-- 🔍 **Xem mức dùng 5 giờ và 7 ngày của từng tài khoản** ngay trên menu bar — số liệu thật lấy thẳng từ endpoint `/api/oauth/usage` của Anthropic, không tốn token nào.
-- 🔀 **Đổi tài khoản ngầm** — `aimonitor switch <label>` tự refresh OAuth access token rồi ghi credential mới vào, không phải mở terminal khác, cũng không cần `claude /login`.
-- 🤖 **Tự đổi tài khoản khi chạm một trong hai ngưỡng** — mức dùng 5 giờ **hoặc** 7 ngày vượt ngưỡng là đổi (mỗi ngưỡng chỉnh riêng được, mặc định 80%). Nó chọn tài khoản còn dư nhiều nhất, và ưu tiên thoát khỏi tài khoản đã cạn hạn mức tuần dù các tài khoản kia đang nóng 5 giờ — vì hạn 5 giờ vài tiếng là hồi, còn hạn tuần thì kẹt cả mấy ngày. Phiên `claude` đang chạy **không bị ngắt** — tự nhận credential mới luôn.
-- 🔌 **MCP server cho Claude Code** — 28 tool Slack + ClickUp qua stdio: gửi tin vào channel/thread (mrkdwn + code block), upload file, search; task, comment và Docs ClickUp (đọc & ghi). Có chế độ read-only theo từng dịch vụ.
-- 🤝 **Chạy chung êm với tool khác.** aimonitor nhận diện tài khoản đang dùng theo danh tính (email + tổ chức), nên khi Claude Code hay một tool đổi-tài-khoản khác thay credential, nó tự bám theo — đồng thời báo cho bạn biết, hoặc gợi ý import nếu đó là tài khoản nó chưa quản lý.
-- 🔐 **Credential nằm trong keyring của hệ điều hành** (macOS dùng Keychain qua `/usr/bin/security`, Linux dùng libsecret). SQLite chỉ lưu tham chiếu; token không bao giờ ra khỏi keyring.
-- ⬆️ **Tự cập nhật** — kiểm tra bản mới trên GitHub rồi cập nhật qua Homebrew sau khi bạn đồng ý. Không bao giờ tự cài khi chưa hỏi.
-- 📡 **Chạy hoàn toàn ở máy bạn.** Không telemetry, không gửi dữ liệu đi đâu.
+- 🔍 **Thanh usage 5h + 7d theo từng account** — đọc từ `/api/oauth/usage` của Anthropic (không tốn token), kèm đường xu hướng (`↗ +21% in 45m`).
+- 🔀 **Đổi account âm thầm** — `aimonitor switch <label>` refresh token OAuth rồi thay credential live. Không cần `claude /login`, không phải mở terminal.
+- 🤖 **Auto-swap** khi chạm ngưỡng 5h *hoặc* 7d (mặc định 80 %) — chọn account còn nhiều headroom nhất (cân cả 2 cửa sổ), bỏ qua account đã cạn/đang bị rate-limit, và đổi ngay nếu account active chạm 100 %. Session `claude` đang chạy tự theo account mới.
+- 🔔 **Thông báo khi gần ngưỡng** (khi auto-swap tắt).
+- 💾 **Export / import** settings, hoặc chuyển account sang máy khác — credential là tùy chọn, mã hóa bằng passphrase (Argon2id + AES-256-GCM).
+- 🔌 **MCP server** — 28 tool Slack + ClickUp cho Claude Code qua stdio, có chế độ read-only theo từng dịch vụ.
+- 🔐 **Lưu trong OS keyring** (macOS Keychain, Linux libsecret). SQLite chỉ giữ tham chiếu; token không rời keyring. Không telemetry.
 
 ## Cài đặt
 
-### macOS (Sonoma 14 trở lên)
-
 ```sh
+# macOS (Sonoma 14+)
 brew install --cask japananh/tap/aimonitor
-```
 
-> **Lần đầu mở:** app chưa được notarize (việc này nằm trong kế hoạch). Bạn gỡ cờ cách ly của Gatekeeper một lần:
-> ```sh
-> xattr -dr com.apple.quarantine /Applications/AIMonitor.app
-> ```
-> Hoặc chuột phải → Open → xác nhận. Chi tiết ở [`docs/unsigned-app.md`](docs/unsigned-app.md).
-
-### Linux (Ubuntu 22.04 trở lên)
-
-```sh
+# Linux (Ubuntu 22.04+) — chỉ CLI
 curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/linux/install.sh | sh
-```
 
-Trên Linux mới chỉ có CLI; widget trên menu bar (GTK) để dành cho v2.0.
-
-### Dùng `go install` (chỉ CLI, mọi nền tảng)
-
-```sh
+# Mọi nền tảng, chỉ CLI
 go install github.com/japananh/aimonitor/cmd/aimonitor@latest
 ```
 
-Lệnh này cài `aimonitor` vào `$GOBIN`. Không có app, không có dịch vụ tự chạy lúc đăng nhập — hợp khi bạn chỉ cần CLI để đổi tài khoản trong terminal, hoặc không muốn thêm Homebrew tap.
+> **macOS lần đầu mở:** file `.app` chưa notarize — gỡ quarantine một lần:
+> `xattr -dr com.apple.quarantine /Applications/AIMonitor.app` (hoặc chuột phải → Open). Xem [`docs/unsigned-app.md`](docs/unsigned-app.md).
 
 ## Bắt đầu nhanh
 
 ```sh
-# 1. Đăng ký luôn tài khoản Claude Code bạn đang đăng nhập làm tài khoản đầu tiên.
-#    --adopt-current lấy credential sẵn có trong keychain, khỏi phải đăng nhập OAuth lại.
-aimonitor add --adopt-current --label personal
-
-# 2. Thêm tài khoản thứ hai. aimonitor cất tạm credential hiện tại, in hướng dẫn rồi
-#    theo dõi keychain. Bạn mở terminal khác chạy `claude` + `/login` là xong.
-aimonitor add --label work
-
-# 3. Đổi tài khoản ngầm — không terminal, không /login.
-aimonitor switch work
-
-# 4. Xem mức dùng 5h / 7d của từng tài khoản.
-aimonitor list
-
-# 5. Kiểm tra tình trạng.
-aimonitor doctor
+aimonitor add --adopt-current --label personal   # đăng ký login Claude hiện tại
+aimonitor add --label work                        # thêm account khác (chạy claude /login, poll keychain)
+aimonitor switch work                             # đổi âm thầm
+aimonitor list                                    # xem usage 5h / 7d từng account
+aimonitor doctor                                  # health check
 ```
 
-Đang xài tool đổi tài khoản khác? Khỏi thêm tay từng cái — import hết một lần:
-
-```sh
-aimonitor import
-```
-
-Auto-swap bật sẵn ở mức 80%, chạm ngưỡng 5 giờ hoặc 7 ngày đều đổi. Dùng bình thường thì khỏi chỉnh gì thêm.
+Đang dùng switcher khác? `aimonitor import` kéo account của nó về một lần. Auto-swap bật sẵn ở 80 % — trường hợp thường không cần chỉnh gì thêm.
 
 ## Cấu hình
 
 ```sh
-aimonitor config set auto_swap.enabled true          # mặc định true
-aimonitor config set auto_swap.threshold_pct 80      # ngưỡng 5 giờ, mặc định 80
-aimonitor config set auto_swap.threshold_7d_pct 80   # ngưỡng 7 ngày, mặc định 80
-aimonitor config set autostart true                  # chạy daemon lúc đăng nhập
+aimonitor config set auto_swap.enabled true        # mặc định true
+aimonitor config set auto_swap.threshold_pct 80    # ngưỡng 5h
+aimonitor config set auto_swap.threshold_7d_pct 80 # ngưỡng 7d
+aimonitor config set autostart true                # daemon chạy khi đăng nhập
 ```
 
-<details>
-<summary><b>Tất cả khóa cấu hình</b></summary>
+Sao lưu hoặc chuyển sang máy khác:
 
-| Khóa | Mặc định | Mô tả |
+```sh
+aimonitor config export --out backup.json                                          # chỉ settings (không secret)
+AIMONITOR_PASSPHRASE=… aimonitor config export --include-tokens --out full.json     # + credential mã hóa
+AIMONITOR_PASSPHRASE=… aimonitor config import full.json                            # khôi phục ở máy khác
+```
+
+`--include-tokens` đóng gói login đã mã hóa bằng passphrase — khôi phục xong là `claude` chạy được ở máy kia mà không cần login lại, nên hãy giữ file đó như mật khẩu. Cùng thao tác có trong Preferences → Backup.
+
+<details>
+<summary><b>Tất cả config key</b></summary>
+
+| Key | Mặc định | Mô tả |
 |---|---|---|
-| `auto_swap.enabled` | `true` | Công tắc chính cho việc tự đổi tài khoản dựa trên mức dùng OAuth |
-| `auto_swap.threshold_pct` | `80` | Mức dùng 5 giờ (%) để bắt đầu tự đổi |
-| `auto_swap.threshold_7d_pct` | `80` | Mức dùng 7 ngày (%) để bắt đầu tự đổi |
-| `auto_swap.grace_sec` | `60` | Số giây từ lúc báo "sắp đổi tài khoản" đến lúc đổi thật, đủ để bạn dứt phiên `claude` đang chạy. Để `0` là đổi ngay. |
-| `auto_update.enabled` | `true` | Khởi động lên thì kiểm tra bản mới trên GitHub và báo cho bạn. Không bao giờ tự cài khi chưa xác nhận. |
-| `autostart` | `false` | Chạy daemon lúc đăng nhập |
-| `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | Mở tool MCP của dịch vụ đó cho Claude Code |
-| `mcp.slack.read_only` / `mcp.clickup.read_only` | `false` | Ẩn hẳn các tool ghi của dịch vụ khỏi danh sách tool |
-| `mcp.disabled_tools` | (trống) | Danh sách tool muốn ẩn, cách nhau bằng dấu phẩy |
-| `autoswitch` | `false` | (Cũ) bộ đếm theo JSONL kiểu tripwire, nay đã thay bằng nhóm khóa `auto_swap.*`. Đặt khóa này sẽ bị từ chối. |
+| `auto_swap.enabled` | `true` | Bật/tắt auto-swap |
+| `auto_swap.threshold_pct` | `80` | Ngưỡng usage 5h (%) để auto-swap |
+| `auto_swap.threshold_7d_pct` | `80` | Ngưỡng usage 7d (%) để auto-swap |
+| `auto_swap.grace_sec` | `60` | Trễ giữa thông báo "sắp đổi" và lúc đổi thật (`0` = đổi ngay) |
+| `notify.enabled` | `true` | Cảnh báo khi account active gần ngưỡng (chỉ khi auto-swap tắt) |
+| `notify.warn_pct` / `notify.crit_pct` | `80` / `95` | Mức cảnh báo / nghiêm trọng |
+| `auto_update.enabled` | `true` | Kiểm tra release mới trên GitHub khi mở (không tự cài) |
+| `autostart` | `false` | Chạy daemon khi đăng nhập |
+| `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | Bật tool MCP của dịch vụ đó |
+| `mcp.slack.read_only` / `mcp.clickup.read_only` | `false` | Ẩn các tool ghi của dịch vụ |
+| `mcp.disabled_tools` | (rỗng) | Tên tool cần ẩn, ngăn cách bằng dấu phẩy |
 
 </details>
 
-## Cách hoạt động
+## Cơ chế
 
-Khi tài khoản đang dùng chạm ngưỡng 5 giờ **hoặc** 7 ngày bạn đặt, aimonitor tìm tài khoản còn dư nhiều nhất rồi đổi ngầm:
+Daemon poll `/api/oauth/usage` (~5 phút ± jitter, không tốn token). Khi account active vượt ngưỡng 5h **hoặc** 7d, nó chọn account còn nhiều headroom nhất, refresh token OAuth của account đó (`POST .../v1/oauth/token`) rồi ghi vào slot Keychain live. Session `claude` đang chạy và mở mới đều dùng account mới — không cần `/login`, không restart.
 
-```
-                      polled every 5 min ± 30 s jitter
-                ┌─────────────────────────────────────────┐
-                │  GET  api.anthropic.com/api/oauth/usage │
-                │       → 5h % + 7d % + reset times       │
-                └─────────────────────────────────────────┘
-                                   │
-            5h ≥ threshold  OR  7d ≥ threshold?
-                          │
-                          ▼  yes — pick account with most headroom
-   ┌──────────────────┐   POST platform.claude.com/v1/oauth/token
-   │ target account   │ ──────────────────────────────────────────▶
-   │ refresh_token    │   grant_type=refresh_token
-   └──────────────────┘                  │
-                                         ▼ fresh access_token
-                          ┌───────────────────────────┐
-                          │ Claude Code-credentials   │
-                          │   (macOS Keychain slot)   │
-                          └───────────────────────────┘
-                                         │
-                                         ▼
-                            running and new `claude`
-                            sessions use the new account
-                            — no /login, no restart
-```
+Chi tiết: [`docs/architecture.md`](docs/architecture.md) và [`docs/thresholds.md`](docs/thresholds.md).
 
-Muốn xem đầy đủ cách daemon / store / widget ráp lại với nhau thì đọc [`docs/architecture.md`](docs/architecture.md).
+## MCP server (Slack + ClickUp cho Claude Code)
 
-## MCP server (tool Slack + ClickUp cho Claude Code)
-
-aimonitor kiêm luôn vai trò MCP server: một process stdio duy nhất đưa 28 tool Slack và ClickUp vào Claude Code — không cần runtime hay service nền nào thêm.
+Một tiến trình stdio phục vụ 28 tool — không cần runtime phụ.
 
 ```sh
-aimonitor mcp connect slack     # xác thực + lưu user token Slack (xoxp-…)
-aimonitor mcp connect clickup   # xác thực + lưu personal token ClickUp (pk_…)
-aimonitor mcp register          # đăng ký server với Claude Code
+aimonitor mcp connect slack     # lưu Slack user token (xoxp-…)
+aimonitor mcp connect clickup   # lưu ClickUp token (pk_…)
+aimonitor mcp register          # thêm server vào Claude Code
 ```
 
-- **Slack:** gửi tin vào channel/thread (mrkdwn, code block), upload file, search, lịch sử, reply trong thread, danh sách channel/user, permalink.
-- **ClickUp:** cây workspace, task (list/search/get/create/update), comment (thêm/xem/xoá), Docs (xem/tạo/sửa page).
-- **An toàn:** lớp duyệt duy nhất là prompt xin quyền từng tool của chính Claude Code. Mỗi dịch vụ có công tắc **Enabled** / **Read-only** (read-only gỡ hẳn tool ghi khỏi danh sách) cùng danh sách ẩn từng tool — chỉnh trong Preferences hoặc `aimonitor config`.
-- Token được xác thực với API thật trước khi lưu vào keyring của hệ điều hành; không bao giờ nằm trong SQLite hay log.
+- **Slack:** post vào channel/thread (mrkdwn, code block), upload, search, history, permalink.
+- **ClickUp:** cây workspace, task, comment, Docs (đọc & ghi).
+- **An toàn:** prompt xin-quyền theo từng tool của Claude Code là lớp duyệt; thêm công tắc Enabled / Read-only theo dịch vụ và danh sách ẩn từng tool. Token được verify trực tiếp rồi lưu OS keyring — không vào SQLite hay log.
 
-## Riêng tư & bảo mật
+## Quyền riêng tư & bảo mật
 
-- **Không telemetry, không gửi dữ liệu đi.** Ở bất kỳ đâu.
-- OAuth token chỉ nằm trong keyring của hệ điều hành. SQLite chỉ giữ tham chiếu, không bao giờ giữ thứ bí mật.
-- Không bao giờ ghi token ra log, kể cả khi bật `--debug`. Bộ lọc log khớp `sk-ant-(oat|ort)…`.
-- **aimonitor chỉ gửi ra mạng đúng những request này:**
-  - `GET https://api.anthropic.com/api/oauth/usage` — chỉ để tra cứu, mỗi lần ~5 KB, không tốn token. Nhịp chạy nền: tài khoản đang dùng cứ 5 phút ± 30 giây, gặp lỗi thì giãn dần (tối đa 1 giờ). Các tài khoản còn lại được lấy lần lượt từng cái, chậm rãi (chỉ khi token còn hạn — không tự refresh ngầm), hoặc lấy ngay khi bạn bấm nút làm mới của từng tài khoản / nút "Refresh usage".
-  - `POST https://platform.claude.com/v1/oauth/token` — refresh access token sắp hoặc đã hết hạn, lúc đổi tài khoản, lúc bạn làm mới mức dùng thủ công, hoặc ngay trước khi quyết định auto-swap. Làm ngầm, không mở trình duyệt.
-  - `GET https://api.github.com/repos/japananh/aimonitor/releases` — để kiểm tra cập nhật. Không cần đăng nhập, không gửi thông tin gì về bạn; chạy lúc khởi động (nếu bật `auto_update.enabled`) và khi bạn bấm "Check for Updates". Cài cập nhật thì gọi Homebrew, và chỉ chạy sau khi bạn xác nhận.
-- Lệnh CLI cũ `aimonitor probe` có gọi một request `/v1/messages` thật và đã ngừng dùng. Daemon không còn đụng tới nó.
+- Không telemetry, không phone-home. Token OAuth chỉ nằm trong OS keyring; SQLite giữ tham chiếu. Không bao giờ log token.
+- Lưu lượng ra ngoài chỉ gồm: `GET /api/oauth/usage` (introspection, không tốn token), `POST /v1/oauth/token` (refresh token âm thầm), và kiểm tra release GitHub. Không gửi thông tin gì về bạn.
 
-Mô hình rủi ro đầy đủ ở [`docs/security.md`](docs/security.md).
+Xem [`docs/security.md`](docs/security.md) cho mô hình mối đe dọa.
 
 ## Gỡ cài đặt
 
 ```sh
-aimonitor uninstall              # tắt tự chạy; vẫn giữ dữ liệu
-aimonitor uninstall --purge      # xóa luôn SQLite DB, cấu hình và các mục keyring của aimonitor
-
-# macOS
-brew uninstall --cask aimonitor
-brew untap japananh/tap          # tùy chọn
-
-# Linux
-systemctl --user disable aimonitor.service
-sudo rm /usr/local/bin/aimonitor
+aimonitor uninstall --purge      # tắt autostart + xóa SQLite DB, config, keyring entry của aimonitor
+brew uninstall --cask aimonitor  # macOS
 ```
 
-Khi gỡ, aimonitor **không bao giờ đụng** tới mục keyring `Claude Code-credentials` gốc của bạn — các phiên `claude` CLI đang đăng nhập vẫn chạy ngon.
+Keyring entry `Claude Code-credentials` gốc của bạn **không bị đụng** — login `claude` hiện tại vẫn chạy bình thường.
 
-## Build từ mã nguồn
+## Build từ source
 
-Cần Go 1.25 trở lên. Thuần Go trên mọi nền tảng — `CGO_ENABLED=0` chạy được cả trên macOS (truy cập keychain bằng cách gọi `/usr/bin/security` chứ không link framework Security qua cgo).
+Cần Go 1.25+. Thuần Go (`CGO_ENABLED=0` chạy được cả trên macOS; truy cập keychain qua `/usr/bin/security`).
 
 ```sh
-git clone https://github.com/japananh/aimonitor
-cd aimonitor
-make build              # binary CLI Go
+make build              # binary CLI
 make test               # unit test
-make widget             # build AIMonitor.app qua Swift Package Manager (chỉ macOS)
-make release-snapshot   # chạy thử goreleaser đầy đủ (không publish; cần cài goreleaser)
+make widget             # AIMonitor.app (macOS; cần Swift toolchain)
+make release-snapshot   # chạy thử goreleaser
 ```
-
-Trên macOS, build widget cần Swift toolchain (`xcode-select --install`). Không cần Xcode đầy đủ; widget build không cần giao diện qua Swift Package Manager.
-
-## Tài liệu
-
-| Chủ đề | Ở đâu |
-|---|---|
-| Kiến trúc (daemon, store, widget) | [`docs/architecture.md`](docs/architecture.md) |
-| Mô hình rủi ro + luật lọc log | [`docs/security.md`](docs/security.md) |
-| Vì sao app macOS chưa notarize | [`docs/unsigned-app.md`](docs/unsigned-app.md) |
-| Thuật toán auto-switch + ngưỡng | [`docs/thresholds.md`](docs/thresholds.md) |
 
 ## Giấy phép
 
