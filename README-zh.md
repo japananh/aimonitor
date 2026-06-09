@@ -2,213 +2,140 @@
 
 # aimonitor
 
-**面向 macOS 与 Linux 的多账户 Claude Code 会话监控与静默账户切换工具。**
+**面向 macOS 与 Linux 的多账户 Claude Code 用量监控与静默账户切换工具。**
 
 [![CI](https://github.com/japananh/aimonitor/actions/workflows/ci.yml/badge.svg)](https://github.com/japananh/aimonitor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/japananh/aimonitor?sort=semver)](https://github.com/japananh/aimonitor/releases)
 
-</div>
-
 > [English](README.md) | **中文** | [Tiếng Việt](README-vi.md)
+
+<img src="docs/popover.png" alt="菜单栏弹窗：每个账户的 5h/7d 用量条" width="340">
+
+</div>
 
 ## 功能特性
 
-- 🔍 **菜单栏中按账户显示实时的 5 小时 / 7 天用量条** —— 来自服务端的真实数据，通过 Anthropic 的 `/api/oauth/usage` 自省接口轮询获取，不消耗任何 token。
-- 🔀 **静默切换账户** —— `aimonitor switch <label>` 通过 Anthropic 的 token 接口刷新 OAuth access token 并写入当前凭据。无需切换终端，也无需 `claude /login`。
-- 🤖 **任一限额触发自动切换**：当前账户的 5 小时**或** 7 天用量达到各自阈值（均可单独配置，默认 80%）时触发，选择剩余额度最多的账户——即使备选账户的 5 小时用量偏高，也会优先逃离周限额已耗尽的账户（5 小时窗口几小时即恢复，周限额一卡就是好几天）。**运行中的 `claude` 会话不会被打断**——它们会自动采用新凭据。
-- 🔌 **Claude Code 的 MCP 服务器** — 通过 stdio 提供 28 个 Slack + ClickUp 工具:发消息到频道/线程(mrkdwn + 代码块)、上传文件、搜索;ClickUp 任务、评论与文档(读 & 写)。支持按服务的只读模式。
-- 🤝 **与其它工具良好共存。** 通过身份（identity）来识别当前账户，因此当 Claude Code 或其它切换器更改了当前登录时，aimonitor 会自动跟随；发生这种情况时它会通知你，或在遇到尚未纳管的账户时提示你导入。
-- 🔐 **凭据存储于操作系统钥匙串**（macOS 通过 `/usr/bin/security` 使用 Keychain，Linux 使用 libsecret）。SQLite 仅保存引用，token 永不离开钥匙串。
-- ⬆️ **内置自更新** —— 检查 GitHub 上的新版本，确认后通过 Homebrew 更新。绝不在无人值守时自动安装。
-- 📡 **本地优先。** 无遥测，不回传。
+- 🔍 **每个账户的 5h + 7d 用量条** —— 取自 Anthropic 的 `/api/oauth/usage`（不消耗 token），并附趋势行（`↗ +21% in 45m`）。
+- 🔀 **静默切换** —— `aimonitor switch <label>` 刷新 OAuth token 并替换当前凭据。无需 `claude /login`，无需切到终端。
+- 🤖 **自动切换**：当活跃账户达到 5h *或* 7d 阈值（默认 80 %）时触发 —— 选择整体余量最多的账户（兼顾两个窗口），跳过已用尽/被限流的账户；若活跃账户达到 100 % 立即切换。正在运行的 `claude` 会话会自动跟随。
+- 🔔 **接近上限时通知**（在自动切换关闭时生效）。
+- 💾 **导出 / 导入** 设置，或把账户迁移到另一台机器 —— 凭据可选，并用口令加密（Argon2id + AES-256-GCM）。
+- 🔌 **MCP 服务器** —— 通过 stdio 向 Claude Code 提供 28 个 Slack + ClickUp 工具，支持按服务的只读模式。
+- 🔐 **存于系统钥匙串**（macOS Keychain、Linux libsecret）。SQLite 仅保存引用；token 不离开钥匙串。无遥测。
 
 ## 安装
 
-### macOS（Sonoma 14+）
-
 ```sh
+# macOS (Sonoma 14+)
 brew install --cask japananh/tap/aimonitor
-```
 
-> **首次启动：** 该 `.app` 尚未公证（公证已列入路线图）。请先清除 Gatekeeper 隔离属性一次：
-> ```sh
-> xattr -dr com.apple.quarantine /Applications/AIMonitor.app
-> ```
-> 或者右键 → 打开 → 确认。详见 [`docs/unsigned-app.md`](docs/unsigned-app.md)。
-
-### Linux（Ubuntu 22.04+）
-
-```sh
+# Linux (Ubuntu 22.04+) —— 仅 CLI
 curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/linux/install.sh | sh
-```
 
-Linux 上仅提供 CLI；GTK 菜单栏小组件属于 v2.0 的交付内容。
-
-### 通过 `go install`（仅 CLI，任意平台）
-
-```sh
+# 任意平台，仅 CLI
 go install github.com/japananh/aimonitor/cmd/aimonitor@latest
 ```
 
-会将 `aimonitor` 安装到 `$GOBIN`。没有 `.app`，也没有开机自启服务——适合只需要在终端里切换账户、或不想添加 Homebrew tap 的场景。
+> **macOS 首次启动：** `.app` 尚未公证 —— 清除一次 Gatekeeper 隔离：
+> `xattr -dr com.apple.quarantine /Applications/AIMonitor.app`（或右键 → 打开）。见 [`docs/unsigned-app.md`](docs/unsigned-app.md)。
 
 ## 快速开始
 
 ```sh
-# 1. 把当前的 Claude Code 登录注册为 aimonitor 的第一个账户。
-#    --adopt-current 会采用钥匙串中已有的凭据，而不是发起一次全新的 OAuth 流程。
-aimonitor add --adopt-current --label personal
-
-# 2. 添加第二个账户。aimonitor 会暂存当前凭据、打印操作说明并轮询钥匙串。
-#    你在另一个终端里运行 `claude` + `/login` 完成登录。
-aimonitor add --label work
-
-# 3. 静默切换——无需终端，无需 /login。
-aimonitor switch work
-
-# 4. 查看每个账户的实时 5h / 7d 用量。
-aimonitor list
-
-# 5. 健康检查。
-aimonitor doctor
+aimonitor add --adopt-current --label personal   # 注册当前的 Claude 登录
+aimonitor add --label work                        # 添加另一个账户（运行 claude /login，轮询钥匙串）
+aimonitor switch work                             # 静默切换
+aimonitor list                                    # 查看每个账户的 5h / 7d 用量
+aimonitor doctor                                  # 健康检查
 ```
 
-已经在用其它账户切换工具？一步导入它的账户，无需手动逐个添加：
-
-```sh
-aimonitor import
-```
-
-自动切换默认开启，5 小时或 7 天用量任一达到 80% 即触发。常见场景下无需任何其它配置。
+已在用别的切换器？`aimonitor import` 一步导入其账户。自动切换默认在 80 % 开启 —— 常见场景无需额外配置。
 
 ## 配置
 
 ```sh
-aimonitor config set auto_swap.enabled true          # 默认 true
-aimonitor config set auto_swap.threshold_pct 80      # 5 小时阈值，默认 80
-aimonitor config set auto_swap.threshold_7d_pct 80   # 7 天阈值，默认 80
-aimonitor config set autostart true                  # 登录时启动守护进程
+aimonitor config set auto_swap.enabled true        # 默认 true
+aimonitor config set auto_swap.threshold_pct 80    # 5h 阈值
+aimonitor config set auto_swap.threshold_7d_pct 80 # 7d 阈值
+aimonitor config set autostart true                # 登录时启动 daemon
 ```
 
-<details>
-<summary><b>完整配置项</b></summary>
+备份或迁移到另一台机器：
 
-| 配置项 | 默认值 | 说明 |
+```sh
+aimonitor config export --out backup.json                                          # 仅设置（无敏感数据）
+AIMONITOR_PASSPHRASE=… aimonitor config export --include-tokens --out full.json     # + 加密凭据
+AIMONITOR_PASSPHRASE=… aimonitor config import full.json                            # 在另一台机器恢复
+```
+
+`--include-tokens` 会把登录凭据用口令加密打包 —— 恢复后无需重新登录即可在另一台机器运行 `claude`，因此请把该文件当作密码保管。相同操作也在 Preferences → Backup 中。
+
+<details>
+<summary><b>全部配置项</b></summary>
+
+| 键 | 默认 | 说明 |
 |---|---|---|
-| `auto_swap.enabled` | `true` | 基于 OAuth 用量的自动切换总开关 |
-| `auto_swap.threshold_pct` | `80` | 触发自动切换的 5 小时用量阈值（%） |
-| `auto_swap.threshold_7d_pct` | `80` | 触发自动切换的 7 天用量阈值（%） |
-| `auto_swap.grace_sec` | `60` | 从“即将自动切换”通知到真正切换之间的秒数，便于你收尾正在进行的 `claude` 会话。设为 `0` 则立即切换。 |
-| `auto_update.enabled` | `true` | 启动时检查 GitHub 上的新版本并通知你。未经确认绝不安装更新。 |
-| `autostart` | `false` | 登录时启动守护进程 |
-| `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | 向 Claude Code 暴露该服务的 MCP 工具 |
-| `mcp.slack.read_only` / `mcp.clickup.read_only` | `false` | 将该服务的写入类工具从工具列表中完全隐藏 |
-| `mcp.disabled_tools` | (空) | 逗号分隔的工具名,逐个隐藏 |
-| `autoswitch` | `false` | （遗留项）基于 JSONL 的触发式累加器，已被 `auto_swap.*` 取代。设置该项会被拒绝。 |
+| `auto_swap.enabled` | `true` | 自动切换总开关 |
+| `auto_swap.threshold_pct` | `80` | 触发自动切换的 5h 用量（%） |
+| `auto_swap.threshold_7d_pct` | `80` | 触发自动切换的 7d 用量（%） |
+| `auto_swap.grace_sec` | `60` | “即将切换”通知与实际切换之间的延迟（`0` = 立即） |
+| `notify.enabled` | `true` | 活跃账户接近上限时通知（仅在自动切换关闭时） |
+| `notify.warn_pct` / `notify.crit_pct` | `80` / `95` | 警告 / 严重 通知级别 |
+| `auto_update.enabled` | `true` | 启动时检查 GitHub 新版本（绝不自动安装） |
+| `autostart` | `false` | 登录时启动 daemon |
+| `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | 暴露该服务的 MCP 工具 |
+| `mcp.slack.read_only` / `mcp.clickup.read_only` | `false` | 隐藏该服务的写入类工具 |
+| `mcp.disabled_tools` | （空） | 需隐藏的工具名，逗号分隔 |
 
 </details>
 
 ## 工作原理
 
-当前账户的 5 小时**或** 7 天用量达到各自阈值时，aimonitor 会找到剩余额度最多的账户并静默切换：
+daemon 轮询 `/api/oauth/usage`（约 5 分钟 ± 抖动，不消耗 token）。当活跃账户越过 5h **或** 7d 阈值时，选出整体余量最多的账户，刷新该账户的 OAuth token（`POST .../v1/oauth/token`），写入当前 Keychain 槽。正在运行和新开的 `claude` 会话都会使用新账户 —— 无需 `/login`，无需重启。
 
-```
-                      polled every 5 min ± 30 s jitter
-                ┌─────────────────────────────────────────┐
-                │  GET  api.anthropic.com/api/oauth/usage │
-                │       → 5h % + 7d % + reset times       │
-                └─────────────────────────────────────────┘
-                                   │
-            5h ≥ threshold  OR  7d ≥ threshold?
-                          │
-                          ▼  yes — pick account with most headroom
-   ┌──────────────────┐   POST platform.claude.com/v1/oauth/token
-   │ target account   │ ──────────────────────────────────────────▶
-   │ refresh_token    │   grant_type=refresh_token
-   └──────────────────┘                  │
-                                         ▼ fresh access_token
-                          ┌───────────────────────────┐
-                          │ Claude Code-credentials   │
-                          │   (macOS Keychain slot)   │
-                          └───────────────────────────┘
-                                         │
-                                         ▼
-                            running and new `claude`
-                            sessions use the new account
-                            — no /login, no restart
-```
+详见 [`docs/architecture.md`](docs/architecture.md) 与 [`docs/thresholds.md`](docs/thresholds.md)。
 
-守护进程 / 存储 / 小组件的完整拆解见 [`docs/architecture.md`](docs/architecture.md)。
+## MCP 服务器（为 Claude Code 提供 Slack + ClickUp）
 
-## MCP 服务器（为 Claude Code 提供 Slack + ClickUp 工具）
-
-aimonitor 同时是一个 MCP 服务器:单个 stdio 进程向 Claude Code 提供 28 个 Slack 和 ClickUp 工具 — 无需额外运行时或后台服务。
+单个 stdio 进程提供 28 个工具 —— 无需额外运行时。
 
 ```sh
-aimonitor mcp connect slack     # 验证并保存 Slack 用户令牌(xoxp-…)
-aimonitor mcp connect clickup   # 验证并保存 ClickUp 个人令牌(pk_…)
-aimonitor mcp register          # 将服务器注册到 Claude Code
+aimonitor mcp connect slack     # 保存 Slack 用户 token（xoxp-…）
+aimonitor mcp connect clickup   # 保存 ClickUp token（pk_…）
+aimonitor mcp register          # 把服务器加入 Claude Code
 ```
 
-- **Slack:** 发消息到频道/线程(mrkdwn、代码块)、上传文件、搜索、历史、线程回复、频道/用户列表、永久链接。
-- **ClickUp:** 工作区层级、任务(列表/搜索/查看/创建/更新)、评论(添加/查看/删除)、文档(查看/创建/编辑页面)。
-- **安全:** 审批层就是 Claude Code 自带的逐工具权限提示。每个服务有 **Enabled** / **Read-only** 开关(只读会把写入类工具从工具列表中彻底移除),还可逐个隐藏工具 — 在 Preferences 或 `aimonitor config` 中配置。
-- 令牌在存入系统钥匙串前先经真实 API 验证;绝不进入 SQLite 或日志。
+- **Slack：** 发到频道/线程（mrkdwn、代码块）、上传、搜索、历史、permalink。
+- **ClickUp：** 工作区层级、任务、评论、Docs（读写）。
+- **安全：** Claude Code 自身的逐工具授权提示是审批层；再加上按服务的 Enabled / Read-only 开关和逐工具禁用列表。token 先实时校验，再存入系统钥匙串 —— 不进 SQLite 或日志。
 
 ## 隐私与安全
 
-- **无遥测，不回传。** 任何地方都不会。
-- OAuth token 仅存于操作系统钥匙串。SQLite 只保存引用，绝不保存机密。
-- 即使在 `--debug` 级别也绝不记录 token 字节。日志脱敏会匹配 `sk-ant-(oat|ort)…`。
-- **aimonitor 发起的出站流量**仅限于：
-  - `GET https://api.anthropic.com/api/oauth/usage` —— 仅自省，每次约 5 KB，不消耗 token。后台轮询间隔：当前账户为 5 分钟 ± 30 秒抖动，出错时指数退避（上限 1 小时）。非活跃账户以缓慢的轮转方式逐个轮询（仅在其 token 仍有效时——后台绝不刷新它们），或通过每账户 /「刷新用量」按钮按需获取。
-  - `POST https://platform.claude.com/v1/oauth/token` —— 在切换、手动刷新用量、或自动切换决策前，刷新临近或已过期的 access token。静默进行（不打开浏览器）。
-  - `GET https://api.github.com/repos/japananh/aimonitor/releases` —— 检查更新。无需鉴权，不发送任何关于你的数据；在启动时（若 `auto_update.enabled`）以及你点击「检查更新」时运行。安装更新会调用 Homebrew，且仅在你确认后进行。
-- 遗留的 `aimonitor probe` CLI 子命令会发起真实的 `/v1/messages` 请求，已废弃。守护进程不再使用它。
+- 无遥测、无回传。OAuth token 仅存于系统钥匙串；SQLite 只保存引用。绝不记录 token。
+- 对外流量仅限：`GET /api/oauth/usage`（自省，不消耗 token）、`POST /v1/oauth/token`（静默刷新 token）、以及 GitHub 版本检查。不发送任何关于你的信息。
 
-完整威胁模型见 [`docs/security.md`](docs/security.md)。
+威胁模型见 [`docs/security.md`](docs/security.md)。
 
 ## 卸载
 
 ```sh
-aimonitor uninstall              # 关闭开机自启；保留你的数据
-aimonitor uninstall --purge      # 同时删除 SQLite 数据库、配置以及 aimonitor 的钥匙串条目
-
-# macOS
-brew uninstall --cask aimonitor
-brew untap japananh/tap          # 可选
-
-# Linux
-systemctl --user disable aimonitor.service
-sudo rm /usr/local/bin/aimonitor
+aimonitor uninstall --purge      # 关闭自启动 + 删除 SQLite DB、配置、aimonitor 钥匙串条目
+brew uninstall --cask aimonitor  # macOS
 ```
 
-aimonitor 的卸载**绝不会触碰**你原有的 `Claude Code-credentials` 钥匙串条目——现有的 `claude` CLI 登录会继续正常工作。
+你原有的 `Claude Code-credentials` 钥匙串条目**不会被触碰** —— 现有的 `claude` 登录照常可用。
 
 ## 从源码构建
 
-需要 Go 1.25+。所有平台均为纯 Go——`CGO_ENABLED=0` 在 macOS 上同样可用（钥匙串访问通过调用 `/usr/bin/security` 实现，而非经由 cgo 链接 Security 框架）。
+需要 Go 1.25+。纯 Go（`CGO_ENABLED=0` 在 macOS 也可用；钥匙串访问通过 `/usr/bin/security`）。
 
 ```sh
-git clone https://github.com/japananh/aimonitor
-cd aimonitor
-make build              # Go CLI 二进制
+make build              # CLI 二进制
 make test               # 单元测试
-make widget             # 通过 Swift Package Manager 构建 AIMonitor.app（仅 macOS）
-make release-snapshot   # 完整的 goreleaser 演练（不发布；需要已安装 goreleaser）
+make widget             # AIMonitor.app（macOS；需 Swift 工具链）
+make release-snapshot   # goreleaser 试运行
 ```
-
-在 macOS 上构建菜单栏小组件需要 Swift 工具链（`xcode-select --install`）。无需完整的 Xcode；小组件可通过 Swift Package Manager 无界面构建。
-
-## 文档
-
-| 主题 | 位置 |
-|---|---|
-| 架构（守护进程、存储、小组件） | [`docs/architecture.md`](docs/architecture.md) |
-| 威胁模型与脱敏规则 | [`docs/security.md`](docs/security.md) |
-| 为何 macOS `.app` 尚未公证 | [`docs/unsigned-app.md`](docs/unsigned-app.md) |
-| 自动切换算法与阈值 | [`docs/thresholds.md`](docs/thresholds.md) |
 
 ## 许可证
 
