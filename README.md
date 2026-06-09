@@ -2,230 +2,140 @@
 
 # aimonitor
 
-**Multi-account Claude Code session monitor and silent account switcher for macOS & Linux.**
+**Multi-account Claude Code usage monitor & silent account switcher for macOS & Linux.**
 
 [![CI](https://github.com/japananh/aimonitor/actions/workflows/ci.yml/badge.svg)](https://github.com/japananh/aimonitor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/japananh/aimonitor?sort=semver)](https://github.com/japananh/aimonitor/releases)
 
-</div>
-
 > **English** | [中文](README-zh.md) | [Tiếng Việt](README-vi.md)
+
+<img src="docs/popover.png" alt="AIMonitor menu-bar popover: per-account 5h/7d usage bars" width="340">
+
+</div>
 
 ## Features
 
-- 🔍 **Live 5-hour and 7-day usage bars, per account** in your menu bar — server-side truth, polled from Anthropic's `/api/oauth/usage` introspection endpoint. No tokens consumed. A compact trend line (`↗ +21% in 45m`) shows how fast each account is climbing.
-- 🔀 **Silent account switching** — `aimonitor switch <label>` refreshes the OAuth access token via Anthropic's token endpoint and writes the live credential. No terminal hop, no `claude /login`.
-- 🤖 **Auto-swap on either limit** — triggers when the active account crosses the 5-hour *or* the 7-day threshold (each configurable, default 80 %). Picks the account with the most **overall** headroom — balanced across both windows, so it won't hop onto an account that's about to run out on the other one. Exhausted accounts are skipped; an account that gets rate-limited (429) is parked until it recovers; and if the active account hits 100 %, the swap fires immediately. Running `claude` sessions are never interrupted — they pick up the new credential automatically.
-- 🔔 **Threshold notifications** — a heads-up notification as the active account nears its limit (warn/critical levels, configurable). Active when auto-swap is off; with auto-swap on, its own swap notifications cover it.
-- 💾 **Export / import** — back up settings, or migrate your accounts to another machine. Credentials are bundled only on request, encrypted under a passphrase (Argon2id + AES-256-GCM). `aimonitor config export` / `import`, or Preferences → Backup.
-- 🔌 **MCP server for Claude Code** — 28 Slack + ClickUp tools over stdio: post to channels/threads (mrkdwn + code blocks), upload files, search; ClickUp tasks, comments, and Docs (read & write). Per-service read-only mode.
-- 🤝 **Plays well with other tools.** Resolves the active account by identity, so it follows along when Claude Code or another switcher changes the live login — and tells you when that happens, or offers to import an account it doesn't yet manage.
-- 🔐 **OS-keyring credential storage** (macOS Keychain via `/usr/bin/security`, Linux libsecret). SQLite holds references; tokens never leave the keyring.
-- ⬆️ **Built-in self-update** — checks GitHub for new releases and updates via Homebrew on confirmation. No unattended installs.
-- 📡 **Local-first.** No telemetry. No phone-home.
+- 🔍 **Live 5h + 7d usage bars per account** — polled from Anthropic's `/api/oauth/usage` (no tokens consumed), with a trend line (`↗ +21% in 45m`).
+- 🔀 **Silent switching** — `aimonitor switch <label>` refreshes the OAuth token and swaps the live credential. No `claude /login`, no terminal hop.
+- 🤖 **Auto-swap** at the 5h *or* 7d threshold (default 80 %) — picks the account with the most overall headroom, skips exhausted/rate-limited ones, and rescues immediately if the active account hits 100 %. Running `claude` sessions follow automatically.
+- 🔔 **Threshold notifications** as an account nears its limit (when auto-swap is off).
+- 💾 **Export / import** settings, or migrate accounts to another machine — credentials optional and passphrase-encrypted (Argon2id + AES-256-GCM).
+- 🔌 **MCP server** — 28 Slack + ClickUp tools for Claude Code over stdio, with per-service read-only mode.
+- 🔐 **OS-keyring storage** (macOS Keychain, Linux libsecret). SQLite holds references; tokens never leave the keyring. No telemetry.
 
 ## Install
 
-### macOS (Sonoma 14+)
-
 ```sh
+# macOS (Sonoma 14+)
 brew install --cask japananh/tap/aimonitor
-```
 
-> **First launch:** the `.app` is not yet notarized (notarization is on the roadmap). Clear the Gatekeeper quarantine once:
-> ```sh
-> xattr -dr com.apple.quarantine /Applications/AIMonitor.app
-> ```
-> Or right-click → Open → confirm. See [`docs/unsigned-app.md`](docs/unsigned-app.md).
-
-### Linux (Ubuntu 22.04+)
-
-```sh
+# Linux (Ubuntu 22.04+) — CLI only
 curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/linux/install.sh | sh
-```
 
-CLI only on Linux; the GTK menu bar widget is a v2.0 deliverable.
-
-### Via `go install` (CLI only, any platform)
-
-```sh
+# Any platform, CLI only
 go install github.com/japananh/aimonitor/cmd/aimonitor@latest
 ```
 
-Lands `aimonitor` in `$GOBIN`. No `.app`, no autostart service — useful if you only need the CLI for switching accounts from a terminal, or you don't want to add a Homebrew tap.
+> **macOS first launch:** the `.app` isn't notarized yet — clear Gatekeeper once with
+> `xattr -dr com.apple.quarantine /Applications/AIMonitor.app` (or right-click → Open). See [`docs/unsigned-app.md`](docs/unsigned-app.md).
 
 ## Quick start
 
 ```sh
-# 1. Register your current Claude Code login as the first aimonitor account.
-#    --adopt-current adopts the credential already in your keychain instead
-#    of driving a fresh OAuth flow.
-aimonitor add --adopt-current --label personal
-
-# 2. Add a second account. aimonitor stashes the current credential, prints
-#    instructions, polls the keychain. You drive `claude` + `/login` in
-#    another terminal.
-aimonitor add --label work
-
-# 3. Switch silently — no terminal, no /login.
-aimonitor switch work
-
-# 4. See live 5h / 7d usage per account.
-aimonitor list
-
-# 5. Health check.
-aimonitor doctor
+aimonitor add --adopt-current --label personal   # register your current Claude login
+aimonitor add --label work                        # add another (drives claude /login, polls keychain)
+aimonitor switch work                             # switch silently
+aimonitor list                                    # live 5h / 7d usage per account
+aimonitor doctor                                  # health check
 ```
 
-Already using another account switcher? Import its accounts in one step instead of adding them by hand:
-
-```sh
-aimonitor import
-```
-
-Auto-swap is on by default at 80 % utilization on either the 5-hour or the 7-day window. Nothing else to configure for the common case.
+Already on another switcher? `aimonitor import` pulls its accounts in one step. Auto-swap is on by default at 80 % — nothing else to configure for the common case.
 
 ## Configuration
 
 ```sh
-aimonitor config set auto_swap.enabled true          # default true
-aimonitor config set auto_swap.threshold_pct 80      # 5-hour threshold, default 80
-aimonitor config set auto_swap.threshold_7d_pct 80   # 7-day threshold, default 80
-aimonitor config set autostart true                  # daemon at login
+aimonitor config set auto_swap.enabled true        # default true
+aimonitor config set auto_swap.threshold_pct 80    # 5h threshold
+aimonitor config set auto_swap.threshold_7d_pct 80 # 7d threshold
+aimonitor config set autostart true                # daemon at login
 ```
 
-### Back up / move to another machine
+Back up or move to another machine:
 
 ```sh
-aimonitor config export --out backup.json                       # settings only (no secrets)
-AIMONITOR_PASSPHRASE=… aimonitor config export --include-tokens --out full.json   # + encrypted credentials
-AIMONITOR_PASSPHRASE=… aimonitor config import full.json         # restore on the other machine
+aimonitor config export --out backup.json                                          # settings only (no secrets)
+AIMONITOR_PASSPHRASE=… aimonitor config export --include-tokens --out full.json     # + encrypted credentials
+AIMONITOR_PASSPHRASE=… aimonitor config import full.json                            # restore elsewhere
 ```
 
-With `--include-tokens` the bundle carries your account logins, encrypted under the passphrase (Argon2id + AES-256-GCM) — restoring it on another machine means `claude` works there without re-login, so treat that file like a password. The plain export contains no credentials. The same actions live in Preferences → Backup.
+`--include-tokens` bundles your logins encrypted under the passphrase — restoring it means `claude` works on the other machine without re-login, so treat that file like a password. Same actions live in Preferences → Backup.
 
 <details>
-<summary><b>Full config keys</b></summary>
+<summary><b>All config keys</b></summary>
 
 | Key | Default | Description |
 |---|---|---|
-| `auto_swap.enabled` | `true` | Master toggle for the OAuth-limits-driven auto-swap |
-| `auto_swap.threshold_pct` | `80` | 5-hour utilization (%) at which to auto-swap |
-| `auto_swap.threshold_7d_pct` | `80` | 7-day utilization (%) at which to auto-swap |
-| `auto_swap.grace_sec` | `60` | Seconds between the "auto-swap pending" notification and the actual swap, so you can wrap up a live `claude` session. `0` swaps immediately. |
-| `notify.enabled` | `true` | Notify as the active account nears its limit (only when auto-swap is off) |
-| `notify.warn_pct` | `80` | Utilization (%) for the warning notification |
-| `notify.crit_pct` | `95` | Utilization (%) for the critical notification |
-| `auto_update.enabled` | `true` | Check GitHub for new releases on launch and notify you. Updates are never installed without confirmation. |
+| `auto_swap.enabled` | `true` | Master toggle for auto-swap |
+| `auto_swap.threshold_pct` | `80` | 5h utilization (%) to auto-swap |
+| `auto_swap.threshold_7d_pct` | `80` | 7d utilization (%) to auto-swap |
+| `auto_swap.grace_sec` | `60` | Delay between the "pending" notification and the swap (`0` = immediate) |
+| `notify.enabled` | `true` | Warn as the active account nears its limit (only when auto-swap is off) |
+| `notify.warn_pct` / `notify.crit_pct` | `80` / `95` | Warning / critical notification levels |
+| `auto_update.enabled` | `true` | Check GitHub for releases on launch (never auto-installs) |
 | `autostart` | `false` | Start the daemon at login |
-| `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | Expose that service's MCP tools to Claude Code |
-| `mcp.slack.read_only` / `mcp.clickup.read_only` | `false` | Hide the service's write tools from the tool list entirely |
-| `mcp.disabled_tools` | (empty) | Comma-separated tool names to hide individually |
-| `autoswitch` | `false` | (Legacy) tripwire-driven JSONL accumulator, superseded by the `auto_swap.*` keys. Setting it is rejected. |
+| `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | Expose that service's MCP tools |
+| `mcp.slack.read_only` / `mcp.clickup.read_only` | `false` | Hide the service's write tools |
+| `mcp.disabled_tools` | (empty) | Comma-separated tool names to hide |
 
 </details>
 
 ## How it works
 
-When the active account crosses its 5-hour **or** 7-day threshold, aimonitor finds the account with the most remaining headroom and silently swaps:
+The daemon polls `/api/oauth/usage` (~5 min ± jitter, no tokens consumed). When the active account crosses its 5h **or** 7d threshold, it picks the account with the most overall headroom, refreshes that account's OAuth token (`POST .../v1/oauth/token`), and writes it to the live Keychain slot. Running and new `claude` sessions adopt the new account — no `/login`, no restart.
 
-```
-                      polled every 5 min ± 30 s jitter
-                ┌─────────────────────────────────────────┐
-                │  GET  api.anthropic.com/api/oauth/usage │
-                │       → 5h % + 7d % + reset times       │
-                └─────────────────────────────────────────┘
-                                   │
-            5h ≥ threshold  OR  7d ≥ threshold?
-                          │
-                          ▼  yes — pick account with most headroom
-   ┌──────────────────┐   POST platform.claude.com/v1/oauth/token
-   │ target account   │ ──────────────────────────────────────────▶
-   │ refresh_token    │   grant_type=refresh_token
-   └──────────────────┘                  │
-                                         ▼ fresh access_token
-                          ┌───────────────────────────┐
-                          │ Claude Code-credentials   │
-                          │   (macOS Keychain slot)   │
-                          └───────────────────────────┘
-                                         │
-                                         ▼
-                            running and new `claude`
-                            sessions use the new account
-                            — no /login, no restart
-```
+See [`docs/architecture.md`](docs/architecture.md) and [`docs/thresholds.md`](docs/thresholds.md) for the full picture.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full daemon / store / widget breakdown.
+## MCP server (Slack + ClickUp for Claude Code)
 
-## MCP server (Slack + ClickUp tools for Claude Code)
-
-aimonitor doubles as an MCP server: one stdio process serving 28 Slack and ClickUp tools to Claude Code — no extra runtimes, no background services.
+One stdio process serving 28 tools — no extra runtimes.
 
 ```sh
-aimonitor mcp connect slack     # verify + store a Slack user token (xoxp-…)
-aimonitor mcp connect clickup   # verify + store a ClickUp personal token (pk_…)
+aimonitor mcp connect slack     # store a Slack user token (xoxp-…)
+aimonitor mcp connect clickup   # store a ClickUp token (pk_…)
 aimonitor mcp register          # add the server to Claude Code
 ```
 
-- **Slack:** post to channels and threads (mrkdwn, code blocks), upload files, search, history, thread replies, channels/users, permalinks.
-- **ClickUp:** workspace hierarchy, tasks (list/search/get/create/update), comments (add/list/delete), Docs (list/read/create/edit pages).
-- **Safety:** Claude Code's own per-tool permission prompts are the approval layer. Per-service **Enabled** / **Read-only** switches (read-only removes write tools from the tool list entirely) plus a per-tool disable list — in Preferences or via `aimonitor config`.
-- Tokens are verified against the live APIs before being stored in the OS keyring; they never touch SQLite or logs.
+- **Slack:** post to channels/threads (mrkdwn, code blocks), upload, search, history, permalinks.
+- **ClickUp:** workspace hierarchy, tasks, comments, Docs (read & write).
+- **Safety:** Claude Code's per-tool prompts are the approval layer; per-service Enabled / Read-only switches and a per-tool disable list refine it. Tokens are verified live, then stored in the OS keyring — never in SQLite or logs.
 
 ## Privacy & security
 
-- **No telemetry. No phone-home.** Anywhere.
-- OAuth tokens live only in the OS keyring. SQLite holds references, never secrets.
-- Token bytes are never logged, even at `--debug` level. Log scrubbing matches `sk-ant-(oat|ort)…`.
-- **Outbound traffic** aimonitor initiates is limited to:
-  - `GET https://api.anthropic.com/api/oauth/usage` — introspection-only, ~5 KB per call. Consumes no tokens. Background interval: 5 min ± 30 s jitter for the active account, with exponential backoff on errors (capped at 1 h). Inactive accounts are polled one-at-a-time on a slow round-robin (only while their token is still valid — never refreshed in the background), or on demand via the per-account / "Refresh usage" buttons.
-  - `POST https://platform.claude.com/v1/oauth/token` — refreshes an access token that's near or past expiry, on a switch, a manual usage refresh, or just before an auto-swap decision. Silent (no browser).
-  - `GET https://api.github.com/repos/japananh/aimonitor/releases` — the update check. Unauthenticated, sends no data about you; runs on launch (if `auto_update.enabled`) and when you click "Check for Updates". Installing an update runs Homebrew, only on your confirmation.
-- The legacy `aimonitor probe` CLI subcommand fires a real `/v1/messages` request and is deprecated. The daemon no longer uses it.
+- No telemetry, no phone-home. OAuth tokens live only in the OS keyring; SQLite holds references. Token bytes are never logged.
+- Outbound traffic is limited to: `GET /api/oauth/usage` (introspection, no tokens consumed), `POST /v1/oauth/token` (silent token refresh), and the GitHub release check. Nothing about you is sent.
 
-See [`docs/security.md`](docs/security.md) for the full threat model.
+See [`docs/security.md`](docs/security.md) for the threat model.
 
 ## Uninstall
 
 ```sh
-aimonitor uninstall              # disable autostart; keep your data
-aimonitor uninstall --purge      # also drop SQLite DB, config, aimonitor keyring entries
-
-# macOS
-brew uninstall --cask aimonitor
-brew untap japananh/tap          # optional
-
-# Linux
-systemctl --user disable aimonitor.service
-sudo rm /usr/local/bin/aimonitor
+aimonitor uninstall --purge      # drop autostart + SQLite DB, config, aimonitor keyring entries
+brew uninstall --cask aimonitor  # macOS
 ```
 
-Your original `Claude Code-credentials` keyring entry is **never touched** by aimonitor's uninstall — existing `claude` CLI logins keep working.
+Your original `Claude Code-credentials` keyring entry is never touched — existing `claude` logins keep working.
 
 ## Build from source
 
-Requires Go 1.25+. Pure Go on all platforms — `CGO_ENABLED=0` works on macOS too (keychain access shells out to `/usr/bin/security` instead of linking the Security framework via cgo).
+Requires Go 1.25+. Pure Go (`CGO_ENABLED=0` works on macOS; keychain access shells out to `/usr/bin/security`).
 
 ```sh
-git clone https://github.com/japananh/aimonitor
-cd aimonitor
-make build              # Go CLI binary
+make build              # CLI binary
 make test               # unit tests
-make widget             # AIMonitor.app via Swift Package Manager (macOS only)
-make release-snapshot   # full goreleaser dry-run (no publish; needs goreleaser installed)
+make widget             # AIMonitor.app (macOS; needs the Swift toolchain)
+make release-snapshot   # goreleaser dry-run
 ```
-
-On macOS the menu bar widget needs the Swift toolchain (`xcode-select --install`). Full Xcode is not required; the widget builds headlessly via Swift Package Manager.
-
-## Documentation
-
-| Topic | Where |
-|---|---|
-| Architecture (daemon, store, widget) | [`docs/architecture.md`](docs/architecture.md) |
-| Threat model + scrubbing rules | [`docs/security.md`](docs/security.md) |
-| Why the macOS `.app` is not yet notarized | [`docs/unsigned-app.md`](docs/unsigned-app.md) |
-| Auto-switch algorithm + thresholds | [`docs/thresholds.md`](docs/thresholds.md) |
 
 ## License
 
