@@ -35,8 +35,9 @@ The `release.yml` workflow:
 1. Checks out main + the tag (deep fetch for changelog generation).
 2. Runs `bash scripts/bundle-app.sh` to produce `build/AIMonitor.app`.
 3. Invokes `goreleaser release --clean`, which:
-   - Cross-compiles the CLI for `darwin/{amd64,arm64}` (CGO=1) and
-     `linux/{amd64,arm64}` (CGO=0).
+   - Cross-compiles the CLI for `darwin/{amd64,arm64}` and
+     `linux/{amd64,arm64}`, all `CGO_ENABLED=0` (keychain access shells
+     out to `/usr/bin/security`, so no cgo is needed).
    - Fuses the two darwin binaries into a single universal Mach-O.
    - Archives each target as a `.tar.gz` (the Mac archive includes
      `AIMonitor.app/`).
@@ -115,13 +116,13 @@ If a published release is bad:
    from the remote — leaving it there gives an audit trail without
    confusing anyone (it's just an unreleased tag).
 
-## Notarization (deferred to v1.1)
+## Notarization (not yet done)
 
-v1.0.0-beta ships unsigned. End users must clear the quarantine xattr
-manually on first run (`docs/unsigned-app.md`). The cask `caveats`
+The `.app` still ships **unsigned**. End users must clear the quarantine
+xattr manually on first run (`docs/unsigned-app.md`); the cask `caveats`
 block surfaces this prominently.
 
-For v1.1 we'll add a `gon`-style notarization step to the release
-workflow plus a Developer ID Application certificate. That's out of
-scope for v1 because (a) the cert costs $99/yr and (b) notarization
-slows the release loop materially during beta.
+Notarization — a `gon`-style step in the release workflow plus a Developer
+ID Application certificate — is deferred while the audience is developers:
+the cert costs $99/yr and notarization slows the release loop. Revisit once
+there are non-developer users.

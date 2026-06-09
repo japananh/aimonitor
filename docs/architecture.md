@@ -26,9 +26,10 @@ OS keyring. No sockets, no IPC daemons, no telemetry.
 - **Daemon** (`aimonitor daemon run`, launchd-managed) —
   - *Usage scheduler*: polls the active account's `/api/oauth/usage`
     every ~5 min ± 30 s jitter (introspection only, consumes no tokens),
-    with exponential backoff on errors; inactive accounts are polled on a
-    slow round-robin only while their token is valid (never refreshed in
-    the background).
+    with exponential backoff on errors. Inactive accounts are never
+    polled in the background — they're refreshed on demand only: when the
+    widget popover opens, and just-in-time before an auto-swap decision
+    needs a candidate's fresh numbers.
   - *Auto-switcher*: dual-threshold (5h / 7d), headroom-based candidate
     selection; see [`thresholds.md`](thresholds.md).
   - *Status publisher*: writes a JSON status row into SQLite every ~2 s —

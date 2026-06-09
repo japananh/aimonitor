@@ -1,6 +1,6 @@
-# First-open workaround for the unsigned macOS app (v1.0.0-beta)
+# First-open workaround for the unsigned macOS app
 
-`AIMonitor.app` in v1.0.0-beta is **unsigned** — saving the $99/yr Apple Developer Program fee until we have non-developer users. macOS Gatekeeper will refuse to open it the first time. This is a one-time per-install workaround.
+`AIMonitor.app` is currently **unsigned** — saving the $99/yr Apple Developer Program fee until we have non-developer users. macOS Gatekeeper will refuse to open it the first time. This is a one-time per-install workaround.
 
 ## Option A — right-click → Open
 
@@ -27,4 +27,4 @@ Before 2020, casks bypassed the quarantine attribute by default. Modern Homebrew
 
 ## When will this go away?
 
-v1.1 will be notarized via the Apple Developer Program. The free path stays free: you can keep using the unsigned build indefinitely.
+A future release will be notarized via the Apple Developer Program. The free path stays free: you can keep using the unsigned build indefinitely.
