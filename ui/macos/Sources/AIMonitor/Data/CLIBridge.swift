@@ -98,10 +98,18 @@ enum CLIBridge {
         try run(["rename", oldLabel, newLabel])
     }
 
-    /// Fetches fresh 5h/7d usage for all inactive accounts (the active one is
-    /// kept fresh by the daemon and skipped). May take a few seconds.
+    /// Fetches fresh 5h/7d usage for EVERY account, including the active one
+    /// (via the daemon's safe live path). May take a few seconds. Used by the
+    /// explicit "Refresh usage" button.
     static func refreshUsage() throws {
         try run(["usage", "refresh"])
+    }
+
+    /// Fetches fresh usage for the INACTIVE accounts only (the daemon keeps the
+    /// active one fresh). Used on popover open so inactive accounts aren't
+    /// polled continuously in the background.
+    static func refreshInactive() throws {
+        try run(["usage", "refresh", "--inactive"])
     }
 
     /// Fetches fresh usage for one account. Throws (with the CLI's stderr)

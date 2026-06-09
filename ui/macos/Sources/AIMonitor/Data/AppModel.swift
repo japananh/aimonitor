@@ -155,8 +155,24 @@ final class AppModel: ObservableObject {
         lastError = "Switched, but the daemon hasn\'t confirmed \"\(label)\" yet — is `aimonitor daemon` running?"
     }
 
-    /// Fetches fresh usage for all inactive accounts via the CLI (the active
-    /// account is kept fresh by the daemon), then re-reads. Runs on a
+    /// Last time refreshInactiveOnOpen actually fired a fetch (throttle guard).
+    private var lastInactiveRefresh: Date = .distantPast
+
+    /// Called when the popover opens: fetch the INACTIVE accounts on demand,
+    /// since they aren't polled in the background. The daemon keeps the active
+    /// account fresh on its own cadence. Throttled so reopening the popover
+    /// repeatedly doesn't hammer Anthropic for shared accounts.
+    func refreshInactiveOnOpen() {
+        guard Date().timeIntervalSince(lastInactiveRefresh) > 60 else { return }
+        lastInactiveRefresh = Date()
+        workQueue.async {
+            try? CLIBridge.refreshInactive()
+            Task { @MainActor in await self.refresh() }
+        }
+    }
+
+    /// Fetches fresh usage for EVERY account via the CLI (including the active
+    /// one, through the daemon's safe live path), then re-reads. Runs on a
     /// background queue since the CLI does several network calls; the
     /// refreshingUsage flag drives the button's disabled/progress state.
     func refreshUsage() {
