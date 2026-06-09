@@ -37,16 +37,16 @@ struct PopoverRootView: View {
                 // centers line up with each other and with the title — SF
                 // Symbols have differing intrinsic heights, so without an equal
                 // frame they'd sit at slightly different vertical positions.
-                HStack(alignment: .center, spacing: 8) {
+                HStack(alignment: .center, spacing: 4) {
                     if let addAccount {
-                        headerIcon("plus", help: "Add a Claude account to AIMonitor", action: addAccount)
+                        HeaderIconButton(systemName: "plus", help: "Add a Claude account to AIMonitor", action: addAccount)
                     }
                     // ladybug's glyph sits ~1px low vs plus/gearshape even when
                     // framed — nudge it up so the three line up optically.
-                    headerIcon("ladybug", help: "Report a bug — opens a new GitHub issue", yNudge: -1) {
+                    HeaderIconButton(systemName: "ladybug", help: "Report a bug — opens a new GitHub issue", yNudge: -1) {
                         NSWorkspace.shared.open(URL(string: "https://github.com/japananh/aimonitor/issues/new?template=bug_report.yml")!)
                     }
-                    headerIcon("gearshape", help: "Preferences — auto-switch, updates, and startup settings", action: openPreferences)
+                    HeaderIconButton(systemName: "gearshape", help: "Preferences — auto-switch, updates, and startup settings", action: openPreferences)
                 }
             }
             .padding(.horizontal, 16)
@@ -151,22 +151,6 @@ struct PopoverRootView: View {
         .padding(.bottom, 8)
     }
 
-    // headerIcon is a uniform-size icon button for the title row, so all the
-    // action glyphs share one frame and align on a single centered line.
-    @ViewBuilder
-    private func headerIcon(_ systemName: String, help: String, yNudge: CGFloat = 0, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 14))
-                .frame(width: 18, height: 20)
-                .offset(y: yNudge) // render-only nudge; doesn't shift layout
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.borderless)
-        .pointerCursor()
-        .help(help)
-    }
-
     // daemonDown is true when no status has been published, or the last
     // publish is older than ~15 publish intervals (the daemon publishes
     // every ~2s). A short window avoids false alarms from a single missed tick.
@@ -193,5 +177,35 @@ struct PopoverRootView: View {
                 }
             }
         }
+    }
+}
+
+// HeaderIconButton is a title-row action icon with a subtle hover highlight (a
+// rounded background on mouse-over, like a toolbar button). A uniform frame
+// keeps the icons aligned on one centered line; yNudge nudges a glyph that sits
+// optically off (the ladybug) without shifting the highlight.
+private struct HeaderIconButton: View {
+    let systemName: String
+    let help: String
+    var yNudge: CGFloat = 0
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14))
+                .offset(y: yNudge)
+                .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(hovering ? 0.12 : 0))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .onHover { hovering = $0 }
+        .pointerCursor()
+        .help(help)
     }
 }

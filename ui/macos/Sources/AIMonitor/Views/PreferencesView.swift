@@ -135,7 +135,7 @@ struct PreferencesView: View {
                 Text("Checks GitHub for new releases and notifies you. Updates are never installed without your confirmation.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                AppTextButton("Check for Updates…", action: checkForUpdates)
+                AppTextButton("Check for updates…", action: checkForUpdates)
                     .help("Check for a newer version now")
             }
             Section("Backup") {

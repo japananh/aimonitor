@@ -1,9 +1,9 @@
 // The ONE text-button component, app-wide. Since the Tahoe (macOS 26)
-// restyle it deliberately pins NOTHING: no font, no controlSize — the
-// system renders buttons at the platform's default type scale (13pt on
-// Tahoe) so they match System Settings and system menus exactly.
-// Keeping the component (rather than bare Buttons) preserves the single
-// place to restyle every text button at once, plus the pointer cursor.
+// restyle it pins no font/controlSize — the system default type scale (13pt)
+// matches System Settings. It carries a rounded chrome with a hover highlight
+// (a subtle base fill that brightens on mouse-over), applied through
+// TextButtonChrome so every text button — plain or custom-label — behaves the
+// same.
 
 import SwiftUI
 
@@ -17,16 +17,38 @@ struct AppTextButton: View {
     }
 
     var body: some View {
-        Button(title, action: action)
+        Button(action: action) { Text(title) }
+            .buttonStyle(.plain)
+            .modifier(TextButtonChrome())
             .pointerCursor()
     }
 }
 
 extension View {
-    /// Chrome for buttons with CUSTOM labels (spinner+text combos).
-    /// Keep the label's Text at the default font so it matches
-    /// AppTextButton.
+    /// Chrome for buttons with CUSTOM labels (e.g. spinner + text combos).
+    /// Gives them the same rounded fill + hover highlight as AppTextButton.
     func appTextButtonChrome() -> some View {
-        self.pointerCursor()
+        self.buttonStyle(.plain)
+            .modifier(TextButtonChrome())
+            .pointerCursor()
+    }
+}
+
+/// Rounded chrome with a hover highlight. Base fill is a faint neutral so the
+/// button reads as tappable; hovering deepens it. Color.primary adapts to
+/// light/dark (dark text on light, light on dark).
+private struct TextButtonChrome: ViewModifier {
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(hovering ? 0.16 : 0.07))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .onHover { hovering = $0 }
     }
 }
