@@ -204,7 +204,7 @@ struct AccountTableView: View {
         )
         .contextMenu {
             if let rename = renameAccount {
-                Button("Rename…") { rename(acct.label) }
+                Button("Rename") { rename(acct.label) }
             }
         }
     }
