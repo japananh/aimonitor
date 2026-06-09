@@ -92,7 +92,7 @@ struct PopoverRootView: View {
                         .font(.caption2)
                         .foregroundStyle(.orange)
                     if let importAccount {
-                        AppTextButton("Import this account…") { importAccount(email) }
+                        AppTextButton("Import this account") { importAccount(email) }
                             .help("Register the currently signed-in account with AIMonitor")
                     }
                 }

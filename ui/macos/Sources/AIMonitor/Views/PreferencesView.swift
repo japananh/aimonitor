@@ -135,13 +135,13 @@ struct PreferencesView: View {
                 Text("Checks GitHub for new releases and notifies you. Updates are never installed without your confirmation.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                AppTextButton("Check for updates…", action: checkForUpdates)
+                AppTextButton("Check for updates", action: checkForUpdates)
                     .help("Check for a newer version now")
             }
             Section("Backup") {
-                AppTextButton("Export…", action: exportFlow)
+                AppTextButton("Export", action: exportFlow)
                     .help("Save your settings to a file — optionally including account logins, encrypted with a passphrase.")
-                AppTextButton("Import…", action: importBundle)
+                AppTextButton("Import", action: importBundle)
                     .help("Restore settings (and credentials, if the file has them) from an export file.")
                 if let msg = backupMessage {
                     Text(msg)
@@ -266,7 +266,7 @@ struct PreferencesView: View {
         alert.messageText = "Export configuration"
         alert.informativeText = "“Settings only” is safe to share. “With credentials” also bundles your account logins, encrypted with a passphrase — that file is a live login, keep it safe."
         alert.addButton(withTitle: "Settings Only")
-        alert.addButton(withTitle: "With Credentials…")
+        alert.addButton(withTitle: "With Credentials")
         alert.addButton(withTitle: "Cancel")
         switch alert.runModal() {
         case .alertFirstButtonReturn:
@@ -401,7 +401,7 @@ struct PreferencesView: View {
                 AppTextButton("Disconnect") { mcpDisconnect(svc.service) }
                     .disabled(mcpBusy != nil)
             } else {
-                AppTextButton(mcpBusy == svc.service ? "Connecting…" : "Connect…") { mcpConnect(svc.service) }
+                AppTextButton(mcpBusy == svc.service ? "Connecting…" : "Connect") { mcpConnect(svc.service) }
                     .disabled(mcpBusy != nil)
             }
         }
