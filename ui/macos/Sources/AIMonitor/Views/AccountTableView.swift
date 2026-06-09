@@ -157,12 +157,12 @@ struct AccountTableView: View {
                 // over the span we have data for. Conveys "climbing fast?" in one
                 // line without a chart. Aligned under the bars (28pt inset).
                 let hist = model.historyByAccount[acct.id] ?? []
-                if let trend = trendLabel(hist) {
+                if let trend = trendLabel(hist, resetAt: lim.fiveHourResetAt) {
                     Text(trend.text)
                         .font(.caption2)
                         .foregroundStyle(trend.color)
                         .padding(.leading, 28)
-                        .help(sparkHelp(hist))
+                        .help(sparkHelp(hist, resetAt: lim.fiveHourResetAt))
                 }
             } else {
                 Text("no usage data yet")
@@ -220,12 +220,22 @@ struct AccountTableView: View {
         return "cooling <1m"
     }
 
-    // trendLabel summarises the 5-hour usage change over the span we have
-    // data for, as "↗ +21% in 45m" / "↘ −5% in 1h" / "→ steady · 45m". Returns
-    // nil when there aren't enough points to say anything. Rising tints by the
-    // current severity (so hot+climbing draws the eye); falling is green.
-    private func trendLabel(_ hist: [UsageSamplePoint]) -> (text: String, color: Color)? {
-        guard let firstP = hist.first, let lastP = hist.last, hist.count >= 2 else {
+    // trendLabel summarises how the CURRENT 5-hour window has filled, as
+    // "↗ +21% in 45m" / "↘ −5% in 1h" / "→ steady · 45m". Returns nil when
+    // there isn't enough data inside this window to say anything.
+    //
+    // The 5-hour usage % resets every 5 hours, so comparing points across a
+    // reset is meaningless — an account can read 100% now and 100% a day ago
+    // having reset to 0 several times between, which the old whole-series
+    // delta reported as a fake "steady". We anchor to the current window: it
+    // starts 5h before the API's reset timestamp, and only points inside it
+    // are comparable. Rising tints by the current severity (so hot+climbing
+    // draws the eye); falling is green.
+    private func trendLabel(_ hist: [UsageSamplePoint], resetAt: Date?) -> (text: String, color: Color)? {
+        guard let resetAt else { return nil }
+        let windowStart = resetAt.addingTimeInterval(-5 * 3600)
+        let run = hist.filter { $0.ts >= windowStart }
+        guard let firstP = run.first, let lastP = run.last, run.count >= 2 else {
             return nil
         }
         let delta = lastP.fiveHourPct - firstP.fiveHourPct
@@ -245,18 +255,20 @@ struct AccountTableView: View {
         return (String(format: "→ steady · %@", span), .secondary)
     }
 
-    // sparkHelp describes the trend on hover: what it plots, the real time
-    // span it actually covers (so a few-minutes line isn't mistaken for a day),
-    // and the first→latest values plus the peak.
-    private func sparkHelp(_ hist: [UsageSamplePoint]) -> String {
-        guard let firstP = hist.first, let lastP = hist.last else {
-            return "Recent 5-hour usage."
+    // sparkHelp describes the trend on hover: what it plots over the CURRENT
+    // 5-hour window (same anchor as trendLabel — points before the last reset
+    // aren't comparable), and the first→latest values plus the window peak.
+    private func sparkHelp(_ hist: [UsageSamplePoint], resetAt: Date?) -> String {
+        let windowStart = resetAt?.addingTimeInterval(-5 * 3600) ?? .distantPast
+        let run = hist.filter { $0.ts >= windowStart }
+        guard let firstP = run.first, let lastP = run.last else {
+            return "5-hour usage for the current window."
         }
-        let vals = hist.map { $0.fiveHourPct }
+        let vals = run.map { $0.fiveHourPct }
         let peak = vals.max() ?? lastP.fiveHourPct
         let span = humanSpan(lastP.ts.timeIntervalSince(firstP.ts))
         return String(
-            format: "This account's 5-hour usage over the last %@: went from %.0f%% to %.0f%% (highest %.0f%%). The line goes up as the 5-hour limit fills, and drops when the window resets.",
+            format: "This account's 5-hour usage so far in the current window (%@): went from %.0f%% to %.0f%% (highest %.0f%%). It climbs as the 5-hour limit fills and resets to 0 when the window rolls over.",
             span, firstP.fiveHourPct, lastP.fiveHourPct, peak
         )
     }
