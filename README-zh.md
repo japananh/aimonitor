@@ -37,8 +37,20 @@ curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/l
 go install github.com/japananh/aimonitor/cmd/aimonitor@latest
 ```
 
+> **未受信任的 tap：** 较新的 Homebrew 在你信任第三方 tap 之前会拒绝加载它。若安装报错 *"Refusing to load cask … from untrusted tap"*，运行 `brew trust japananh/tap` 后重试。
+
 > **macOS 首次启动：** `.app` 尚未公证 —— 清除一次 Gatekeeper 隔离：
 > `xattr -dr com.apple.quarantine /Applications/AIMonitor.app`（或右键 → 打开）。见 [`docs/unsigned-app.md`](docs/unsigned-app.md)。
+
+### 升级
+
+```sh
+brew upgrade --cask aimonitor   # macOS
+aimonitor update check          # CLI：是否有新版本？
+aimonitor update install        # CLI：后台升级
+```
+
+菜单栏应用也会在启动时检查 GitHub，并在 **Preferences → Check for updates** 提示更新。预发布版本绝不会自动推送 —— `brew upgrade` 始终让你停留在最新的稳定版。
 
 ## 快速开始
 
@@ -116,6 +128,17 @@ aimonitor mcp register          # 把服务器加入 Claude Code
 - 对外流量仅限：`GET /api/oauth/usage`（自省，不消耗 token）、`POST /v1/oauth/token`（静默刷新 token）、以及 GitHub 版本检查。不发送任何关于你的信息。
 
 威胁模型见 [`docs/security.md`](docs/security.md)。
+
+## 故障排查
+
+```sh
+aimonitor doctor   # 健康检查：配置、SQLite、钥匙串、账户
+```
+
+- **"Daemon not running" / 用量看起来是旧的。** 用 `aimonitor config set autostart true` 启动（或重启）后台 daemon，或在弹窗里点 **Start daemon** —— 它会注册一个登录时自动重启的 LaunchAgent。
+- **首次启动打不开**（未签名）。清除一次 Gatekeeper 隔离：`xattr -dr com.apple.quarantine /Applications/AIMonitor.app`。
+- **日志。** daemon 写入 `~/Library/Logs/aimonitor/aimonitor.daemon.log`（INFO/WARN/ERROR —— 绝不记录 token）；后台升级写入旁边的 `update.log`。
+- **最近的切换。** `aimonitor log` 打印切换审计记录。
 
 ## 卸载
 
