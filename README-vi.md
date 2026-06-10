@@ -37,8 +37,20 @@ curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/l
 go install github.com/japananh/aimonitor/cmd/aimonitor@latest
 ```
 
+> **Tap chưa được tin cậy:** Homebrew bản mới chặn tap bên thứ ba cho tới khi bạn tin cậy nó. Nếu lệnh cài báo *"Refusing to load cask … from untrusted tap"*, chạy `brew trust japananh/tap` rồi thử lại.
+
 > **macOS lần đầu mở:** file `.app` chưa notarize — gỡ quarantine một lần:
 > `xattr -dr com.apple.quarantine /Applications/AIMonitor.app` (hoặc chuột phải → Open). Xem [`docs/unsigned-app.md`](docs/unsigned-app.md).
+
+### Nâng cấp
+
+```sh
+brew upgrade --cask aimonitor   # macOS
+aimonitor update check          # CLI: có bản mới chưa?
+aimonitor update install        # CLI: nâng cấp chạy nền
+```
+
+App trên menu bar cũng tự kiểm tra GitHub khi mở và mời cập nhật ở **Preferences → Check for updates**. Bản pre-release không bao giờ được phục vụ tự động — `brew upgrade` luôn giữ bạn ở bản stable mới nhất.
 
 ## Bắt đầu nhanh
 
@@ -116,6 +128,17 @@ aimonitor mcp register          # thêm server vào Claude Code
 - Lưu lượng ra ngoài chỉ gồm: `GET /api/oauth/usage` (introspection, không tốn token), `POST /v1/oauth/token` (refresh token âm thầm), và kiểm tra release GitHub. Không gửi thông tin gì về bạn.
 
 Xem [`docs/security.md`](docs/security.md) cho mô hình mối đe dọa.
+
+## Xử lý sự cố
+
+```sh
+aimonitor doctor   # kiểm tra sức khỏe: config, SQLite, keyring, account
+```
+
+- **"Daemon not running" / usage có vẻ cũ.** Khởi động (hoặc khởi động lại) daemon nền bằng `aimonitor config set autostart true`, hoặc bấm **Start daemon** trong popover — nó đăng ký một LaunchAgent tự chạy lại khi đăng nhập.
+- **App không mở được lần đầu** (chưa ký). Gỡ Gatekeeper một lần: `xattr -dr com.apple.quarantine /Applications/AIMonitor.app`.
+- **Log.** Daemon ghi vào `~/Library/Logs/aimonitor/aimonitor.daemon.log` (INFO/WARN/ERROR — không bao giờ ghi token); nâng cấp chạy nền ghi vào `update.log` bên cạnh.
+- **Lịch sử đổi account.** `aimonitor log` in nhật ký audit các lần switch.
 
 ## Gỡ cài đặt
 

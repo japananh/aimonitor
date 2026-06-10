@@ -37,8 +37,20 @@ curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/l
 go install github.com/japananh/aimonitor/cmd/aimonitor@latest
 ```
 
+> **Untrusted tap:** recent Homebrew refuses third-party taps until you trust them. If the install fails with *"Refusing to load cask … from untrusted tap"*, run `brew trust japananh/tap` and retry.
+
 > **macOS first launch:** the `.app` isn't notarized yet — clear Gatekeeper once with
 > `xattr -dr com.apple.quarantine /Applications/AIMonitor.app` (or right-click → Open). See [`docs/unsigned-app.md`](docs/unsigned-app.md).
+
+### Upgrade
+
+```sh
+brew upgrade --cask aimonitor   # macOS
+aimonitor update check          # CLI: is a newer release out?
+aimonitor update install        # CLI: upgrade in the background
+```
+
+The menu-bar app also checks GitHub on launch and offers the update under **Preferences → Check for updates**. Pre-releases are never auto-served — `brew upgrade` keeps you on the latest stable.
 
 ## Quick start
 
@@ -116,6 +128,17 @@ aimonitor mcp register          # add the server to Claude Code
 - Outbound traffic is limited to: `GET /api/oauth/usage` (introspection, no tokens consumed), `POST /v1/oauth/token` (silent token refresh), and the GitHub release check. Nothing about you is sent.
 
 See [`docs/security.md`](docs/security.md) for the threat model.
+
+## Troubleshooting
+
+```sh
+aimonitor doctor   # health check: config, SQLite, keyring, accounts
+```
+
+- **"Daemon not running" / usage looks stale.** Start or restart the background daemon with `aimonitor config set autostart true`, or click **Start daemon** in the popover — it registers a LaunchAgent that relaunches at login.
+- **App won't open on first launch** (unsigned). Clear Gatekeeper once: `xattr -dr com.apple.quarantine /Applications/AIMonitor.app`.
+- **Logs.** The daemon writes to `~/Library/Logs/aimonitor/aimonitor.daemon.log` (INFO/WARN/ERROR — never token bytes); background upgrades log to `update.log` beside it.
+- **Recent switches.** `aimonitor log` prints the switch audit trail.
 
 ## Uninstall
 
