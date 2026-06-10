@@ -27,8 +27,8 @@
 ## Install
 
 ```sh
-# macOS (Sonoma 14+)
-brew install --cask japananh/tap/aimonitor
+# macOS (Sonoma 14+) — one command: taps, trusts, installs, clears Gatekeeper
+curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/macos/install.sh | bash
 
 # Linux (Ubuntu 22.04+) — CLI only
 curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/linux/install.sh | sh
@@ -37,10 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/l
 go install github.com/japananh/aimonitor/cmd/aimonitor@latest
 ```
 
-> **Untrusted tap:** recent Homebrew refuses third-party taps until you trust them. If the install fails with *"Refusing to load cask … from untrusted tap"*, run `brew trust japananh/tap` and retry.
-
-> **macOS first launch:** the `.app` isn't notarized yet — clear Gatekeeper once with
-> `xattr -dr com.apple.quarantine /Applications/AIMonitor.app` (or right-click → Open). See [`docs/unsigned-app.md`](docs/unsigned-app.md).
+> **Prefer Homebrew directly?** `brew trust japananh/tap && brew install --cask japananh/tap/aimonitor`, then clear Gatekeeper on first launch: `xattr -dr com.apple.quarantine /Applications/AIMonitor.app` (or right-click → Open). The one-line installer above does both for you. See [`docs/unsigned-app.md`](docs/unsigned-app.md).
 
 ### Upgrade
 
@@ -143,8 +140,13 @@ aimonitor doctor   # health check: config, SQLite, keyring, accounts
 ## Uninstall
 
 ```sh
-aimonitor uninstall --purge      # drop autostart + SQLite DB, config, aimonitor keyring entries
-brew uninstall --cask aimonitor  # macOS
+# Remove the app + daemon, keep your accounts
+brew uninstall --cask aimonitor
+
+# Full wipe, including the logins saved in your Keychain. Purge runs first
+# because Homebrew can't reach the keychain stashes — and it needs the
+# binary still installed to clear them.
+aimonitor uninstall --purge && brew uninstall --cask aimonitor
 ```
 
 Your original `Claude Code-credentials` keyring entry is never touched — existing `claude` logins keep working.
