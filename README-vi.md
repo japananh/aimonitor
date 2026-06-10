@@ -149,7 +149,7 @@ brew uninstall --cask aimonitor
 aimonitor uninstall --purge && brew uninstall --cask aimonitor
 ```
 
-Keyring entry `Claude Code-credentials` gốc của bạn **không bị đụng** — login `claude` hiện tại vẫn chạy bình thường.
+`--purge` chỉ xoá Keychain **của riêng aimonitor** (các stash `aimonitor-<uuid>`), **không** đụng slot `Claude Code-credentials` của Claude. Nên tài khoản ấy đang đăng nhập vẫn chạy bình thường trong `claude`, **không phải login lại** — chỉ mất các bản sao mà aimonitor lưu cho những account *khác*.
 
 ## Build từ source
 

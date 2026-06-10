@@ -148,7 +148,7 @@ brew uninstall --cask aimonitor
 aimonitor uninstall --purge && brew uninstall --cask aimonitor
 ```
 
-你原有的 `Claude Code-credentials` 鑰匙圈項目**不會被更動** —— 現有的 `claude` 登入照常可用。
+`--purge` 只刪除 **aimonitor 自己的**鑰匙圈項目（`aimonitor-<uuid>` stash），**絕不**動 Claude 的 `Claude Code-credentials` 槽。所以你目前登入的帳戶在 `claude` 裡照常可用，**無需重新登入** —— 只是 aimonitor 為*其他*帳戶儲存的副本被清掉了。
 
 ## 從原始碼建置
 

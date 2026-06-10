@@ -149,7 +149,7 @@ brew uninstall --cask aimonitor
 aimonitor uninstall --purge && brew uninstall --cask aimonitor
 ```
 
-Your original `Claude Code-credentials` keyring entry is never touched — existing `claude` logins keep working.
+`--purge` only deletes **aimonitor's own** Keychain entries (the `aimonitor-<uuid>` stashes), never Claude's `Claude Code-credentials` slot. So the account you're currently signed into keeps working in `claude` with **no re-login** — only aimonitor's saved copies of your *other* accounts are dropped.
 
 ## Build from source
 
