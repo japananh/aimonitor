@@ -25,7 +25,7 @@ cask "aimonitor" do
   homepage "https://github.com/japananh/aimonitor"
 
   # Universal binary works on both Intel and Apple Silicon.
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   binary "aimonitor"
   app "AIMonitor.app"

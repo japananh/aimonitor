@@ -154,7 +154,7 @@ homebrew_casks:
     #     LaunchAgent records the staged binary path; postflight re-runs
     #     on every `brew upgrade`, so the path self-heals across versions.
     custom_block: |
-      depends_on macos: ">= :sonoma"
+      depends_on macos: :sonoma
       app "AIMonitor.app"
       postflight do
         system_command "#{staged_path}/aimonitor",
@@ -168,8 +168,8 @@ homebrew_casks:
 
         aimonitor config set autostart false
 
-      The menu bar app is unsigned in this beta — macOS Gatekeeper blocks
-      the first GUI launch. Clear it once:
+      The menu bar app is unsigned — macOS Gatekeeper blocks the first
+      GUI launch. Clear it once:
 
         xattr -dr com.apple.quarantine /Applications/AIMonitor.app
 

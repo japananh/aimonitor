@@ -49,6 +49,22 @@ mkdir -p "$APP_OUT/Contents/MacOS" "$APP_OUT/Contents/Resources"
 cp "$BIN_IN" "$APP_OUT/Contents/MacOS/AIMonitor"
 chmod +x "$APP_OUT/Contents/MacOS/AIMonitor"
 cp "$PLIST_IN" "$APP_OUT/Contents/Info.plist"
+
+# Stamp the bundle version from git so the .app reports the release it was
+# built from (Finder "Get Info", Gatekeeper). The CLI gets its version via
+# ldflags; the committed Info.plist template would otherwise freeze the app
+# at a stale literal (it shipped 1.1.0 through v1.1.2). --abbrev=0 gives the
+# clean tag (e.g. 1.1.2) for the marketing version; the full describe
+# (1.1.2-5-gabc on dev builds) goes in CFBundleVersion as the build id. No
+# tags yet → leave the template value untouched.
+SHORT_VERSION="$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"
+BUILD_VERSION="$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null | sed 's/^v//')"
+if [[ -n "$SHORT_VERSION" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $SHORT_VERSION" "$APP_OUT/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_VERSION:-$SHORT_VERSION}" "$APP_OUT/Contents/Info.plist"
+    echo "==> stamped CFBundleShortVersionString=$SHORT_VERSION CFBundleVersion=${BUILD_VERSION:-$SHORT_VERSION}"
+fi
+
 # App icon (Dock + Finder). Pre-built .icns committed in Resources/;
 # regenerate from assets/icon.svg via qlmanage + sips + iconutil.
 cp "$SWIFT_DIR/Resources/AppIcon.icns" "$APP_OUT/Contents/Resources/AppIcon.icns"
