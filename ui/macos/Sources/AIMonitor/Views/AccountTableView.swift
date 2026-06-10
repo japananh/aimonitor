@@ -235,8 +235,15 @@ struct AccountTableView: View {
         guard let resetAt else { return nil }
         let windowStart = resetAt.addingTimeInterval(-5 * 3600)
         let run = hist.filter { $0.ts >= windowStart }
+        // Fewer than two in-window samples → no delta to measure. Inactive
+        // accounts are polled on demand, so right after a window reset they
+        // often have 0–1 points; the account isn't being consumed, so a bare
+        // "steady" is honest. Gating this on resetAt (loaded with the bars)
+        // rather than the sample count makes the label render in lockstep with
+        // the bars on every open, instead of popping in once a refresh lands
+        // the second sample.
         guard let firstP = run.first, let lastP = run.last, run.count >= 2 else {
-            return nil
+            return ("→ steady", .secondary)
         }
         let delta = lastP.fiveHourPct - firstP.fiveHourPct
         let span = humanSpan(lastP.ts.timeIntervalSince(firstP.ts))
