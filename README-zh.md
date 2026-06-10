@@ -27,8 +27,8 @@
 ## 安装
 
 ```sh
-# macOS (Sonoma 14+)
-brew install --cask japananh/tap/aimonitor
+# macOS (Sonoma 14+) —— 一条命令：tap、信任、安装、清除 Gatekeeper
+curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/macos/install.sh | bash
 
 # Linux (Ubuntu 22.04+) —— 仅 CLI
 curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/linux/install.sh | sh
@@ -37,10 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/l
 go install github.com/japananh/aimonitor/cmd/aimonitor@latest
 ```
 
-> **未受信任的 tap：** 较新的 Homebrew 在你信任第三方 tap 之前会拒绝加载它。若安装报错 *"Refusing to load cask … from untrusted tap"*，运行 `brew trust japananh/tap` 后重试。
-
-> **macOS 首次启动：** `.app` 尚未公证 —— 清除一次 Gatekeeper 隔离：
-> `xattr -dr com.apple.quarantine /Applications/AIMonitor.app`（或右键 → 打开）。见 [`docs/unsigned-app.md`](docs/unsigned-app.md)。
+> **想直接用 Homebrew？** `brew trust japananh/tap && brew install --cask japananh/tap/aimonitor`，然后首次启动时清除 Gatekeeper 隔离：`xattr -dr com.apple.quarantine /Applications/AIMonitor.app`（或右键 → 打开）。上面的一行安装脚本已替你完成这两步。见 [`docs/unsigned-app.md`](docs/unsigned-app.md)。
 
 ### 升级
 
@@ -143,8 +140,12 @@ aimonitor doctor   # 健康检查：配置、SQLite、钥匙串、账户
 ## 卸载
 
 ```sh
-aimonitor uninstall --purge      # 关闭自启动 + 删除 SQLite DB、配置、aimonitor 钥匙串条目
-brew uninstall --cask aimonitor  # macOS
+# 删除 app + daemon，保留账户
+brew uninstall --cask aimonitor
+
+# 彻底清除，包括保存在钥匙串里的登录。purge 必须先跑：Homebrew 够不到钥匙串里
+# 的 stash，而且 purge 需要 binary 还在才能清除它们。
+aimonitor uninstall --purge && brew uninstall --cask aimonitor
 ```
 
 你原有的 `Claude Code-credentials` 钥匙串条目**不会被触碰** —— 现有的 `claude` 登录照常可用。

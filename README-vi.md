@@ -27,8 +27,8 @@
 ## Cài đặt
 
 ```sh
-# macOS (Sonoma 14+)
-brew install --cask japananh/tap/aimonitor
+# macOS (Sonoma 14+) — một lệnh: tap, trust, cài, gỡ Gatekeeper
+curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/macos/install.sh | bash
 
 # Linux (Ubuntu 22.04+) — chỉ CLI
 curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/linux/install.sh | sh
@@ -37,10 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/japananh/aimonitor/main/packaging/l
 go install github.com/japananh/aimonitor/cmd/aimonitor@latest
 ```
 
-> **Tap chưa được tin cậy:** Homebrew bản mới chặn tap bên thứ ba cho tới khi bạn tin cậy nó. Nếu lệnh cài báo *"Refusing to load cask … from untrusted tap"*, chạy `brew trust japananh/tap` rồi thử lại.
-
-> **macOS lần đầu mở:** file `.app` chưa notarize — gỡ quarantine một lần:
-> `xattr -dr com.apple.quarantine /Applications/AIMonitor.app` (hoặc chuột phải → Open). Xem [`docs/unsigned-app.md`](docs/unsigned-app.md).
+> **Thích dùng Homebrew trực tiếp?** `brew trust japananh/tap && brew install --cask japananh/tap/aimonitor`, rồi gỡ Gatekeeper lần đầu: `xattr -dr com.apple.quarantine /Applications/AIMonitor.app` (hoặc chuột phải → Open). Script một dòng ở trên làm sẵn cả hai. Xem [`docs/unsigned-app.md`](docs/unsigned-app.md).
 
 ### Nâng cấp
 
@@ -143,8 +140,13 @@ aimonitor doctor   # kiểm tra sức khỏe: config, SQLite, keyring, account
 ## Gỡ cài đặt
 
 ```sh
-aimonitor uninstall --purge      # tắt autostart + xóa SQLite DB, config, keyring entry của aimonitor
-brew uninstall --cask aimonitor  # macOS
+# Gỡ app + daemon, giữ nguyên account
+brew uninstall --cask aimonitor
+
+# Xoá sạch, gồm cả login đã lưu trong Keychain. Phải chạy purge trước vì
+# Homebrew không với tới các keychain stash — và purge cần binary còn cài
+# thì mới xoá được chúng.
+aimonitor uninstall --purge && brew uninstall --cask aimonitor
 ```
 
 Keyring entry `Claude Code-credentials` gốc của bạn **không bị đụng** — login `claude` hiện tại vẫn chạy bình thường.
