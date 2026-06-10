@@ -16,7 +16,7 @@
 #     brew install --cask ./packaging/homebrew/aimonitor.rb
 
 cask "aimonitor" do
-  version "1.0.0-beta.4"
+  version "1.1.3"
   sha256 :no_check
 
   url "https://github.com/japananh/aimonitor/releases/download/v#{version}/aimonitor_#{version}_darwin_universal.tar.gz"
@@ -47,8 +47,8 @@ cask "aimonitor" do
 
       aimonitor config set autostart false
 
-    The menu bar app is unsigned in this beta — macOS Gatekeeper blocks
-    the first GUI launch. Clear it once:
+    The menu bar app is unsigned — macOS Gatekeeper blocks the first
+    GUI launch. Clear it once:
 
       xattr -dr com.apple.quarantine /Applications/AIMonitor.app
 
