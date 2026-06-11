@@ -310,6 +310,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         p.hidesOnDeactivate = false
         p.isReleasedWhenClosed = false
         p.isMovable = false
+        // Tooltips (.help) are driven by NSToolTipManager, which only fires while
+        // the window receives mouse-moved events. A borderless panel has this off
+        // by default, so the header/row button tooltips never appeared — enable it.
+        p.acceptsMouseMovedEvents = true
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel = p
 

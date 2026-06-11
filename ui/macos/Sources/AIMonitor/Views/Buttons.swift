@@ -40,7 +40,7 @@ extension View {
     /// the header action icons. Apply to the button's label image; pair with
     /// `.buttonStyle(.borderless)`. Unlike the text chrome there's no resting
     /// fill, so a row of icons stays quiet until hovered.
-    func iconHoverChrome(size: CGFloat = 20) -> some View {
+    func iconHoverChrome(size: CGFloat = 22) -> some View {
         modifier(IconHoverChrome(size: size))
     }
 }
@@ -52,12 +52,14 @@ private struct IconHoverChrome: ViewModifier {
     @State private var hovering = false
 
     func body(content: Content) -> some View {
-        content
+        // The sized rounded rect is the base; the glyph is overlaid centered.
+        // (Overlaying onto the fixed-size background centers by the background's
+        // bounds, so SF Symbol baseline/metric quirks don't push the glyph off
+        // — `content.frame().background()` would inherit the glyph's own box.)
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color.primary.opacity(hovering ? 0.12 : 0))
             .frame(width: size, height: size)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.primary.opacity(hovering ? 0.12 : 0))
-            )
+            .overlay(content)
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
     }

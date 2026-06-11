@@ -105,9 +105,9 @@ struct AccountTableView: View {
                         model.refreshUsage(label: acct.label, id: acct.id)
                     } label: {
                         if model.refreshingAccounts.contains(acct.id) {
-                            ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 20, height: 20)
+                            ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 22, height: 22)
                         } else {
-                            Image(systemName: "arrow.clockwise").font(.system(size: 12)).iconHoverChrome()
+                            Image(systemName: "arrow.clockwise").font(.system(size: 14)).iconHoverChrome()
                         }
                     }
                     .buttonStyle(.borderless)
@@ -150,7 +150,7 @@ struct AccountTableView: View {
                                 Button("Remove", role: .destructive) { remove(acct.label) }
                             }
                         } label: {
-                            Image(systemName: "ellipsis").font(.system(size: 12)).iconHoverChrome()
+                            Image(systemName: "ellipsis").font(.system(size: 14)).iconHoverChrome()
                         }
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
@@ -159,7 +159,7 @@ struct AccountTableView: View {
                         .help("More actions for \(acct.label)")
                     }
                 }
-                .frame(height: 20, alignment: .center)
+                .frame(height: 22, alignment: .center)
             }
             // Per-account 5h / 7d utilization. Absent until the daemon has
             // fetched this account at least once (active every tick; inactive
