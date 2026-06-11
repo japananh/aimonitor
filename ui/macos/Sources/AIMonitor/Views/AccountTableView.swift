@@ -248,7 +248,12 @@ struct AccountTableView: View {
     // are comparable. Rising tints by the current severity (so hot+climbing
     // draws the eye); falling is green.
     private func trendLabel(_ hist: [UsageSamplePoint], resetAt: Date?) -> (text: String, color: Color)? {
-        guard let resetAt else { return nil }
+        // No reset time means there's no active 5-hour window — the account is
+        // idle at ~0% (the API omits the reset when nothing's been used), which
+        // is exactly the inactive-account case. It isn't being consumed, so show
+        // a bare gray "steady" rather than nothing, so the line is present for
+        // every account on every open.
+        guard let resetAt else { return ("→ steady", .secondary) }
         let windowStart = resetAt.addingTimeInterval(-5 * 3600)
         let run = hist.filter { $0.ts >= windowStart }
         // Fewer than two in-window samples → no delta to measure. Inactive
