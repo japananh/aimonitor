@@ -68,30 +68,6 @@ struct AccountTableView: View {
                                 )
                                 .help(acct.cooldownReason ?? "Rate-limited — paused until the cooldown ends")
                         }
-                        // Rename + remove, right next to the name. Both carry
-                        // the same hover background as the header icons.
-                        if let rename = renameAccount {
-                            Button {
-                                rename(acct.label)
-                            } label: {
-                                Image(systemName: "pencil").font(.system(size: 12)).iconHoverChrome()
-                            }
-                            .buttonStyle(.borderless)
-                            .pointerCursor()
-                            .help("Rename \(acct.label)")
-                        }
-                        // Delete — inactive rows only (the CLI refuses to remove
-                        // the active account, whose tokens live in the shared slot).
-                        if !isActive, let remove = removeAccount {
-                            Button {
-                                remove(acct.label)
-                            } label: {
-                                Image(systemName: "trash").font(.system(size: 12)).iconHoverChrome()
-                            }
-                            .buttonStyle(.borderless)
-                            .pointerCursor()
-                            .help("Remove \(acct.label) from AIMonitor")
-                        }
                     }
                     // Email below the name — larger than the org, smaller
                     // than the account name.
@@ -159,6 +135,28 @@ struct AccountTableView: View {
                         .appTextButtonChrome()
                         .disabled(model.switchingLabel != nil)
                         .help("Make \(acct.label) the active Claude account")
+                    }
+
+                    // Overflow menu for the rarer per-account actions, so the
+                    // row isn't a wall of icons. Rename on any row; Remove only
+                    // on inactive ones (the CLI refuses to remove the active
+                    // account). Mirrors the right-click context menu below.
+                    if renameAccount != nil || (!isActive && removeAccount != nil) {
+                        Menu {
+                            if let rename = renameAccount {
+                                Button("Rename") { rename(acct.label) }
+                            }
+                            if !isActive, let remove = removeAccount {
+                                Button("Remove", role: .destructive) { remove(acct.label) }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis").font(.system(size: 12)).iconHoverChrome()
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .pointerCursor()
+                        .help("More actions for \(acct.label)")
                     }
                 }
                 .frame(height: 20, alignment: .center)
