@@ -11,6 +11,9 @@ struct PopoverRootView: View {
     // Invoked with an account's label to start a rename (app delegate shows
     // the modal prompt). nil hides the rename affordance.
     var renameAccount: ((String) -> Void)? = nil
+    // Invoked with an account's label to delete it (app delegate shows a
+    // destructive confirmation). nil hides the remove affordance.
+    var removeAccount: ((String) -> Void)? = nil
     // Invoked with the signed-in email when the live account isn't managed
     // by aimonitor, to offer importing it. nil hides the import prompt.
     var importAccount: ((String) -> Void)? = nil
@@ -98,7 +101,7 @@ struct PopoverRootView: View {
                 }
             }
 
-            AccountTableView(model: model, renameAccount: renameAccount)
+            AccountTableView(model: model, renameAccount: renameAccount, removeAccount: removeAccount)
 
             // Footer actions float directly on the glass — no separator;
             // the account cards above provide the visual grouping.

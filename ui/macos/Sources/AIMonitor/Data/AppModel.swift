@@ -222,6 +222,22 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Removes an account (its aimonitor keychain stash + registry row) on a
+    /// background queue, then refreshes so the row disappears. The CLI refuses
+    /// to remove the active account, so the UI only offers this on inactive
+    /// rows; any error (e.g. that refusal) surfaces in lastError.
+    func removeAccount(label: String) {
+        let q = workQueue
+        q.async {
+            do {
+                try CLIBridge.remove(label: label)
+                Task { @MainActor in await self.refresh() }
+            } catch {
+                Task { @MainActor in self.lastError = "\(error)" }
+            }
+        }
+    }
+
     func setAutoSwitch(_ enabled: Bool) {
         let q = workQueue
         q.async {

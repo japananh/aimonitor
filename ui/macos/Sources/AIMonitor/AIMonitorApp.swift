@@ -284,6 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openPreferences: { [weak self] in self?.showPreferences() },
             quit: { NSApplication.shared.terminate(nil) },
             renameAccount: { [weak self] label in self?.promptRename(currentLabel: label) },
+            removeAccount: { [weak self] label in self?.promptRemove(label: label) },
             importAccount: { [weak self] email in self?.promptImportCurrent(email: email) },
             addAccount: { [weak self] in self?.promptAddAccount() }
         )
@@ -462,6 +463,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !newLabel.isEmpty, newLabel != currentLabel {
                 model.rename(label: currentLabel, to: newLabel)
             }
+        }
+    }
+
+    // promptRemove shows a destructive confirmation before deleting an account
+    // (its aimonitor keychain stash + registry row). Only reached from inactive
+    // rows — the CLI refuses to remove the active account. NSAlert (not a SwiftUI
+    // alert) for the same reason as promptRename: the popover dismisses on focus.
+    private func promptRemove(label: String) {
+        closePanel()
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Remove “\(label)”?"
+        alert.informativeText = "Deletes AIMonitor's saved login for this account (its Keychain stash and list entry). Your active Claude login is untouched, and you can re-add this account later with `claude /login`."
+        let removeButton = alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        removeButton.hasDestructiveAction = true
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            model.removeAccount(label: label)
         }
     }
 

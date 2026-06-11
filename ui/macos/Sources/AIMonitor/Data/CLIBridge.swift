@@ -98,6 +98,14 @@ enum CLIBridge {
         try run(["rename", oldLabel, newLabel])
     }
 
+    /// Removes an account: deletes its aimonitor keychain stash + registry row.
+    /// `--yes` skips the CLI's own prompt (the app shows its own confirmation).
+    /// The CLI refuses to remove the currently-active account, so the UI only
+    /// offers this on inactive rows.
+    static func remove(label: String) throws {
+        try run(["remove", label, "--yes"])
+    }
+
     /// Fetches fresh 5h/7d usage for EVERY account, including the active one
     /// (via the daemon's safe live path). May take a few seconds. Used by the
     /// explicit "Refresh usage" button.

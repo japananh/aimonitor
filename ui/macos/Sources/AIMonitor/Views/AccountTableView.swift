@@ -11,6 +11,10 @@ struct AccountTableView: View {
     // shows a modal text prompt (an NSAlert is reliable even though showing
     // it dismisses the transient popover). nil disables the affordance.
     var renameAccount: ((String) -> Void)? = nil
+    // removeAccount is invoked with a row's label to delete the account (the
+    // app delegate shows a destructive confirmation NSAlert). Only offered on
+    // inactive rows — the CLI refuses to remove the active account. nil hides it.
+    var removeAccount: ((String) -> Void)? = nil
 
     var body: some View {
         // Tahoe (Control Center) layout: each account is a rounded
@@ -64,17 +68,29 @@ struct AccountTableView: View {
                                 )
                                 .help(acct.cooldownReason ?? "Rate-limited — paused until the cooldown ends")
                         }
-                        // Rename button right next to the name.
+                        // Rename + remove, right next to the name. Both carry
+                        // the same hover background as the header icons.
                         if let rename = renameAccount {
                             Button {
                                 rename(acct.label)
                             } label: {
-                                Image(systemName: "pencil")
+                                Image(systemName: "pencil").font(.system(size: 12)).iconHoverChrome()
                             }
                             .buttonStyle(.borderless)
-                            .controlSize(.small)
                             .pointerCursor()
                             .help("Rename \(acct.label)")
+                        }
+                        // Delete — inactive rows only (the CLI refuses to remove
+                        // the active account, whose tokens live in the shared slot).
+                        if !isActive, let remove = removeAccount {
+                            Button {
+                                remove(acct.label)
+                            } label: {
+                                Image(systemName: "trash").font(.system(size: 12)).iconHoverChrome()
+                            }
+                            .buttonStyle(.borderless)
+                            .pointerCursor()
+                            .help("Remove \(acct.label) from AIMonitor")
                         }
                     }
                     // Email below the name — larger than the org, smaller
@@ -113,13 +129,12 @@ struct AccountTableView: View {
                         model.refreshUsage(label: acct.label, id: acct.id)
                     } label: {
                         if model.refreshingAccounts.contains(acct.id) {
-                            ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
+                            ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 20, height: 20)
                         } else {
-                            Image(systemName: "arrow.clockwise")
+                            Image(systemName: "arrow.clockwise").font(.system(size: 12)).iconHoverChrome()
                         }
                     }
                     .buttonStyle(.borderless)
-                    .controlSize(.small)
                     .disabled(model.refreshingAccounts.contains(acct.id))
                     .pointerCursor()
                     .help("Fetch \(acct.label)'s latest usage now")
@@ -146,7 +161,7 @@ struct AccountTableView: View {
                         .help("Make \(acct.label) the active Claude account")
                     }
                 }
-                .frame(height: 18, alignment: .center)
+                .frame(height: 20, alignment: .center)
             }
             // Per-account 5h / 7d utilization. Absent until the daemon has
             // fetched this account at least once (active every tick; inactive
@@ -205,6 +220,9 @@ struct AccountTableView: View {
         .contextMenu {
             if let rename = renameAccount {
                 Button("Rename") { rename(acct.label) }
+            }
+            if !isActive, let remove = removeAccount {
+                Button("Remove", role: .destructive) { remove(acct.label) }
             }
         }
     }
