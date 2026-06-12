@@ -34,34 +34,102 @@ extension View {
     }
 }
 
-extension View {
-    /// Hover chrome for small icon-only buttons in account rows (refresh, edit,
-    /// delete) — a square rounded background that appears on mouse-over, matching
-    /// the header action icons. Apply to the button's label image; pair with
-    /// `.buttonStyle(.borderless)`. Unlike the text chrome there's no resting
-    /// fill, so a row of icons stays quiet until hovered.
-    func iconHoverChrome(size: CGFloat = 22) -> some View {
-        modifier(IconHoverChrome(size: size))
-    }
-}
+/// The ONE icon-button component, app-wide — header actions (＋/bug/gear),
+/// per-row refresh, and the row overflow (⋯) menu all use it, so they share one
+/// look: a uniform square with a rounded background that appears on hover, a
+/// centered glyph, pointer cursor, and a tooltip. Adding a new icon control =
+/// instantiate this; you can't drift the style per-button.
+///
+/// Three flavors via the initializers: a tap action, a loading state (spinner
+/// in place of the glyph, auto-disabled), and a menu (same chrome; the hover
+/// highlight is tracked on the outer view, so it works even though a Menu would
+/// otherwise swallow the label's own onHover). `EmptyView` is the menu type for
+/// the non-menu flavors.
+struct IconActionButton<MenuContent: View>: View {
+    let systemName: String
+    let help: String
+    var size: CGFloat = 22
+    var glyphSize: CGFloat = 14
+    /// Nudges an optically-off glyph (e.g. the ladybug sits ~1px low) without
+    /// shifting the hover background.
+    var yNudge: CGFloat = 0
+    var isLoading: Bool = false
 
-/// See `iconHoverChrome`. Squares the glyph into a uniform frame so a row of
-/// icons aligns, and fills a rounded background only while hovered.
-private struct IconHoverChrome: ViewModifier {
-    let size: CGFloat
+    private let action: (() -> Void)?
+    private let menu: (() -> MenuContent)?
+
     @State private var hovering = false
 
-    func body(content: Content) -> some View {
-        // The sized rounded rect is the base; the glyph is overlaid centered.
-        // (Overlaying onto the fixed-size background centers by the background's
-        // bounds, so SF Symbol baseline/metric quirks don't push the glyph off
-        // — `content.frame().background()` would inherit the glyph's own box.)
+    /// Tap-action button (no menu).
+    init(
+        systemName: String,
+        help: String,
+        size: CGFloat = 22,
+        glyphSize: CGFloat = 14,
+        yNudge: CGFloat = 0,
+        isLoading: Bool = false,
+        action: @escaping () -> Void
+    ) where MenuContent == EmptyView {
+        self.systemName = systemName
+        self.help = help
+        self.size = size
+        self.glyphSize = glyphSize
+        self.yNudge = yNudge
+        self.isLoading = isLoading
+        self.action = action
+        self.menu = nil
+    }
+
+    /// Menu button — the label is the same glyph chrome; `menu` builds the items.
+    init(
+        systemName: String,
+        help: String,
+        size: CGFloat = 22,
+        glyphSize: CGFloat = 14,
+        yNudge: CGFloat = 0,
+        @ViewBuilder menu: @escaping () -> MenuContent
+    ) {
+        self.systemName = systemName
+        self.help = help
+        self.size = size
+        self.glyphSize = glyphSize
+        self.yNudge = yNudge
+        self.action = nil
+        self.menu = menu
+    }
+
+    // The sized rounded rect is the base; the glyph (or spinner) is overlaid
+    // centered, so SF Symbol baseline metrics can't push it off-center.
+    private var chrome: some View {
         RoundedRectangle(cornerRadius: 6, style: .continuous)
             .fill(Color.primary.opacity(hovering ? 0.12 : 0))
             .frame(width: size, height: size)
-            .overlay(content)
+            .overlay {
+                if isLoading {
+                    ProgressView().controlSize(.small).scaleEffect(0.6)
+                } else {
+                    Image(systemName: systemName).font(.system(size: glyphSize)).offset(y: yNudge)
+                }
+            }
             .contentShape(Rectangle())
-            .onHover { hovering = $0 }
+    }
+
+    var body: some View {
+        Group {
+            if let menu {
+                Menu { menu() } label: { chrome }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+            } else {
+                Button(action: { action?() }) { chrome }
+                    .buttonStyle(.plain)
+                    .disabled(isLoading)
+            }
+        }
+        .onHover { hovering = $0 }
+        .pointerCursor()
+        .help(help)
     }
 }
 

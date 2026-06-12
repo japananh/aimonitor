@@ -42,14 +42,14 @@ struct PopoverRootView: View {
                 // frame they'd sit at slightly different vertical positions.
                 HStack(alignment: .center, spacing: 4) {
                     if let addAccount {
-                        HeaderIconButton(systemName: "plus", help: "Add a Claude account to AIMonitor", action: addAccount)
+                        IconActionButton(systemName: "plus", help: "Add a Claude account to AIMonitor", action: addAccount)
                     }
                     // ladybug's glyph sits ~1px low vs plus/gearshape even when
                     // framed — nudge it up so the three line up optically.
-                    HeaderIconButton(systemName: "ladybug", help: "Report a bug — opens a new GitHub issue", yNudge: -1) {
+                    IconActionButton(systemName: "ladybug", help: "Report a bug — opens a new GitHub issue", yNudge: -1) {
                         NSWorkspace.shared.open(URL(string: "https://github.com/japananh/aimonitor/issues/new?template=bug_report.yml")!)
                     }
-                    HeaderIconButton(systemName: "gearshape", help: "Preferences — auto-switch, updates, and startup settings", action: openPreferences)
+                    IconActionButton(systemName: "gearshape", help: "Preferences — auto-switch, updates, and startup settings", action: openPreferences)
                 }
             }
             .padding(.horizontal, 16)
@@ -183,32 +183,4 @@ struct PopoverRootView: View {
     }
 }
 
-// HeaderIconButton is a title-row action icon with a subtle hover highlight (a
-// rounded background on mouse-over, like a toolbar button). A uniform frame
-// keeps the icons aligned on one centered line; yNudge nudges a glyph that sits
-// optically off (the ladybug) without shifting the highlight.
-private struct HeaderIconButton: View {
-    let systemName: String
-    let help: String
-    var yNudge: CGFloat = 0
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 14))
-                .offset(y: yNudge)
-                .frame(width: 22, height: 22)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color.primary.opacity(hovering ? 0.12 : 0))
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.borderless)
-        .onHover { hovering = $0 }
-        .pointerCursor()
-        .help(help)
-    }
-}
+// Header action icons now use the shared IconActionButton (Buttons.swift).
