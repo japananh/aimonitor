@@ -325,19 +325,44 @@ func TestAutoSwap_WeeklyCapTriggersSwap(t *testing.T) {
 	}
 }
 
-// Tier 2: active is weekly-capped; the only candidates are 5h-hot but
-// weekly-healthy. Escaping the multi-day weekly exhaustion wins — pick the
-// candidate lowest on the binding (7-day) window even though its 5-hour
-// usage is above the active's.
-func TestAutoSwap_WeeklyCapped_SwitchesTo5hHotButWeeklyHealthy(t *testing.T) {
+// Regression (2026-06-12): active is weekly-capped (7d at its threshold) with
+// low 5h; the only better-on-7d candidate is nearly exhausted on 5h (96%).
+// Switching into it trips the 5h threshold immediately and ping-pongs straight
+// back (observed live: BE2 7d=80 -> BE1 5h=96, then BE1 -> BE2 minutes later).
+// Since the active account isn't exhausted on the binding window, staying put is
+// better than the bounce — must NOT swap.
+func TestAutoSwap_WeeklyCapped_RejectsCandidateHotOnNonBindingWindow(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "be2", KeyringRef: "ref-a"})
+	other, _ := s.CreateAccount(ctx, store.Account{Label: "be1", KeyringRef: "ref-b"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 80})
+	_ = s.PutLimits(ctx, other.ID, provider.Limits{FiveHourPct: 96, SevenDayPct: 65})
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "be2")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if swapped || len(fsw.switched) != 0 {
+		t.Errorf("must not switch into a 5h-near-exhausted candidate (ping-pong); got %v", fsw.switched)
+	}
+}
+
+// Tier 2: active is weekly-capped (but not exhausted) and the only candidates
+// are over the 5-hour threshold. Switching into one would trip its 5h limit at
+// once and bounce back, so stay put and notify — wait for a candidate's 5h to
+// recover (it self-heals within hours) before swapping.
+func TestAutoSwap_WeeklyCapped_StaysWhenAllCandidates5hHot(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
 	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
 	hotA, _ := s.CreateAccount(ctx, store.Account{Label: "hot-a", KeyringRef: "ref-b"})
 	hotB, _ := s.CreateAccount(ctx, store.Account{Label: "hot-b", KeyringRef: "ref-c"})
-	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 97})
-	_ = s.PutLimits(ctx, hotA.ID, provider.Limits{FiveHourPct: 85, SevenDayPct: 30}) // max 85
-	_ = s.PutLimits(ctx, hotB.ID, provider.Limits{FiveHourPct: 90, SevenDayPct: 20}) // max 90
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 97}) // capped, not exhausted
+	_ = s.PutLimits(ctx, hotA.ID, provider.Limits{FiveHourPct: 85, SevenDayPct: 30})   // 5h over threshold
+	_ = s.PutLimits(ctx, hotB.ID, provider.Limits{FiveHourPct: 90, SevenDayPct: 20})   // 5h over threshold
 	immediateSwap(t, s)
 
 	a, fsw, _ := withAutoSwapStubs(t, s)
@@ -345,11 +370,34 @@ func TestAutoSwap_WeeklyCapped_SwitchesTo5hHotButWeeklyHealthy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MaybeSwap: %v", err)
 	}
-	// Escaping a 7d cap, both candidates are 5h-warm — pick the MORE balanced
-	// one (hot-a, max 85%) over the one with the lowest 7d (hot-b at 20% but
-	// 5h=90%, about to cash out). Min-headroom keeps the target usable.
+	if swapped || len(fsw.switched) != 0 {
+		t.Errorf("no candidate has 5h headroom — must stay, not bounce; got %v", fsw.switched)
+	}
+}
+
+// The exception to the above: when the active account is EXHAUSTED (>=100%) on
+// the binding window it can't serve at all, so escaping into an over-threshold
+// (but not exhausted) candidate beats being stranded. No ping-pong risk — the
+// account we leave is >=100% and can't be a swap-back target.
+func TestAutoSwap_WeeklyExhausted_EscapesInto5hHotCandidate(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	hotA, _ := s.CreateAccount(ctx, store.Account{Label: "hot-a", KeyringRef: "ref-b"})
+	hotB, _ := s.CreateAccount(ctx, store.Account{Label: "hot-b", KeyringRef: "ref-c"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 100}) // weekly exhausted
+	_ = s.PutLimits(ctx, hotA.ID, provider.Limits{FiveHourPct: 85, SevenDayPct: 30})    // max 85
+	_ = s.PutLimits(ctx, hotB.ID, provider.Limits{FiveHourPct: 90, SevenDayPct: 20})    // max 90
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	// Both are over the 5h threshold; pick the more balanced one (hot-a, max 85).
 	if !swapped || len(fsw.switched) != 1 || fsw.switched[0] != "hot-a" {
-		t.Errorf("want switch to hot-a (most overall headroom); swapped=%v switched=%v", swapped, fsw.switched)
+		t.Errorf("exhausted active must escape into the most-balanced candidate (hot-a); swapped=%v switched=%v", swapped, fsw.switched)
 	}
 }
 
@@ -413,7 +461,7 @@ func TestAutoSwap_CustomThreshold(t *testing.T) {
 	_ = s.PutSetting(ctx, SettingsKeyAutoSwapThreshold, "50")
 
 	a, _, _ := withAutoSwapStubs(t, s)
-	cand, found, _ := a.pickCandidate(ctx, active.ID, provider.Limits{FiveHourPct: 55}, window5h)
+	cand, found, _ := a.pickCandidate(ctx, active.ID, provider.Limits{FiveHourPct: 55}, window5h, 50, DefaultAutoSwapThreshold7d)
 	if !found || cand.Label != "other" {
 		t.Errorf("pickCandidate (active 5h=55, binding 5h): found=%v cand=%v want other", found, cand)
 	}

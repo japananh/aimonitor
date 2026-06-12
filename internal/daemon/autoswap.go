@@ -190,7 +190,7 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 	// over its own threshold). Candidates are judged against it.
 	binding, activePct, threshold := bindingWindow(activeLim, threshold5h, threshold7d)
 
-	cand, found, err := a.pickCandidate(ctx, activeAcct.ID, activeLim, binding)
+	cand, found, err := a.pickCandidate(ctx, activeAcct.ID, activeLim, binding, threshold5h, threshold7d)
 	if err != nil {
 		return false, fmt.Errorf("auto-swap: pick candidate: %w", err)
 	}
@@ -362,11 +362,17 @@ func (c candidate) pct(w windowKind) float64 {
 //
 //	tier 1 — lower than the active on BOTH windows: the clean win. Ranked by
 //	         most overall headroom (lowest max(5h, 7d)).
-//	tier 2 — lower than the active on the BINDING window only. The windows
-//	         aren't symmetric: a 5h-hot account self-heals within hours while
-//	         a weekly-capped one is dead for days, so escaping a 7d-capped
-//	         active into a 5h-warm-but-weekly-healthy account (and vice
-//	         versa) is still a win. Ranked by lowest binding-window pct.
+//	tier 2 — lower than the active on the BINDING window only, AND with real
+//	         headroom (under its threshold) on the OTHER window. The windows
+//	         aren't symmetric: a 5h-warm account self-heals within hours while a
+//	         weekly-capped one is dead for days, so escaping a 7d-capped active
+//	         into a 5h-warm-but-weekly-healthy account is a win — but only if its
+//	         5h is still under threshold. Switching into one already OVER its
+//	         other-window threshold (e.g. 5h=96 while escaping a 7d cap) trips
+//	         that window at once and ping-pongs back, so it's excluded. The lone
+//	         exception: when the active account is exhausted (>=100%) on the
+//	         binding window it can't serve at all, so any non-exhausted candidate
+//	         beats staying. Ranked by most overall headroom (lowest max(5h, 7d)).
 //
 // An account EXHAUSTED (>= 100%) on either window is never a candidate:
 // it cannot serve requests, so "lower on the binding window" is meaningless.
@@ -383,7 +389,7 @@ func (c candidate) pct(w windowKind) float64 {
 //
 // Returns (_, false, nil) when no account beats the active on the binding
 // window — switching would gain nothing.
-func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeLim provider.Limits, binding windowKind) (candidate, bool, error) {
+func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeLim provider.Limits, binding windowKind, threshold5h, threshold7d float64) (candidate, bool, error) {
 	accounts, err := a.Store.ListAccounts(ctx)
 	if err != nil {
 		return candidate{}, false, err
@@ -392,6 +398,19 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 	if binding == window7d {
 		activeBindingPct = activeLim.SevenDayPct
 	}
+	// The window we're NOT escaping, and its threshold. A tier-2 candidate must
+	// have real headroom here (be under this threshold), else switching into it
+	// trips that window immediately and ping-pongs back.
+	nonBinding, nonBindingThreshold := window7d, threshold7d
+	if binding == window7d {
+		nonBinding, nonBindingThreshold = window5h, threshold5h
+	}
+	// Exception: if the active account is exhausted (>=100%) on the binding
+	// window it can't serve at all, so any non-exhausted candidate beats staying
+	// — accept it even if it's over-threshold on the other window. (Safe from
+	// ping-pong: the account we leave is then >=100%, so the >=100 check below
+	// rules it out as a swap-back target.)
+	activeBindingExhausted := activeBindingPct >= exhaustedPct
 	now := a.now()
 	var tier1, tier2, uncertain []candidate
 	for _, acct := range accounts {
@@ -426,11 +445,13 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 		switch {
 		case c.FiveHourPct < activeLim.FiveHourPct && c.SevenDayPct < activeLim.SevenDayPct:
 			tier1 = append(tier1, c)
-		case c.pct(binding) < activeBindingPct:
+		case c.pct(binding) < activeBindingPct && (activeBindingExhausted || c.pct(nonBinding) < nonBindingThreshold):
 			tier2 = append(tier2, c)
 		}
-		// Fresh but not lower on the binding window: not a candidate —
-		// switching to it would gain nothing on the constraint that fired.
+		// Not a candidate when: not lower on the binding window (switching gains
+		// nothing on the constraint that fired), or — for tier 2 — over its
+		// threshold on the OTHER window (it'd trip that one immediately and bounce
+		// back, unless the active account is already exhausted on the binding one).
 	}
 	switch {
 	case len(tier1) > 0:
@@ -444,12 +465,10 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 		})
 		return tier1[0], true, nil
 	case len(tier2) > 0:
-		// Rank by MOST overall headroom — lowest max(5h, 7d) — not by the
-		// binding window alone. Picking purely the lowest binding pct can land
-		// on an account that's healthy on the binding window but nearly
-		// exhausted on the OTHER one (e.g. escaping a 7d cap into an account
-		// whose 5h is already 93%), which then can't serve requests anyway.
-		// Balancing both windows keeps the swap target actually usable.
+		// Candidates here already have headroom on the non-binding window (the
+		// acceptance check above), so rank by MOST overall headroom — lowest
+		// max(5h, 7d) — to pick the most balanced, longest-usable target rather
+		// than the lowest binding pct alone.
 		sort.Slice(tier2, func(i, j int) bool {
 			mi := max(tier2[i].FiveHourPct, tier2[i].SevenDayPct)
 			mj := max(tier2[j].FiveHourPct, tier2[j].SevenDayPct)
