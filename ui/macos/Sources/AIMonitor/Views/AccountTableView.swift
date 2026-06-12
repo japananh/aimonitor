@@ -101,19 +101,13 @@ struct AccountTableView: View {
                     // the active account through the daemon's safe
                     // live-refresh path and inactive accounts through their
                     // stash, so this is safe on all rows.
-                    Button {
+                    IconActionButton(
+                        systemName: "arrow.clockwise",
+                        help: "Fetch \(acct.label)'s latest usage now",
+                        isLoading: model.refreshingAccounts.contains(acct.id)
+                    ) {
                         model.refreshUsage(label: acct.label, id: acct.id)
-                    } label: {
-                        if model.refreshingAccounts.contains(acct.id) {
-                            ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 22, height: 22)
-                        } else {
-                            Image(systemName: "arrow.clockwise").font(.system(size: 14)).iconHoverChrome()
-                        }
                     }
-                    .buttonStyle(.borderless)
-                    .disabled(model.refreshingAccounts.contains(acct.id))
-                    .pointerCursor()
-                    .help("Fetch \(acct.label)'s latest usage now")
 
                     if !isActive {
                         // Spinner + disabled while a switch is in flight (it
@@ -142,21 +136,14 @@ struct AccountTableView: View {
                     // on inactive ones (the CLI refuses to remove the active
                     // account). Mirrors the right-click context menu below.
                     if renameAccount != nil || (!isActive && removeAccount != nil) {
-                        Menu {
+                        IconActionButton(systemName: "ellipsis", help: "More actions for \(acct.label)") {
                             if let rename = renameAccount {
                                 Button("Rename") { rename(acct.label) }
                             }
                             if !isActive, let remove = removeAccount {
                                 Button("Remove", role: .destructive) { remove(acct.label) }
                             }
-                        } label: {
-                            Image(systemName: "ellipsis").font(.system(size: 14)).iconHoverChrome()
                         }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .pointerCursor()
-                        .help("More actions for \(acct.label)")
                     }
                 }
                 .frame(height: 22, alignment: .center)
