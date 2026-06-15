@@ -107,6 +107,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.backgroundUpdateCheck() }
         }
+        notifyIfUpgradedSinceLastLaunch()
+    }
+
+    // After an upgrade the app relaunches at a new version — but a Claude Code
+    // session that was already open keeps the OLD `mcp serve` subprocess and its
+    // stale tool list. Remind the user to reconnect so new MCP tools/params
+    // load. Fires once per version bump; silent on first install and on plain
+    // relaunches at the same version.
+    private func notifyIfUpgradedSinceLastLaunch() {
+        let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        guard !current.isEmpty else { return }
+        let key = "lastLaunchedVersion"
+        let lastSeen = UserDefaults.standard.string(forKey: key) ?? ""
+        if !lastSeen.isEmpty, lastSeen != current {
+            postNotification(
+                title: "AIMonitor updated to \(current)",
+                body: "If you use the MCP server in Claude Code, run /mcp → Reconnect (or start a new session) to load the new tools.")
+        }
+        if current != lastSeen {
+            UserDefaults.standard.set(current, forKey: key)
+        }
     }
 
     private func showPreferences() {
