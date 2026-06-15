@@ -21,7 +21,7 @@
 - 🤖 **Auto-swap** at the 5h *or* 7d threshold (default 80 %) — picks the account with the most overall headroom, skips exhausted/rate-limited ones, and rescues immediately if the active account hits 100 %. Running `claude` sessions follow automatically.
 - 🔔 **Threshold notifications** as an account nears its limit (when auto-swap is off).
 - 💾 **Export / import** settings, or migrate accounts to another machine — credentials optional and passphrase-encrypted (Argon2id + AES-256-GCM).
-- 🔌 **MCP server** — 28 Slack + ClickUp tools for Claude Code over stdio, with per-service read-only mode.
+- 🔌 **MCP server** — 30 Slack + ClickUp tools for Claude Code over stdio, with per-service read-only mode.
 - 🔐 **OS-keyring storage** (macOS Keychain, Linux libsecret). SQLite holds references; tokens never leave the keyring. No telemetry.
 
 ## Install
@@ -107,7 +107,7 @@ See [`docs/architecture.md`](docs/architecture.md) and [`docs/thresholds.md`](do
 
 ## MCP server (Slack + ClickUp for Claude Code)
 
-One stdio process serving 28 tools — no extra runtimes.
+One stdio process serving 30 tools — no extra runtimes.
 
 ```sh
 aimonitor mcp connect slack     # store a Slack user token (xoxp-…)

@@ -58,7 +58,7 @@ func slimMsg(m rawSlackMsg) slackMsg {
 
 type slackPostIn struct {
 	Channel        string `json:"channel" jsonschema:"channel ID (C…/D…) or #name"`
-	Text           string `json:"text" jsonschema:"message text (Slack mrkdwn)"`
+	Text           string `json:"text" jsonschema:"message text (Slack mrkdwn). Pass it RAW — do not HTML-escape; mentions are <@USERID>, channels <#CHANNELID>, links <url|label> (escaping these to &lt;…&gt; posts them as literal text that doesn't ping)"`
 	ThreadTS       string `json:"thread_ts,omitempty" jsonschema:"reply in this message's thread (its ts)"`
 	ReplyBroadcast bool   `json:"reply_broadcast,omitempty" jsonschema:"also show the thread reply in the channel"`
 }
@@ -80,6 +80,47 @@ func (c *Client) slackPostMessage(ctx context.Context, _ *mcp.CallToolRequest, i
 		return nil, nil, err
 	}
 	return textResult(map[string]string{"channel": out.Channel, "ts": out.TS, "status": "posted"})
+}
+
+// --- update (edit) message --------------------------------------------
+
+type slackUpdateIn struct {
+	Channel string `json:"channel" jsonschema:"channel ID the message is in (C…/D…/G…)"`
+	TS      string `json:"ts" jsonschema:"the target message's ts (its timestamp ID, e.g. from slack_post_message)"`
+	Text    string `json:"text" jsonschema:"new message text (Slack mrkdwn). Pass it RAW — do not HTML-escape; mentions are <@USERID>, channels <#CHANNELID>, links <url|label>"`
+}
+
+func (c *Client) slackUpdateMessage(ctx context.Context, _ *mcp.CallToolRequest, in slackUpdateIn) (*mcp.CallToolResult, any, error) {
+	body := map[string]any{"channel": in.Channel, "ts": in.TS, "text": in.Text}
+	var out struct {
+		slackEnvelope
+		Channel string `json:"channel"`
+		TS      string `json:"ts"`
+	}
+	if err := c.slackPOST(ctx, "chat.update", body, &out); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"channel": out.Channel, "ts": out.TS, "status": "updated"})
+}
+
+// --- delete message ---------------------------------------------------
+
+type slackDeleteIn struct {
+	Channel string `json:"channel" jsonschema:"channel ID the message is in (C…/D…/G…)"`
+	TS      string `json:"ts" jsonschema:"the target message's ts (its timestamp ID, e.g. from slack_post_message)"`
+}
+
+func (c *Client) slackDeleteMessage(ctx context.Context, _ *mcp.CallToolRequest, in slackDeleteIn) (*mcp.CallToolResult, any, error) {
+	body := map[string]any{"channel": in.Channel, "ts": in.TS}
+	var out struct {
+		slackEnvelope
+		Channel string `json:"channel"`
+		TS      string `json:"ts"`
+	}
+	if err := c.slackPOST(ctx, "chat.delete", body, &out); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"channel": out.Channel, "ts": out.TS, "status": "deleted"})
 }
 
 // --- search -----------------------------------------------------------

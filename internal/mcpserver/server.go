@@ -53,6 +53,16 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackPostIn, any] {
 				return c.slackPostMessage
 			})},
+		{name: "slack_update_message", svc: ServiceSlack, write: true,
+			desc: "Edit a Slack message you posted (by channel + ts) — e.g. to fix a broken mention",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackUpdateIn, any] {
+				return c.slackUpdateMessage
+			})},
+		{name: "slack_delete_message", svc: ServiceSlack, write: true,
+			desc: "Delete a Slack message you posted (by channel + ts)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackDeleteIn, any] {
+				return c.slackDeleteMessage
+			})},
 		{name: "slack_upload_file", svc: ServiceSlack, write: true,
 			desc: "Upload a text file to Slack, optionally sharing it into a channel or thread",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackUploadIn, any] {

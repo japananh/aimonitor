@@ -21,7 +21,7 @@
 - 🤖 **Auto-swap** khi chạm ngưỡng 5h *hoặc* 7d (mặc định 80 %) — chọn account còn nhiều headroom nhất (cân cả 2 cửa sổ), bỏ qua account đã cạn/đang bị rate-limit, và đổi ngay nếu account active chạm 100 %. Session `claude` đang chạy tự theo account mới.
 - 🔔 **Thông báo khi gần ngưỡng** (khi auto-swap tắt).
 - 💾 **Export / import** settings, hoặc chuyển account sang máy khác — credential là tùy chọn, mã hóa bằng passphrase (Argon2id + AES-256-GCM).
-- 🔌 **MCP server** — 28 tool Slack + ClickUp cho Claude Code qua stdio, có chế độ read-only theo từng dịch vụ.
+- 🔌 **MCP server** — 30 tool Slack + ClickUp cho Claude Code qua stdio, có chế độ read-only theo từng dịch vụ.
 - 🔐 **Lưu trong OS keyring** (macOS Keychain, Linux libsecret). SQLite chỉ giữ tham chiếu; token không rời keyring. Không telemetry.
 
 ## Cài đặt
@@ -107,7 +107,7 @@ Chi tiết: [`docs/architecture.md`](docs/architecture.md) và [`docs/thresholds
 
 ## MCP server (Slack + ClickUp cho Claude Code)
 
-Một tiến trình stdio phục vụ 28 tool — không cần runtime phụ.
+Một tiến trình stdio phục vụ 30 tool — không cần runtime phụ.
 
 ```sh
 aimonitor mcp connect slack     # lưu Slack user token (xoxp-…)
