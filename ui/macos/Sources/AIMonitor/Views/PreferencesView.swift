@@ -127,12 +127,12 @@ struct PreferencesView: View {
                 }
             }
             Section("Updates") {
-                miniToggle("Automatically check for updates", isOn: Binding(
+                miniToggle("Install updates automatically", isOn: Binding(
                     get: { autoUpdateOn },
                     set: { newValue in autoUpdateOn = newValue; setSetting("auto_update.enabled", newValue) }
                 ))
-                .help("Check GitHub for new releases on launch and notify you")
-                Text("Checks GitHub for new releases and notifies you. Updates are never installed without your confirmation.")
+                .help("On: install new releases automatically. Off: just notify you when one is available.")
+                Text("AIMonitor checks GitHub for new releases (on launch and every few hours). When on, it installs them automatically and relaunches. When off, it sends a notification — click it to review and install.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 AppTextButton("Check for updates", action: checkForUpdates)

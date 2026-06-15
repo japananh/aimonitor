@@ -11,6 +11,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import UserNotifications
 
 @main
 struct AIMonitorAppEntry {
@@ -28,7 +29,7 @@ struct AIMonitorAppEntry {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
     // A borderless NSPanel (not NSPopover) so there's no anchoring arrow.
     private var panel: NSPanel!
@@ -38,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // elsewhere in that window (macOS keeps a field first-responder on empty
     // clicks otherwise, so "save on click outside" never fired).
     private var prefsClickMonitor: Any?
+    // Repeating background update check (every 6h); retained so it isn't
+    // invalidated when the launch scope exits.
+    private var updateTimer: Timer?
     private let model = AppModel()
     private var cancellables = Set<AnyCancellable>()
 
@@ -87,11 +91,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _, _ in self?.updateStatusTitle() }
             .store(in: &cancellables)
         Task { @MainActor in self.model.start() }
-        // Auto-check for updates shortly after launch when enabled. Silent
-        // (no alert) unless an update is available and not skipped. The delay
-        // keeps startup snappy and lets the daemon settle first.
+        // Clickable update notifications go through UNUserNotificationCenter
+        // (the osascript banner can't carry a click action). Authorization is
+        // requested once; if the user/OS denies it, postUpdateNotification
+        // falls back to the osascript banner.
+        UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        // Background update check: shortly after launch, then every 6h, so a
+        // long-running menu-bar app still notices releases without a relaunch.
+        // auto_update.enabled decides the action (install vs notify) — see
+        // backgroundUpdateCheck.
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-            self?.checkForUpdates(userInitiated: false)
+            self?.backgroundUpdateCheck()
+        }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.backgroundUpdateCheck() }
         }
     }
 
@@ -549,6 +563,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // prompts on the main thread. userInitiated=true also reports "up to
     // date" and errors; the automatic (launch) check is silent unless a new,
     // non-skipped version is available.
+    // backgroundUpdateCheck runs on launch + every 6h. auto_update.enabled
+    // decides the ACTION when a newer release is found (and isn't skipped):
+    //   ON  → install it automatically (brew upgrade; the app quits + relaunches).
+    //   OFF → post a clickable notification once per version; clicking it opens
+    //         the Update available dialog (handled in didReceive below).
+    // The manual "Check for updates" button still always shows the dialog.
+    private func backgroundUpdateCheck() {
+        DispatchQueue.global(qos: .utility).async {
+            guard let info = try? CLIBridge.checkUpdate(), info.available else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.isSkipped(info.latest) { return }
+                let autoInstall = (try? CLIBridge.configGet("auto_update.enabled")) != "false"
+                if autoInstall {
+                    self.startInstall(latest: info.latest, url: info.url)
+                } else {
+                    guard self.lastNotifiedVersion() != info.latest else { return }
+                    self.setLastNotifiedVersion(info.latest)
+                    self.postUpdateNotification(info)
+                }
+            }
+        }
+    }
+
+    // postUpdateNotification posts a clickable "update available" banner via
+    // UNUserNotificationCenter. Clicking it opens the Update available dialog
+    // (didReceive). Falls back to the plain osascript banner if the system
+    // rejects the request (e.g. notification permission denied).
+    private func postUpdateNotification(_ info: CLIBridge.UpdateCheck) {
+        let content = UNMutableNotificationContent()
+        content.title = "AIMonitor \(info.latest) available"
+        content.body = "You're on \(info.current). Click to review and install."
+        content.userInfo = ["update_available": true]
+        let req = UNNotificationRequest(identifier: "aimonitor-update-\(info.latest)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req) { [weak self] err in
+            guard err != nil else { return }
+            DispatchQueue.main.async {
+                self?.postNotification(title: "AIMonitor \(info.latest) available",
+                                       body: "Open AIMonitor → Preferences → Check for updates to install.")
+            }
+        }
+    }
+
+    private func lastNotifiedVersion() -> String { UserDefaults.standard.string(forKey: "update.notifiedVersion") ?? "" }
+    private func setLastNotifiedVersion(_ v: String) { UserDefaults.standard.set(v, forKey: "update.notifiedVersion") }
+
+    // Show update banners even while the app is frontmost. nonisolated: the
+    // system may call this off the main actor, and it touches no actor state.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    // Clicking the update notification opens the Update available dialog (a
+    // fresh re-check so it reflects the current latest + handles already-installed).
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        let isUpdate = response.notification.request.content.userInfo["update_available"] != nil
+        completionHandler()
+        if isUpdate {
+            Task { @MainActor [weak self] in self?.checkForUpdates(userInitiated: true) }
+        }
+    }
+
     private func checkForUpdates(userInitiated: Bool) {
         DispatchQueue.global(qos: .utility).async {
             let result = Result { try CLIBridge.checkUpdate() }
