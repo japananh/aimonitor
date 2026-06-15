@@ -61,6 +61,8 @@ type slackPostIn struct {
 	Text           string `json:"text" jsonschema:"message text (Slack mrkdwn). Pass it RAW — do not HTML-escape; mentions are <@USERID>, channels <#CHANNELID>, links <url|label> (escaping these to &lt;…&gt; posts them as literal text that doesn't ping)"`
 	ThreadTS       string `json:"thread_ts,omitempty" jsonschema:"reply in this message's thread (its ts)"`
 	ReplyBroadcast bool   `json:"reply_broadcast,omitempty" jsonschema:"also show the thread reply in the channel"`
+	UnfurlLinks    *bool  `json:"unfurl_links,omitempty" jsonschema:"set false to suppress the link preview cards Slack expands under URLs (omit to keep Slack's default)"`
+	UnfurlMedia    *bool  `json:"unfurl_media,omitempty" jsonschema:"set false to suppress image/video previews under URLs (omit to keep Slack's default)"`
 }
 
 func (c *Client) slackPostMessage(ctx context.Context, _ *mcp.CallToolRequest, in slackPostIn) (*mcp.CallToolResult, any, error) {
@@ -70,6 +72,12 @@ func (c *Client) slackPostMessage(ctx context.Context, _ *mcp.CallToolRequest, i
 		if in.ReplyBroadcast {
 			body["reply_broadcast"] = true
 		}
+	}
+	if in.UnfurlLinks != nil {
+		body["unfurl_links"] = *in.UnfurlLinks
+	}
+	if in.UnfurlMedia != nil {
+		body["unfurl_media"] = *in.UnfurlMedia
 	}
 	var out struct {
 		slackEnvelope
@@ -85,13 +93,21 @@ func (c *Client) slackPostMessage(ctx context.Context, _ *mcp.CallToolRequest, i
 // --- update (edit) message --------------------------------------------
 
 type slackUpdateIn struct {
-	Channel string `json:"channel" jsonschema:"channel ID the message is in (C…/D…/G…)"`
-	TS      string `json:"ts" jsonschema:"the target message's ts (its timestamp ID, e.g. from slack_post_message)"`
-	Text    string `json:"text" jsonschema:"new message text (Slack mrkdwn). Pass it RAW — do not HTML-escape; mentions are <@USERID>, channels <#CHANNELID>, links <url|label>"`
+	Channel     string `json:"channel" jsonschema:"channel ID the message is in (C…/D…/G…)"`
+	TS          string `json:"ts" jsonschema:"the target message's ts (its timestamp ID, e.g. from slack_post_message)"`
+	Text        string `json:"text" jsonschema:"new message text (Slack mrkdwn). Pass it RAW — do not HTML-escape; mentions are <@USERID>, channels <#CHANNELID>, links <url|label>"`
+	UnfurlLinks *bool  `json:"unfurl_links,omitempty" jsonschema:"set false to suppress the link preview cards Slack expands under URLs (omit to keep Slack's default)"`
+	UnfurlMedia *bool  `json:"unfurl_media,omitempty" jsonschema:"set false to suppress image/video previews under URLs (omit to keep Slack's default)"`
 }
 
 func (c *Client) slackUpdateMessage(ctx context.Context, _ *mcp.CallToolRequest, in slackUpdateIn) (*mcp.CallToolResult, any, error) {
 	body := map[string]any{"channel": in.Channel, "ts": in.TS, "text": in.Text}
+	if in.UnfurlLinks != nil {
+		body["unfurl_links"] = *in.UnfurlLinks
+	}
+	if in.UnfurlMedia != nil {
+		body["unfurl_media"] = *in.UnfurlMedia
+	}
 	var out struct {
 		slackEnvelope
 		Channel string `json:"channel"`
