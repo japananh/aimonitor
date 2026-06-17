@@ -76,17 +76,29 @@ func (c *Client) do(req *http.Request, out any) error {
 }
 
 // slackEnvelope is the {ok, error} wrapper every Slack Web API response
-// carries. Embedded by per-call response structs.
+// carries. Embedded by per-call response structs. Needed/Provided are only
+// populated by Slack on a missing_scope error and let check() name the exact
+// scope to add instead of returning a bare "missing_scope".
 type slackEnvelope struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error"`
+	OK       bool   `json:"ok"`
+	Error    string `json:"error"`
+	Needed   string `json:"needed"`
+	Provided string `json:"provided"`
 }
 
 func (e slackEnvelope) check() error {
-	if !e.OK {
-		return fmt.Errorf("slack: %s", e.Error)
+	if e.OK {
+		return nil
 	}
-	return nil
+	// missing_scope is the most common setup snag: the stored xoxp- token
+	// lacks a scope a tool needs. Slack names the missing scope in `needed`;
+	// surface it with the fix instead of an opaque "slack: missing_scope".
+	if e.Error == "missing_scope" && e.Needed != "" {
+		return fmt.Errorf(
+			"slack: missing scope %q — add it under User Token Scopes in your Slack app (api.slack.com → OAuth & Permissions), reinstall the app, then re-run `aimonitor mcp connect slack`. (token currently has: %s)",
+			e.Needed, e.Provided)
+	}
+	return fmt.Errorf("slack: %s", e.Error)
 }
 
 // slackGET calls a Slack Web API method with query params.
