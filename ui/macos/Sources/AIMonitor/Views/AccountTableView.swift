@@ -15,6 +15,9 @@ struct AccountTableView: View {
     // app delegate shows a destructive confirmation NSAlert). Only offered on
     // inactive rows — the CLI refuses to remove the active account. nil hides it.
     var removeAccount: ((String) -> Void)? = nil
+    // reloginAccount is invoked with a row's label when its session expired
+    // (refresh token dead); the app delegate shows re-login instructions.
+    var reloginAccount: ((String) -> Void)? = nil
 
     var body: some View {
         // Tahoe (Control Center) layout: each account is a rounded
@@ -67,6 +70,13 @@ struct AccountTableView: View {
                                     Capsule().fill(Color(nsColor: .systemOrange).opacity(0.15))
                                 )
                                 .help(acct.cooldownReason ?? "Rate-limited — paused until the cooldown ends")
+                        }
+                        // Session expired: the account's OAuth refresh token is
+                        // dead — it can't refresh or be switched to until the
+                        // user re-logs in. A red "Re-login" pill next to the
+                        // name (click → instructions); hover for the reason.
+                        if acct.needsRelogin {
+                            ReloginPill { reloginAccount?(acct.label) }
                         }
                     }
                     // Email below the name — larger than the org, smaller
@@ -300,5 +310,44 @@ struct AccountTableView: View {
     // Trend tint shares the bar's severityColor (Theme.swift) so they agree.
     private func sparkColor(for pct: Double) -> Color {
         severityColor(for: pct)
+    }
+}
+
+// ReloginPill is the per-row "Session expired" action. A muted-red tinted
+// capsule (softer than systemRed) that deepens + gains an outline on hover —
+// its own struct so each row tracks hover independently. Click → re-login flow.
+private struct ReloginPill: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    // Muted, appearance-aware red: deeper on light, lifted on dark. Used for
+    // the rest-state text, the faint tint, and the hover glow.
+    private var red: Color {
+        adaptiveColor(
+            light: NSColor(red: 0.80, green: 0.25, blue: 0.24, alpha: 1),
+            dark: NSColor(red: 0.95, green: 0.46, blue: 0.42, alpha: 1))
+    }
+    // Solid fill for the hovered state — a deeper red so the white text on
+    // hover stays readable in both light and dark.
+    private let hoverFill = Color(red: 0.78, green: 0.22, blue: 0.20)
+
+    var body: some View {
+        Button(action: action) {
+            Text("Re-login")
+                .font(.caption2.weight(.semibold))
+                // Red text at rest; white on hover for contrast against the
+                // deepened red fill.
+                .foregroundStyle(hovering ? Color.white : red)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                // Hover feedback: fill turns solid red with white text. At rest
+                // it's a faint tint with red text. No border, no shadow.
+                .background(Capsule().fill(hovering ? hoverFill : red.opacity(0.15)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .pointerCursor()
+        .help("Session expired, need login")
     }
 }

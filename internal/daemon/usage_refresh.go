@@ -28,6 +28,8 @@ import (
 func RefreshAccountUsage(ctx context.Context, st *store.Store, fetcher *claude.UsageFetcher, refresher *claude.TokenRefresher, acct store.Account) (provider.Limits, error) {
 	cred, err := ensureFreshStash(ctx, refresher, acct)
 	if err != nil {
+		// Flag a dead refresh token so the popover can show "re-login".
+		markRelogin(ctx, st, acct, err)
 		return provider.Limits{}, err
 	}
 	defer cred.Zero()
@@ -40,6 +42,7 @@ func RefreshAccountUsage(ctx context.Context, st *store.Store, fetcher *claude.U
 	if err := st.PutLimits(ctx, acct.ID, limits); err != nil {
 		return provider.Limits{}, fmt.Errorf("persist usage for %q: %w", acct.Label, err)
 	}
+	markRelogin(ctx, st, acct, nil) // a successful refresh clears any stale flag
 	return limits, nil
 }
 
@@ -51,6 +54,7 @@ func RefreshAccountUsage(ctx context.Context, st *store.Store, fetcher *claude.U
 func RefreshActiveUsage(ctx context.Context, st *store.Store, sw *Switcher, fetcher *claude.UsageFetcher, acct store.Account) (provider.Limits, error) {
 	cred, err := sw.RefreshActive(ctx, acct, false)
 	if err != nil {
+		markRelogin(ctx, st, acct, err)
 		return provider.Limits{}, err
 	}
 	defer cred.Zero()
@@ -65,6 +69,7 @@ func RefreshActiveUsage(ctx context.Context, st *store.Store, sw *Switcher, fetc
 	if err := st.PutLimits(ctx, acct.ID, limits); err != nil {
 		return provider.Limits{}, fmt.Errorf("persist usage for %q: %w", acct.Label, err)
 	}
+	markRelogin(ctx, st, acct, nil)
 	return limits, nil
 }
 

@@ -61,8 +61,19 @@ final class AppModel: ObservableObject {
     private var timer: AnyCancellable?
     private let workQueue = DispatchQueue(label: "dev.aimonitor.dbpoll", qos: .utility)
 
-    init(dbPath: String = SQLiteReader.defaultPath()) {
+    init(dbPath: String = AppModel.defaultDBPath()) {
         self.dbPath = dbPath
+    }
+
+    /// DB path, overridable via AIMONITOR_STORE_PATH (mirrors the CLI) so the
+    /// widget can run against a throwaway database for QA without touching the
+    /// real one. Falls back to the platform default. `nonisolated` so it can
+    /// be used as the init default argument (evaluated off the main actor).
+    nonisolated static func defaultDBPath() -> String {
+        if let p = ProcessInfo.processInfo.environment["AIMONITOR_STORE_PATH"], !p.isEmpty {
+            return p
+        }
+        return SQLiteReader.defaultPath()
     }
 
     func start() {
@@ -131,7 +142,7 @@ final class AppModel: ObservableObject {
                 Task { @MainActor in await self.confirmSwitch(to: label) }
             } catch {
                 Task { @MainActor in
-                    self.lastError = "\(error)"
+                    self.lastError = CLIBridge.userMessage(error)
                     self.switchingLabel = nil
                 }
             }
@@ -180,7 +191,7 @@ final class AppModel: ObservableObject {
         refreshingUsage = true
         workQueue.async {
             let failure: String? = {
-                do { try CLIBridge.refreshUsage(); return nil } catch { return "\(error)" }
+                do { try CLIBridge.refreshUsage(); return nil } catch { return CLIBridge.userMessage(error) }
             }()
             Task { @MainActor in
                 await self.refresh()
@@ -198,7 +209,7 @@ final class AppModel: ObservableObject {
         usageErrors[id] = nil
         workQueue.async {
             let failure: String? = {
-                do { try CLIBridge.refreshUsage(label: label); return nil } catch { return "\(error)" }
+                do { try CLIBridge.refreshUsage(label: label); return nil } catch { return CLIBridge.userMessage(error) }
             }()
             Task { @MainActor in
                 await self.refresh()
@@ -217,7 +228,7 @@ final class AppModel: ObservableObject {
                 try CLIBridge.rename(from: label, to: newLabel)
                 Task { @MainActor in await self.refresh() }
             } catch {
-                Task { @MainActor in self.lastError = "\(error)" }
+                Task { @MainActor in self.lastError = CLIBridge.userMessage(error) }
             }
         }
     }
@@ -233,7 +244,7 @@ final class AppModel: ObservableObject {
                 try CLIBridge.remove(label: label)
                 Task { @MainActor in await self.refresh() }
             } catch {
-                Task { @MainActor in self.lastError = "\(error)" }
+                Task { @MainActor in self.lastError = CLIBridge.userMessage(error) }
             }
         }
     }
@@ -245,7 +256,7 @@ final class AppModel: ObservableObject {
                 try CLIBridge.setAutoSwitch(enabled)
                 Task { @MainActor in await self.refresh() }
             } catch {
-                Task { @MainActor in self.lastError = "\(error)" }
+                Task { @MainActor in self.lastError = CLIBridge.userMessage(error) }
             }
         }
     }
