@@ -88,6 +88,13 @@ func newMCPConnectCmd() *cobra.Command {
 			}
 			verify := mcpserver.Verifier(svc)
 
+			// Tell the user up front which Slack scopes the token must carry,
+			// so the user-token they create/paste covers every tool (a missing
+			// scope otherwise only shows up later as a per-tool error).
+			if svc == mcpserver.ServiceSlack {
+				fmt.Fprintf(cmd.OutOrStdout(), "Slack user-token scopes required: %s\n\n", mcpserver.SlackScopesCSV())
+			}
+
 			// Non-interactive path (the widget passes the token directly).
 			if tokenFlag != "" {
 				ident, err := verify(ctx, strings.TrimSpace(tokenFlag))
