@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -214,7 +215,9 @@ func renderTokensTable(cmd *cobra.Command, dimension string, rows []tokenRow, sh
 	if showAccount {
 		head += "ACCOUNT\t"
 	}
-	fmt.Fprintln(out, head+"INPUT\tOUTPUT\tCACHE R\tCACHE W\tTOTAL\tMSGS\t")
+	// CACHE% sits next to the cache columns it summarizes: the share of
+	// input-side tokens served from cache.
+	fmt.Fprintln(out, head+"INPUT\tOUTPUT\tCACHE R\tCACHE W\tCACHE%\tTOTAL\tMSGS\t")
 
 	var tIn, tOut, tCR, tCW, tTot, tMsg int64
 	for _, r := range rows {
@@ -228,16 +231,18 @@ func renderTokensTable(cmd *cobra.Command, dimension string, rows []tokenRow, sh
 		if showAccount {
 			line += labelFor(labelByID, r.accountID) + "\t"
 		}
-		fmt.Fprintf(out, "%s%s\t%s\t%s\t%s\t%s\t%d\t\n",
+		fmt.Fprintf(out, "%s%s\t%s\t%s\t%s\t%.0f%%\t%s\t%d\t\n",
 			line, comma(r.input), comma(r.output), comma(r.cacheRead),
-			comma(r.cacheWrite), comma(r.total), r.messages)
+			comma(r.cacheWrite), cacheHitPct(r.input, r.cacheRead, r.cacheWrite),
+			comma(r.total), r.messages)
 	}
 	sep := "TOTAL\t"
 	if showAccount {
 		sep = "TOTAL\t\t"
 	}
-	fmt.Fprintf(out, "%s%s\t%s\t%s\t%s\t%s\t%d\t\n",
-		sep, comma(tIn), comma(tOut), comma(tCR), comma(tCW), comma(tTot), tMsg)
+	fmt.Fprintf(out, "%s%s\t%s\t%s\t%s\t%.0f%%\t%s\t%d\t\n",
+		sep, comma(tIn), comma(tOut), comma(tCR), comma(tCW),
+		cacheHitPct(tIn, tCR, tCW), comma(tTot), tMsg)
 	return out.Flush()
 }
 
@@ -245,7 +250,7 @@ func renderTokensCSV(cmd *cobra.Command, dimension string, rows []tokenRow, labe
 	w := csv.NewWriter(cmd.OutOrStdout())
 	// The dimension is the first column; account is always present for
 	// machine consumers (unlike the table, which hides it when filtered).
-	if err := w.Write([]string{dimension, "account", "input", "output", "cache_read", "cache_write", "total", "messages"}); err != nil {
+	if err := w.Write([]string{dimension, "account", "input", "output", "cache_read", "cache_write", "cache_hit_pct", "total", "messages"}); err != nil {
 		return err
 	}
 	for _, r := range rows {
@@ -253,6 +258,7 @@ func renderTokensCSV(cmd *cobra.Command, dimension string, rows []tokenRow, labe
 			r.key, labelFor(labelByID, r.accountID),
 			strconv.FormatInt(r.input, 10), strconv.FormatInt(r.output, 10),
 			strconv.FormatInt(r.cacheRead, 10), strconv.FormatInt(r.cacheWrite, 10),
+			strconv.FormatFloat(cacheHitPct(r.input, r.cacheRead, r.cacheWrite), 'f', 1, 64),
 			strconv.FormatInt(r.total, 10), strconv.FormatInt(r.messages, 10),
 		}
 		if err := w.Write(rec); err != nil {
@@ -265,22 +271,24 @@ func renderTokensCSV(cmd *cobra.Command, dimension string, rows []tokenRow, labe
 
 func renderTokensJSON(cmd *cobra.Command, dimension string, rows []tokenRow, labelByID map[int64]string) error {
 	type rec struct {
-		Key        string `json:"key"`
-		Dimension  string `json:"dimension"`
-		Account    string `json:"account"`
-		Input      int64  `json:"input"`
-		Output     int64  `json:"output"`
-		CacheRead  int64  `json:"cache_read"`
-		CacheWrite int64  `json:"cache_write"`
-		Total      int64  `json:"total"`
-		Messages   int64  `json:"messages"`
+		Key         string  `json:"key"`
+		Dimension   string  `json:"dimension"`
+		Account     string  `json:"account"`
+		Input       int64   `json:"input"`
+		Output      int64   `json:"output"`
+		CacheRead   int64   `json:"cache_read"`
+		CacheWrite  int64   `json:"cache_write"`
+		CacheHitPct float64 `json:"cache_hit_pct"`
+		Total       int64   `json:"total"`
+		Messages    int64   `json:"messages"`
 	}
 	recs := make([]rec, 0, len(rows))
 	for _, r := range rows {
 		recs = append(recs, rec{
 			Key: r.key, Dimension: dimension, Account: labelFor(labelByID, r.accountID),
 			Input: r.input, Output: r.output, CacheRead: r.cacheRead,
-			CacheWrite: r.cacheWrite, Total: r.total, Messages: r.messages,
+			CacheWrite: r.cacheWrite, CacheHitPct: round1(cacheHitPct(r.input, r.cacheRead, r.cacheWrite)),
+			Total: r.total, Messages: r.messages,
 		})
 	}
 	enc := json.NewEncoder(cmd.OutOrStdout())
@@ -307,6 +315,24 @@ func prettyProject(dir string) string {
 		return "(unknown)"
 	}
 	return "/" + strings.ReplaceAll(strings.TrimPrefix(dir, "-"), "-", "/")
+}
+
+// cacheHitPct is the share of input-side tokens served from cache (cheap
+// reuse): cacheRead / (input + cacheRead + cacheWrite), as a 0..100 percent.
+// Output tokens are excluded — caching is an input-side concern. Returns 0
+// when there are no input-side tokens.
+func cacheHitPct(input, cacheRead, cacheWrite int64) float64 {
+	denom := input + cacheRead + cacheWrite
+	if denom <= 0 {
+		return 0
+	}
+	return float64(cacheRead) / float64(denom) * 100
+}
+
+// round1 rounds to one decimal place — keeps cache_hit_pct compact in JSON
+// instead of emitting full float precision.
+func round1(f float64) float64 {
+	return math.Round(f*10) / 10
 }
 
 // parseSince turns a window string like "24h", "7d", "2w" into a duration.
