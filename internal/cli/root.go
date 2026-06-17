@@ -18,6 +18,13 @@ per-account session usage and lets you switch between multiple Claude
 OAuth accounts stashed in your OS keyring.
 
 It is local-first, has no telemetry, and never phones home.`,
+		// On a runtime error, don't dump the command's usage/flags block, and
+		// let main() print the error (it already does, to stderr + exit 1).
+		// Without these, cobra prints "Error: …" + the full Usage/Flags help
+		// AND main() prints the error again — that whole blob was getting
+		// surfaced verbatim in the menu-bar popover on a failed refresh.
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
 	root.AddCommand(

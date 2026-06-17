@@ -131,7 +131,7 @@ final class AppModel: ObservableObject {
                 Task { @MainActor in await self.confirmSwitch(to: label) }
             } catch {
                 Task { @MainActor in
-                    self.lastError = "\(error)"
+                    self.lastError = CLIBridge.userMessage(error)
                     self.switchingLabel = nil
                 }
             }
@@ -180,7 +180,7 @@ final class AppModel: ObservableObject {
         refreshingUsage = true
         workQueue.async {
             let failure: String? = {
-                do { try CLIBridge.refreshUsage(); return nil } catch { return "\(error)" }
+                do { try CLIBridge.refreshUsage(); return nil } catch { return CLIBridge.userMessage(error) }
             }()
             Task { @MainActor in
                 await self.refresh()
@@ -198,7 +198,7 @@ final class AppModel: ObservableObject {
         usageErrors[id] = nil
         workQueue.async {
             let failure: String? = {
-                do { try CLIBridge.refreshUsage(label: label); return nil } catch { return "\(error)" }
+                do { try CLIBridge.refreshUsage(label: label); return nil } catch { return CLIBridge.userMessage(error) }
             }()
             Task { @MainActor in
                 await self.refresh()
@@ -217,7 +217,7 @@ final class AppModel: ObservableObject {
                 try CLIBridge.rename(from: label, to: newLabel)
                 Task { @MainActor in await self.refresh() }
             } catch {
-                Task { @MainActor in self.lastError = "\(error)" }
+                Task { @MainActor in self.lastError = CLIBridge.userMessage(error) }
             }
         }
     }
@@ -233,7 +233,7 @@ final class AppModel: ObservableObject {
                 try CLIBridge.remove(label: label)
                 Task { @MainActor in await self.refresh() }
             } catch {
-                Task { @MainActor in self.lastError = "\(error)" }
+                Task { @MainActor in self.lastError = CLIBridge.userMessage(error) }
             }
         }
     }
@@ -245,7 +245,7 @@ final class AppModel: ObservableObject {
                 try CLIBridge.setAutoSwitch(enabled)
                 Task { @MainActor in await self.refresh() }
             } catch {
-                Task { @MainActor in self.lastError = "\(error)" }
+                Task { @MainActor in self.lastError = CLIBridge.userMessage(error) }
             }
         }
     }

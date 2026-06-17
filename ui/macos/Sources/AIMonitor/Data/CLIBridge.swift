@@ -29,6 +29,46 @@ enum CLIBridgeError: Error, LocalizedError {
 }
 
 enum CLIBridge {
+    /// Turns a caught error into a concise, user-facing line for the popover.
+    ///
+    /// The widget shells out to whatever `aimonitor` is installed, which may
+    /// be an older build that prints cobra's full "Usage:/Flags:" help on any
+    /// error — so we clean the captured stderr here rather than trusting the
+    /// CLI to be terse. Also unwraps CLIBridgeError (a plain `"\(error)"`
+    /// renders the enum as `exitNonZero(1, "…")`, which leaked into the UI).
+    static func userMessage(_ error: Error) -> String {
+        switch error {
+        case CLIBridgeError.binaryNotFound:
+            return CLIBridgeError.binaryNotFound.errorDescription ?? "aimonitor CLI not found."
+        case let CLIBridgeError.exitNonZero(_, stderr):
+            return cleanCLIError(stderr)
+        default:
+            return "\(error)"
+        }
+    }
+
+    /// Reduces raw CLI stderr to one actionable line.
+    private static func cleanCLIError(_ raw: String) -> String {
+        var text = raw
+        // Drop cobra's usage dump (older CLIs emit it on error): everything
+        // from the "Usage:" marker onward.
+        if let r = text.range(of: "Usage:") {
+            text = String(text[..<r.lowerBound])
+        }
+        // The most common, actionable failure: the account's OAuth refresh
+        // token is dead. Map it to a fix instead of the wrapped 400 chain.
+        let low = text.lowercased()
+        if low.contains("expired or revoked") || low.contains("re-login") {
+            return "Session expired — re-add this account with `aimonitor add`."
+        }
+        // Otherwise show the first meaningful line, minus cobra's "Error: ".
+        let line = text
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first(where: { !$0.isEmpty }) ?? "aimonitor reported an error."
+        return line.replacingOccurrences(of: "Error: ", with: "")
+    }
+
     static func resolveBinaryPath() -> String? {
         if let env = ProcessInfo.processInfo.environment["AIMONITOR_BIN"],
            FileManager.default.isExecutableFile(atPath: env) {
