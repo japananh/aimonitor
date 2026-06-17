@@ -91,6 +91,7 @@ AIMONITOR_PASSPHRASE=… aimonitor config import full.json                      
 | `auto_swap.grace_sec` | `60` | Delay between the "pending" notification and the swap (`0` = immediate) |
 | `notify.enabled` | `true` | Warn as the active account nears its limit (only when auto-swap is off) |
 | `notify.warn_pct` / `notify.crit_pct` | `80` / `95` | Warning / critical notification levels |
+| `daily_summary.enabled` | `true` | Once-a-day notification recapping yesterday's token usage across accounts |
 | `auto_update.enabled` | `true` | Check GitHub for releases on launch (never auto-installs) |
 | `autostart` | `false` | Start the daemon at login |
 | `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | Expose that service's MCP tools |

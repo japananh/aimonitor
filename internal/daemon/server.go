@@ -138,6 +138,12 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	go func() { _ = pub.Run(ctx) }()
 
+	// DailySummaryNotifier posts a once-a-day recap of the previous day's
+	// token usage (from usage_samples). Provider-agnostic — it only reads the
+	// samples the watcher records — so it runs regardless of provider.
+	summary := &DailySummaryNotifier{Store: s.store}
+	go func() { _ = summary.Run(ctx) }()
+
 	// UsageScheduler is Claude-specific in v1 (only Claude has an OAuth
 	// usage endpoint we know about). When v2 adds a second provider the
 	// scheduler will move behind a Provider interface method.
