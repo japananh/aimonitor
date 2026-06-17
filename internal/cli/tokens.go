@@ -18,6 +18,7 @@ import (
 func newTokensCmd() *cobra.Command {
 	var (
 		hourly  bool
+		byModel bool
 		account string
 		since   string
 	)
@@ -25,7 +26,7 @@ func newTokensCmd() *cobra.Command {
 		Use:   "tokens",
 		Short: "Show token usage per account, bucketed by day or hour",
 		Long: `Show how many tokens each account has used, grouped by local-time day
-(default) or hour (--hourly).
+(default), hour (--hourly), or model (--by-model).
 
 Counts come from Claude Code's own JSONL transcripts (input, output, cache
 read, cache write), deduplicated per API response — not from the OAuth
@@ -35,22 +36,24 @@ from the moment it starts watching (no historical backfill).
 
   aimonitor tokens                      # last 7 days, all accounts, daily
   aimonitor tokens --hourly             # last 24h, all accounts, hourly
+  aimonitor tokens --by-model           # per-model totals over the window
   aimonitor tokens --account work       # just the "work" account
   aimonitor tokens --since 30d          # custom window (s/m/h/d/w units)`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withRuntime(cmd.Context(), func(ctx context.Context, s *store.Store, _ provider.Provider) error {
-				return runTokens(ctx, cmd, s, hourly, account, since)
+				return runTokens(ctx, cmd, s, hourly, byModel, account, since)
 			})
 		},
 	}
 	cmd.Flags().BoolVar(&hourly, "hourly", false, "bucket by hour instead of by day")
+	cmd.Flags().BoolVar(&byModel, "by-model", false, "summarize per model over the window instead of by time")
 	cmd.Flags().StringVar(&account, "account", "", "limit to one account by label (default: all)")
-	cmd.Flags().StringVar(&since, "since", "", "how far back to look, e.g. 24h, 7d, 2w (default: 7d daily, 24h hourly)")
+	cmd.Flags().StringVar(&since, "since", "", "how far back to look, e.g. 24h, 7d, 2w (default: 7d, or 24h with --hourly)")
 	return cmd
 }
 
-func runTokens(ctx context.Context, cmd *cobra.Command, s *store.Store, hourly bool, account, since string) error {
+func runTokens(ctx context.Context, cmd *cobra.Command, s *store.Store, hourly, byModel bool, account, since string) error {
 	window, err := parseSince(since, hourly)
 	if err != nil {
 		return err
@@ -79,6 +82,10 @@ func runTokens(ctx context.Context, cmd *cobra.Command, s *store.Store, hourly b
 			return gErr
 		}
 		accountID = acct.ID
+	}
+
+	if byModel {
+		return runTokensByModel(ctx, cmd, s, accountID, from, until, labelByID)
 	}
 
 	var buckets []store.TokenBucket
@@ -126,6 +133,52 @@ func runTokens(ctx context.Context, cmd *cobra.Command, s *store.Store, hourly b
 	}
 
 	// Totals footer. Tab columns line up under the per-bucket numbers.
+	sep := "TOTAL\t"
+	if showAccount {
+		sep = "TOTAL\t\t"
+	}
+	fmt.Fprintf(out, "%s%s\t%s\t%s\t%s\t%s\t%d\t\n",
+		sep, comma(tIn), comma(tOut), comma(tCR), comma(tCW), comma(tTot), tMsg)
+	return out.Flush()
+}
+
+// runTokensByModel renders the --by-model summary: per-(account, model)
+// totals over the window, biggest spender first.
+func runTokensByModel(ctx context.Context, cmd *cobra.Command, s *store.Store, accountID int64, from, until time.Time, labelByID map[int64]string) error {
+	rows, err := s.TokenUsageByModel(ctx, accountID, from, until)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(),
+			"No token usage recorded in this window. The daemon records usage as you use Claude Code — make sure `aimonitor daemon` is running.")
+		return nil
+	}
+
+	showAccount := accountID == 0
+	out := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', tabwriter.AlignRight)
+	header := "MODEL\t"
+	if showAccount {
+		header = "MODEL\tACCOUNT\t"
+	}
+	fmt.Fprintln(out, header+"INPUT\tOUTPUT\tCACHE R\tCACHE W\tTOTAL\tMSGS\t")
+
+	var tIn, tOut, tCR, tCW, tTot, tMsg int64
+	for _, m := range rows {
+		tIn += m.Input
+		tOut += m.Output
+		tCR += m.CacheRead
+		tCW += m.CacheWrite
+		tTot += m.Total
+		tMsg += m.Messages
+		row := m.Model + "\t"
+		if showAccount {
+			row += labelFor(labelByID, m.AccountID) + "\t"
+		}
+		fmt.Fprintf(out, "%s%s\t%s\t%s\t%s\t%s\t%d\t\n",
+			row, comma(m.Input), comma(m.Output), comma(m.CacheRead),
+			comma(m.CacheWrite), comma(m.Total), m.Messages)
+	}
 	sep := "TOTAL\t"
 	if showAccount {
 		sep = "TOTAL\t\t"

@@ -91,6 +91,45 @@ func TestTokenUsage_HourBucketsAndLocalFormat(t *testing.T) {
 	}
 }
 
+// TestTokenUsageByModel groups per model, orders by descending total, and
+// reports an empty model as "(unknown)".
+func TestTokenUsageByModel(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	acct := newAccountForTokens(t, s, "a")
+	now := time.Now()
+
+	ins := func(id, model string, in, out int64) {
+		if _, err := s.InsertUsageSample(ctx, acct, TokenSample{
+			Ts: now, MessageID: id, RequestID: id, Input: in, Output: out, Model: model,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ins("m1", "claude-opus-4-8", 100, 50)  // opus total 150
+	ins("m2", "claude-opus-4-8", 200, 100) // opus total +300 => 450
+	ins("m3", "claude-haiku-4-5", 10, 5)   // haiku total 15
+	ins("m4", "", 1, 1)                    // unknown total 2
+
+	rows, err := s.TokenUsageByModel(ctx, acct, now.Add(-time.Hour), now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("TokenUsageByModel: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("got %d model rows, want 3: %+v", len(rows), rows)
+	}
+	// Ordered by descending total: opus (450) > haiku (15) > unknown (2).
+	if rows[0].Model != "claude-opus-4-8" || rows[0].Total != 450 || rows[0].Messages != 2 {
+		t.Errorf("row[0] = %+v, want opus total 450 msgs 2", rows[0])
+	}
+	if rows[1].Model != "claude-haiku-4-5" || rows[1].Total != 15 {
+		t.Errorf("row[1] = %+v, want haiku total 15", rows[1])
+	}
+	if rows[2].Model != "(unknown)" || rows[2].Total != 2 {
+		t.Errorf("row[2] = %+v, want (unknown) total 2", rows[2])
+	}
+}
+
 // TestTokenUsage_AllAccounts checks that accountID 0 spans accounts and
 // groups per (bucket, account).
 func TestTokenUsage_AllAccounts(t *testing.T) {

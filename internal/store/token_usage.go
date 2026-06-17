@@ -39,6 +39,64 @@ func (s *Store) TokenUsageByHour(ctx context.Context, accountID int64, since, un
 	return s.tokenUsage(ctx, "%Y-%m-%d %H:00", accountID, since, until)
 }
 
+// ModelUsage is per-(account, model) token totals over a window, with no
+// time bucketing — powers `aimonitor tokens --by-model` ("which model burned
+// the tokens"). Total sums all four token kinds, same as TokenBucket.
+type ModelUsage struct {
+	AccountID  int64
+	Model      string
+	Input      int64
+	Output     int64
+	CacheRead  int64
+	CacheWrite int64
+	Total      int64
+	Messages   int64
+}
+
+// TokenUsageByModel returns per-model token totals in [since, until). When
+// accountID is 0 every account is included and rows are grouped per
+// (account, model); otherwise only that account. Rows are ordered by account
+// then descending total (biggest spender first). An empty/NULL model is
+// reported as "(unknown)".
+func (s *Store) TokenUsageByModel(ctx context.Context, accountID int64, since, until time.Time) ([]ModelUsage, error) {
+	args := []any{since.UnixMilli(), until.UnixMilli()}
+	acctFilter := ""
+	if accountID != 0 {
+		acctFilter = "AND account_id = ?"
+		args = append(args, accountID)
+	}
+	query := fmt.Sprintf(`
+		SELECT account_id,
+		       COALESCE(NULLIF(model, ''), '(unknown)') AS model,
+		       SUM(input_tokens)  AS input,
+		       SUM(output_tokens) AS output,
+		       SUM(cache_read)    AS cache_read,
+		       SUM(cache_write)   AS cache_write,
+		       SUM(input_tokens + output_tokens + cache_read + cache_write) AS total,
+		       COUNT(*) AS messages
+		  FROM usage_samples
+		 WHERE ts >= ? AND ts < ? %s
+		 GROUP BY account_id, model
+		 ORDER BY account_id ASC, total DESC`, acctFilter)
+
+	rows, err := s.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("token usage by model: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ModelUsage
+	for rows.Next() {
+		var m ModelUsage
+		if err := rows.Scan(&m.AccountID, &m.Model, &m.Input, &m.Output,
+			&m.CacheRead, &m.CacheWrite, &m.Total, &m.Messages); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // tokenUsage is the shared aggregation. format is the strftime pattern that
 // defines the bucket granularity; ts is stored as unix millis so we divide
 // by 1000 for strftime's unixepoch input and apply 'localtime' so day/hour
