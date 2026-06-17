@@ -132,6 +132,9 @@ func runAdd(ctx context.Context, cmd *cobra.Command, s *store.Store, p provider.
 				return fmt.Errorf("refresh stash for existing account %q: %w", existing.Label, err)
 			}
 			_ = s.UpdateAccountIdentity(ctx, existing.ID, ident.Email, ident.OrganizationUUID, ident.OrganizationName)
+			// Re-login supplies a fresh refresh token — clear any "session
+			// expired" flag so the popover badge goes away immediately.
+			_ = s.SetNeedsRelogin(ctx, existing.ID, false)
 			fmt.Fprintf(cmd.OutOrStdout(), "Account %s is already registered as %q — refreshed its credentials.\n", ident.Email, existing.Label)
 			return nil
 		} else if !errors.Is(dErr, store.ErrAccountNotFound) {

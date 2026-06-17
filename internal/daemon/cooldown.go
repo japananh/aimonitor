@@ -47,3 +47,23 @@ func clearThrottle(ctx context.Context, st *store.Store, acct store.Account) {
 		logger.Warn("clear cooldown failed", "account", acct.Label, "err", err)
 	}
 }
+
+// markRelogin flags acct as needing re-login when err means its OAuth refresh
+// token is dead, or clears the flag when err is nil (a successful refresh).
+// Other errors (network, 429) leave the flag untouched. Best-effort: a store
+// miss is logged, never propagated. Every CLI and daemon refresh runs through
+// the usage_refresh helpers + the scheduler, so calling this there surfaces
+// the "Session expired" badge wherever a refresh is attempted.
+func markRelogin(ctx context.Context, st *store.Store, acct store.Account, err error) {
+	switch {
+	case err == nil:
+		if e := st.SetNeedsRelogin(ctx, acct.ID, false); e != nil {
+			logger.Warn("clear needs_relogin failed", "account", acct.Label, "err", e)
+		}
+	case claude.IsRefreshExpired(err):
+		if e := st.SetNeedsRelogin(ctx, acct.ID, true); e != nil {
+			logger.Warn("set needs_relogin failed", "account", acct.Label, "err", e)
+		}
+		logger.Warn("account needs re-login (refresh token dead)", "account", acct.Label)
+	}
+}

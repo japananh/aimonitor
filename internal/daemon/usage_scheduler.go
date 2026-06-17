@@ -237,6 +237,7 @@ func (u *UsageScheduler) tickOnce(ctx context.Context) error {
 
 	cred, err := u.liveCredential(ctx, acct, false)
 	if err != nil {
+		markRelogin(ctx, u.Store, acct, err)
 		return fmt.Errorf("active credential: %w", err)
 	}
 	// Closure form so the deferred zero covers whatever cred points at when
@@ -254,6 +255,7 @@ func (u *UsageScheduler) tickOnce(ctx context.Context) error {
 		// without the permanent halt the old code applied on any 401.
 		fresh, rerr := u.RefreshActive(ctx, acct, true)
 		if rerr != nil {
+			markRelogin(ctx, u.Store, acct, rerr)
 			return rerr
 		}
 		cred.Zero()
@@ -275,6 +277,7 @@ func (u *UsageScheduler) tickOnce(ctx context.Context) error {
 	// Clear any cooldown the account carried as a candidate before it became
 	// active — a successful active fetch proves it's serving requests again.
 	clearThrottle(ctx, u.Store, acct)
+	markRelogin(ctx, u.Store, acct, nil) // a healthy fetch clears any re-login flag
 	limits.AccountID = acct.ID
 	if err := u.Store.PutLimits(ctx, acct.ID, limits); err != nil {
 		return fmt.Errorf("put limits: %w", err)
