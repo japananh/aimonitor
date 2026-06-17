@@ -103,20 +103,62 @@ final class SQLiteReader {
     private var db: OpaquePointer?
 
     init(path: String) throws {
-        // SQLITE_OPEN_READONLY plus the URI flag isn't strictly necessary
-        // since the daemon owns writes, but it's a belt-and-suspenders
-        // guard against accidental writes from the widget side.
-        let flags = SQLITE_OPEN_READONLY
-        let rc = sqlite3_open_v2(path, &db, flags, nil)
-        if rc != SQLITE_OK {
-            let msg = String(cString: sqlite3_errmsg(db))
+        // Normal read-only open: WAL-aware, so it sees the daemon's live writes.
+        db = try Self.openReadonly(path: path, immutable: false)
+        sqlite3_busy_timeout(db, 5000)
+
+        // A WAL database with no live writer (daemon stopped) can't be read
+        // through a plain read-only handle: WAL needs a -shm file, and a
+        // read-only connection can't create one, so the first query fails with
+        // SQLITE_CANTOPEN ("unable to open database file"). Detect that and fall
+        // back to an immutable open, which reads the db file directly and
+        // ignores -wal/-shm. The data is stale, but the widget still shows
+        // last-known accounts + the "Daemon not running" banner instead of
+        // erroring out. The reader is rebuilt every refresh, so once the daemon
+        // is back the next refresh uses the normal (live) handle again.
+        if !Self.canRead(db) {
             sqlite3_close_v2(db)
             db = nil
+            db = try Self.openReadonly(path: path, immutable: true)
+            sqlite3_busy_timeout(db, 5000)
+        }
+    }
+
+    /// Opens a read-only handle. With `immutable`, uses a `file:…?immutable=1`
+    /// URI so SQLite reads the db file directly without touching -wal/-shm —
+    /// the fallback for a WAL db whose writer (daemon) is gone.
+    private static func openReadonly(path: String, immutable: Bool) throws -> OpaquePointer? {
+        var handle: OpaquePointer?
+        var flags = SQLITE_OPEN_READONLY
+        var target = path
+        if immutable {
+            flags |= SQLITE_OPEN_URI
+            var comps = URLComponents()
+            comps.scheme = "file"
+            comps.path = path
+            comps.queryItems = [URLQueryItem(name: "immutable", value: "1")]
+            target = comps.string ?? path
+        }
+        let rc = sqlite3_open_v2(target, &handle, flags, nil)
+        if rc != SQLITE_OK {
+            let msg = String(cString: sqlite3_errmsg(handle))
+            sqlite3_close_v2(handle)
             throw SQLiteReaderError.openFailed(rc, msg)
         }
-        // Match the daemon's busy_timeout so concurrent WAL readers
-        // don't fight on writes.
-        sqlite3_busy_timeout(db, 5000)
+        return handle
+    }
+
+    /// True when a trivial read actually succeeds — forces the file access that
+    /// a deferred read-only open skips, so it catches the WAL-without-writer
+    /// SQLITE_CANTOPEN before the real queries run.
+    private static func canRead(_ db: OpaquePointer?) -> Bool {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT 1 FROM sqlite_master LIMIT 1", -1, &stmt, nil) == SQLITE_OK else {
+            return false
+        }
+        let rc = sqlite3_step(stmt)
+        return rc == SQLITE_ROW || rc == SQLITE_DONE
     }
 
     deinit {

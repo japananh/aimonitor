@@ -320,6 +320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             quit: { NSApplication.shared.terminate(nil) },
             renameAccount: { [weak self] label in self?.promptRename(currentLabel: label) },
             removeAccount: { [weak self] label in self?.promptRemove(label: label) },
+            reloginAccount: { [weak self] label in self?.promptRelogin(label: label) },
             importAccount: { [weak self] email in self?.promptImportCurrent(email: email) },
             addAccount: { [weak self] in self?.promptAddAccount() }
         )
@@ -471,6 +472,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         """
         alert.addButton(withTitle: "Copy `claude /login`")
         alert.addButton(withTitle: "Close")
+        // Focus the primary (Copy) button, not Close — set after the modal
+        // window appears (NSAlert resets focus during layout). See promptRelogin.
+        alert.buttons.first?.keyEquivalent = "\r"
+        let primary = alert.buttons.first
+        DispatchQueue.main.async { primary?.window?.makeFirstResponder(primary) }
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("claude /login", forType: .string)
+        }
+    }
+
+    // promptRelogin explains how to re-auth an account whose OAuth refresh
+    // token died (the red "Re-login" pill on the row). Like add, the actual
+    // sign-in happens in the browser via `claude /login`; once the new token
+    // lands, the active-account refresh path picks it up and the badge clears.
+    private func promptRelogin(label: String) {
+        closePanel()
+        NSApp.activate(ignoringOtherApps: true)
+
+        let email = model.accounts.first(where: { $0.label == label })?.email
+        let who = email.map { " (\($0))" } ?? ""
+        let alert = NSAlert()
+        alert.messageText = "Re-login to \(label)"
+        // Plain step-by-step instructions — we deliberately do NOT auto-open a
+        // terminal or run `claude` (the user may alias claude, or not want it
+        // launched). They run `claude /login` themselves.
+        alert.informativeText = """
+        This account's login expired — its token can't be refreshed until you sign in again.
+
+        1. In any terminal, run `claude /login` and sign back into this account\(who) — the browser handles Google or email-code logins.
+
+        2. AIMonitor picks up the new token automatically and the warning clears. This account becomes active; use Switch to go back to another.
+        """
+        alert.addButton(withTitle: "Copy `claude /login`")
+        alert.addButton(withTitle: "Close")
+        // Keep keyboard focus on the primary (Copy) action, not Close. NSAlert
+        // re-assigns the first responder during layout (landing it on the
+        // trailing Close button) and overrides any initialFirstResponder set
+        // before runModal — so move focus once the modal window is on screen,
+        // via an async hop that runs inside the modal run loop.
+        alert.buttons.first?.keyEquivalent = "\r"
+        let primary = alert.buttons.first
+        DispatchQueue.main.async { primary?.window?.makeFirstResponder(primary) }
 
         if alert.runModal() == .alertFirstButtonReturn {
             NSPasteboard.general.clearContents()

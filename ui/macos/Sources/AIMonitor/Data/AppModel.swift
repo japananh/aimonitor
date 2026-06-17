@@ -61,8 +61,19 @@ final class AppModel: ObservableObject {
     private var timer: AnyCancellable?
     private let workQueue = DispatchQueue(label: "dev.aimonitor.dbpoll", qos: .utility)
 
-    init(dbPath: String = SQLiteReader.defaultPath()) {
+    init(dbPath: String = AppModel.defaultDBPath()) {
         self.dbPath = dbPath
+    }
+
+    /// DB path, overridable via AIMONITOR_STORE_PATH (mirrors the CLI) so the
+    /// widget can run against a throwaway database for QA without touching the
+    /// real one. Falls back to the platform default. `nonisolated` so it can
+    /// be used as the init default argument (evaluated off the main actor).
+    nonisolated static func defaultDBPath() -> String {
+        if let p = ProcessInfo.processInfo.environment["AIMONITOR_STORE_PATH"], !p.isEmpty {
+            return p
+        }
+        return SQLiteReader.defaultPath()
     }
 
     func start() {
