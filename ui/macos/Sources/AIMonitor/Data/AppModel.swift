@@ -21,6 +21,13 @@ final class AppModel: ObservableObject {
     // trend. Keyed by account id; empty until the daemon has logged a couple
     // of points.
     @Published var historyByAccount: [Int64: [UsageSamplePoint]] = [:]
+    // Per-account token usage (usage_samples) bucketed by local-time day or
+    // hour, for the Tokens tab. Reloaded every poll at the current
+    // granularity (tokensHourly); keyed by account id, oldest bucket first.
+    @Published var tokenUsageByAccount: [Int64: [TokenBucketRow]] = [:]
+    // Tokens-tab granularity: false = daily (last 14d), true = hourly (last
+    // 48h). Flipping it triggers a refresh (see TokenUsageView.onChange).
+    @Published var tokensHourly = false
     // True while a manual "Refresh usage" (all-accounts) fetch is in flight.
     @Published var refreshingUsage = false
     /// Label of the account a Switch is currently in flight for (nil when
@@ -93,7 +100,14 @@ final class AppModel: ObservableObject {
 
     func refresh() async {
         let path = dbPath
-        let result: Result<(DaemonStatus?, [AccountRow], [ProbeRow], [Int64: LimitsRow], [Int64: [UsageSamplePoint]]), Error> = await withCheckedContinuation { cont in
+        // Capture the Tokens-tab granularity on the main actor before the
+        // background read. Daily looks back 14 days, hourly 48 hours — enough
+        // history for the popover without an unbounded scan.
+        let hourly = self.tokensHourly
+        let tokenSince = hourly
+            ? Date().addingTimeInterval(-48 * 3600)
+            : Date().addingTimeInterval(-14 * 24 * 3600)
+        let result: Result<(DaemonStatus?, [AccountRow], [ProbeRow], [Int64: LimitsRow], [Int64: [UsageSamplePoint]], [Int64: [TokenBucketRow]]), Error> = await withCheckedContinuation { cont in
             workQueue.async {
                 do {
                     let r = try SQLiteReader(path: path)
@@ -105,19 +119,21 @@ final class AppModel: ObservableObject {
                     // by account; bounded (~288 points/account at the 5-min
                     // cadence) so it's cheap on the 2s poll.
                     let hist = try r.usageHistory(since: Date().addingTimeInterval(-24 * 3600))
-                    cont.resume(returning: .success((st, accs, pr, lim, hist)))
+                    let toks = try r.tokenUsage(byHour: hourly, since: tokenSince)
+                    cont.resume(returning: .success((st, accs, pr, lim, hist, toks)))
                 } catch {
                     cont.resume(returning: .failure(error))
                 }
             }
         }
         switch result {
-        case .success(let (st, accs, pr, lim, hist)):
+        case .success(let (st, accs, pr, lim, hist, toks)):
             self.status = st
             self.accounts = accs
             self.probes = pr
             self.limitsByAccount = lim
             self.historyByAccount = hist
+            self.tokenUsageByAccount = toks
             self.lastError = nil
         case .failure(let err):
             self.lastError = "\(err)"

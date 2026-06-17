@@ -28,6 +28,12 @@ struct PopoverRootView: View {
     @State private var daemonStarting = false
     @State private var daemonStartError: String?
 
+    // Which panel is showing: the OAuth 5h/7d limit bars, or the token
+    // breakdown. Limits stays the default — it's the at-a-glance "can I keep
+    // working" view; tokens is the "how much have I burned" drill-down.
+    private enum Tab: Hashable { case limits, tokens }
+    @State private var tab: Tab = .limits
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Top bar: the "Accounts" title and the settings gear on one
@@ -104,16 +110,35 @@ struct PopoverRootView: View {
                 }
             }
 
-            AccountTableView(model: model, renameAccount: renameAccount, removeAccount: removeAccount, reloginAccount: reloginAccount)
+            // Tab switch: Limits (OAuth 5h/7d bars) vs Tokens (token
+            // breakdown). Sits above the content so it reads as a control
+            // for the panel below it.
+            Picker("", selection: $tab) {
+                Text("Limits").tag(Tab.limits)
+                Text("Tokens").tag(Tab.tokens)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+
+            if tab == .limits {
+                AccountTableView(model: model, renameAccount: renameAccount, removeAccount: removeAccount, reloginAccount: reloginAccount)
+            } else {
+                TokenUsageView(model: model)
+            }
 
             // Footer actions float directly on the glass — no separator;
-            // the account cards above provide the visual grouping.
+            // the account cards above provide the visual grouping. "Refresh
+            // usage" only fetches OAuth limits, so scope it to the Limits tab.
             HStack {
-                AppTextButton(model.refreshingUsage ? "Refreshing…" : "Refresh usage") {
-                    model.refreshUsage()
+                if tab == .limits {
+                    AppTextButton(model.refreshingUsage ? "Refreshing…" : "Refresh usage") {
+                        model.refreshUsage()
+                    }
+                    .disabled(model.refreshingUsage)
+                    .help("Fetch the latest 5h/7d usage for every account now")
                 }
-                .disabled(model.refreshingUsage)
-                .help("Fetch the latest 5h/7d usage for every account now")
                 Spacer()
                 AppTextButton("Quit", action: quit)
                     .help("Quit the menu-bar app (the background daemon keeps running)")
