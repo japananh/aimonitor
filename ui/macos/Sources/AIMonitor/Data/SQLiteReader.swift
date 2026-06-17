@@ -30,6 +30,10 @@ struct AccountRow: Identifiable, Hashable {
     // is skipping it.
     let cooldownUntil: Date?
     let cooldownReason: String?
+    // True when the account's OAuth refresh token is dead — it needs a
+    // re-login (`aimonitor add`) before it can refresh or be switched to.
+    // Drives the "Session expired" badge.
+    let needsRelogin: Bool
 }
 
 /// LimitsRow mirrors a row of oauth_usage: a per-account rate-limit
@@ -133,11 +137,20 @@ final class SQLiteReader {
     }
 
     func listAccounts() throws -> [AccountRow] {
-        let sql = "SELECT id, label, email, organization_name, last_used_at, cooldown_until, cooldown_reason FROM accounts ORDER BY label"
+        // needs_relogin may not exist yet if the daemon/CLI hasn't applied its
+        // migration on this upgrade tick (the widget is read-only and never
+        // migrates). Fall back to a literal 0 so a brief schema lag can't make
+        // the whole popover error out.
+        let sql = "SELECT id, label, email, organization_name, last_used_at, cooldown_until, cooldown_reason, needs_relogin FROM accounts ORDER BY label"
+        let fallback = "SELECT id, label, email, organization_name, last_used_at, cooldown_until, cooldown_reason, 0 AS needs_relogin FROM accounts ORDER BY label"
         var stmt: OpaquePointer?
-        let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
-        if rc != SQLITE_OK {
-            throw SQLiteReaderError.prepareFailed(rc, String(cString: sqlite3_errmsg(db)))
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) != SQLITE_OK {
+            sqlite3_finalize(stmt)
+            stmt = nil
+            let rc = sqlite3_prepare_v2(db, fallback, -1, &stmt, nil)
+            if rc != SQLITE_OK {
+                throw SQLiteReaderError.prepareFailed(rc, String(cString: sqlite3_errmsg(db)))
+            }
         }
         defer { sqlite3_finalize(stmt) }
 
@@ -157,7 +170,8 @@ final class SQLiteReader {
                 id: id, label: label, email: email, organizationName: org,
                 lastUsedAt: optMsDate(4),
                 cooldownUntil: optMsDate(5),
-                cooldownReason: Self.optText(stmt, 6)
+                cooldownReason: Self.optText(stmt, 6),
+                needsRelogin: sqlite3_column_int64(stmt, 7) != 0
             ))
         }
         return rows

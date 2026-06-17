@@ -35,12 +35,18 @@ type Account struct {
 	// widget badge (e.g. "rate-limited (429)").
 	CooldownUntil  time.Time
 	CooldownReason string
+
+	// NeedsRelogin is set when the account's OAuth refresh token is dead
+	// (a 400/401 on token refresh): it can't be refreshed or switched to
+	// until the user re-logs in via `aimonitor add`. Cleared on the next
+	// successful refresh. Drives the popover's "Session expired" badge.
+	NeedsRelogin bool
 }
 
 // accountColumns is the canonical SELECT list, shared by every read so
 // the column order can't drift from the scan order. COALESCE guards the
 // nullable/added columns so pre-0003 rows scan cleanly.
-const accountColumns = `id, provider, label, COALESCE(email,''), COALESCE(organization_uuid,''), COALESCE(organization_name,''), keyring_ref, created_at, COALESCE(last_used_at, 0), COALESCE(cooldown_until, 0), COALESCE(cooldown_reason, '')`
+const accountColumns = `id, provider, label, COALESCE(email,''), COALESCE(organization_uuid,''), COALESCE(organization_name,''), keyring_ref, created_at, COALESCE(last_used_at, 0), COALESCE(cooldown_until, 0), COALESCE(cooldown_reason, ''), COALESCE(needs_relogin, 0)`
 
 // ErrAccountNotFound is returned by GetAccountByLabel / GetAccountByID
 // when no matching row exists.
@@ -178,6 +184,24 @@ func (s *Store) ClearCooldown(ctx context.Context, id int64) error {
 	return nil
 }
 
+// SetNeedsRelogin flags (or clears) an account whose OAuth refresh token is
+// dead. The clear path is guarded so a steady-state successful refresh — the
+// common case — writes nothing. Idempotent.
+func (s *Store) SetNeedsRelogin(ctx context.Context, id int64, v bool) error {
+	var err error
+	if v {
+		_, err = s.DB.ExecContext(ctx,
+			`UPDATE accounts SET needs_relogin = 1 WHERE id = ?`, id)
+	} else {
+		_, err = s.DB.ExecContext(ctx,
+			`UPDATE accounts SET needs_relogin = 0 WHERE id = ? AND needs_relogin != 0`, id)
+	}
+	if err != nil {
+		return fmt.Errorf("set needs_relogin: %w", err)
+	}
+	return nil
+}
+
 // RenameAccount changes an account's label. Returns ErrAccountNotFound if
 // no row matches oldLabel; returns an error wrapping the UNIQUE failure
 // if newLabel collides.
@@ -228,7 +252,8 @@ type rowScanner interface {
 func scanAccountRow(r rowScanner) (Account, error) {
 	var a Account
 	var createdAt, lastUsedAt, cooldownUntil int64
-	err := r.Scan(&a.ID, &a.Provider, &a.Label, &a.Email, &a.OrganizationUUID, &a.OrganizationName, &a.KeyringRef, &createdAt, &lastUsedAt, &cooldownUntil, &a.CooldownReason)
+	var needsRelogin int64
+	err := r.Scan(&a.ID, &a.Provider, &a.Label, &a.Email, &a.OrganizationUUID, &a.OrganizationName, &a.KeyringRef, &createdAt, &lastUsedAt, &cooldownUntil, &a.CooldownReason, &needsRelogin)
 	if err != nil {
 		return Account{}, err
 	}
@@ -239,6 +264,7 @@ func scanAccountRow(r rowScanner) (Account, error) {
 	if cooldownUntil != 0 {
 		a.CooldownUntil = time.UnixMilli(cooldownUntil)
 	}
+	a.NeedsRelogin = needsRelogin != 0
 	return a, nil
 }
 

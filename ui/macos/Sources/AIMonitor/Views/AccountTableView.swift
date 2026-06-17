@@ -68,6 +68,21 @@ struct AccountTableView: View {
                                 )
                                 .help(acct.cooldownReason ?? "Rate-limited — paused until the cooldown ends")
                         }
+                        // Session-expired badge: the account's OAuth refresh
+                        // token is dead — it can't refresh or be switched to
+                        // until the user re-logs in. Red, distinct from the
+                        // amber cooldown (a wait) since this needs action.
+                        if acct.needsRelogin {
+                            Text("⚠ Session expired")
+                                .font(.caption2)
+                                .foregroundStyle(Color(nsColor: .systemRed))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule().fill(Color(nsColor: .systemRed).opacity(0.15))
+                                )
+                                .help("This account's login expired. Re-add it: run `aimonitor add` (or the + button above) and sign back into this account.")
+                        }
                     }
                     // Email below the name — larger than the org, smaller
                     // than the account name.
