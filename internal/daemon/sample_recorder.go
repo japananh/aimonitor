@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -102,6 +103,7 @@ func (r *SampleRecorder) Record(ctx context.Context, ev SampleEvent) {
 		CacheRead:  ev.Sample.CacheRead,
 		CacheWrite: ev.Sample.CacheWrite,
 		Model:      ev.Sample.Model,
+		Project:    projectFromPath(ev.Path),
 	})
 	if err != nil {
 		r.report(err)
@@ -144,6 +146,21 @@ func (r *SampleRecorder) maybePrune(ctx context.Context) {
 	if _, err := r.store.PruneUsageSamples(ctx, store.UsageSamplesRetention); err != nil {
 		r.report(err)
 	}
+}
+
+// projectFromPath extracts the Claude Code project from a JSONL transcript
+// path: the parent directory's name under ~/.claude/projects, which encodes
+// the project's working directory (e.g. ".../projects/-Users-nana-foo/x.jsonl"
+// → "-Users-nana-foo"). Returns "" when the path has no parent component.
+func projectFromPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	dir := filepath.Base(filepath.Dir(path))
+	if dir == "." || dir == string(filepath.Separator) {
+		return ""
+	}
+	return dir
 }
 
 func (r *SampleRecorder) report(err error) {

@@ -97,6 +97,62 @@ func (s *Store) TokenUsageByModel(ctx context.Context, accountID int64, since, u
 	return out, rows.Err()
 }
 
+// ProjectUsage is per-(account, project) token totals over a window — powers
+// `aimonitor tokens --by-project`. Project is the raw encoded directory name
+// under ~/.claude/projects; callers prettify it for display.
+type ProjectUsage struct {
+	AccountID  int64
+	Project    string
+	Input      int64
+	Output     int64
+	CacheRead  int64
+	CacheWrite int64
+	Total      int64
+	Messages   int64
+}
+
+// TokenUsageByProject returns per-project token totals in [since, until),
+// grouped per (account, project), ordered by account then descending total.
+// An empty project is reported as "(unknown)".
+func (s *Store) TokenUsageByProject(ctx context.Context, accountID int64, since, until time.Time) ([]ProjectUsage, error) {
+	args := []any{since.UnixMilli(), until.UnixMilli()}
+	acctFilter := ""
+	if accountID != 0 {
+		acctFilter = "AND account_id = ?"
+		args = append(args, accountID)
+	}
+	query := fmt.Sprintf(`
+		SELECT account_id,
+		       COALESCE(NULLIF(project, ''), '(unknown)') AS project,
+		       SUM(input_tokens)  AS input,
+		       SUM(output_tokens) AS output,
+		       SUM(cache_read)    AS cache_read,
+		       SUM(cache_write)   AS cache_write,
+		       SUM(input_tokens + output_tokens + cache_read + cache_write) AS total,
+		       COUNT(*) AS messages
+		  FROM usage_samples
+		 WHERE ts >= ? AND ts < ? %s
+		 GROUP BY account_id, project
+		 ORDER BY account_id ASC, total DESC`, acctFilter)
+
+	rows, err := s.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("token usage by project: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ProjectUsage
+	for rows.Next() {
+		var p ProjectUsage
+		if err := rows.Scan(&p.AccountID, &p.Project, &p.Input, &p.Output,
+			&p.CacheRead, &p.CacheWrite, &p.Total, &p.Messages); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // tokenUsage is the shared aggregation. format is the strftime pattern that
 // defines the bucket granularity; ts is stored as unix millis so we divide
 // by 1000 for strftime's unixepoch input and apply 'localtime' so day/hour

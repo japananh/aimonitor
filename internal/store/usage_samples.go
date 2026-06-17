@@ -32,6 +32,10 @@ type TokenSample struct {
 	CacheRead  int64
 	CacheWrite int64
 	Model      string
+	// Project is the Claude Code project the sample came from — the raw
+	// encoded directory name under ~/.claude/projects (the daemon derives it
+	// from the JSONL path). Empty when unknown.
+	Project string
 }
 
 // InsertUsageSample records one per-message token sample for accountID,
@@ -56,10 +60,12 @@ func (s *Store) InsertUsageSample(ctx context.Context, accountID int64, t TokenS
 	if ts.IsZero() {
 		ts = time.Now()
 	}
+	// project is set only on insert; it's stable for a message, so the
+	// conflict path (streaming partials) leaves it untouched.
 	res, err := s.DB.ExecContext(ctx,
 		`INSERT INTO usage_samples
-		   (account_id, ts, input_tokens, output_tokens, cache_read, cache_write, model, message_id, request_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   (account_id, ts, input_tokens, output_tokens, cache_read, cache_write, model, message_id, request_id, project)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(message_id, request_id) DO UPDATE SET
 		   input_tokens  = MAX(usage_samples.input_tokens,  excluded.input_tokens),
 		   output_tokens = MAX(usage_samples.output_tokens, excluded.output_tokens),
@@ -69,7 +75,7 @@ func (s *Store) InsertUsageSample(ctx context.Context, accountID int64, t TokenS
 		    OR excluded.output_tokens > usage_samples.output_tokens
 		    OR excluded.cache_read    > usage_samples.cache_read
 		    OR excluded.cache_write   > usage_samples.cache_write`,
-		accountID, ts.UnixMilli(), t.Input, t.Output, t.CacheRead, t.CacheWrite, t.Model, t.MessageID, t.RequestID,
+		accountID, ts.UnixMilli(), t.Input, t.Output, t.CacheRead, t.CacheWrite, t.Model, t.MessageID, t.RequestID, t.Project,
 	)
 	if err != nil {
 		return false, fmt.Errorf("insert usage_samples: %w", err)

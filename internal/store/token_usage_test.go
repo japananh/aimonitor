@@ -130,6 +130,44 @@ func TestTokenUsageByModel(t *testing.T) {
 	}
 }
 
+// TestTokenUsageByProject groups per project, orders by descending total,
+// and reports an empty project as "(unknown)".
+func TestTokenUsageByProject(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	acct := newAccountForTokens(t, s, "a")
+	now := time.Now()
+
+	ins := func(id, project string, in int64) {
+		if _, err := s.InsertUsageSample(ctx, acct, TokenSample{
+			Ts: now, MessageID: id, RequestID: id, Input: in, Project: project,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ins("m1", "-Users-nana-aimonitor", 100)
+	ins("m2", "-Users-nana-aimonitor", 200) // aimonitor total 300
+	ins("m3", "-Users-nana-other", 50)      // other total 50
+	ins("m4", "", 1)                        // unknown total 1
+
+	rows, err := s.TokenUsageByProject(ctx, acct, now.Add(-time.Hour), now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("TokenUsageByProject: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("got %d project rows, want 3: %+v", len(rows), rows)
+	}
+	if rows[0].Project != "-Users-nana-aimonitor" || rows[0].Total != 300 || rows[0].Messages != 2 {
+		t.Errorf("row[0] = %+v, want aimonitor total 300 msgs 2", rows[0])
+	}
+	if rows[1].Project != "-Users-nana-other" || rows[1].Total != 50 {
+		t.Errorf("row[1] = %+v, want other total 50", rows[1])
+	}
+	if rows[2].Project != "(unknown)" || rows[2].Total != 1 {
+		t.Errorf("row[2] = %+v, want (unknown) total 1", rows[2])
+	}
+}
+
 // TestTokenUsage_AllAccounts checks that accountID 0 spans accounts and
 // groups per (bucket, account).
 func TestTokenUsage_AllAccounts(t *testing.T) {

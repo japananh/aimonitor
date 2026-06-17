@@ -145,6 +145,20 @@ func TestSampleRecorder_EndToEndFromJSONL(t *testing.T) {
 	}
 }
 
+func TestProjectFromPath(t *testing.T) {
+	cases := map[string]string{
+		"/Users/nana/.claude/projects/-Users-nana-aimonitor/abc.jsonl": "-Users-nana-aimonitor",
+		"relative/proj/x.jsonl": "proj",
+		"x.jsonl":               "", // no parent dir component
+		"":                      "",
+	}
+	for path, want := range cases {
+		if got := projectFromPath(path); got != want {
+			t.Errorf("projectFromPath(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
 func TestSampleRecorder_DedupesAndCachesResolver(t *testing.T) {
 	s, acct := recorderFixture(t)
 	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
