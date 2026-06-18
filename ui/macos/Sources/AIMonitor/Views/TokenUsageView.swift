@@ -147,24 +147,16 @@ struct TokenUsageView: View {
                 Task { await model.refresh() }
             }
 
-            if model.accounts.isEmpty {
-                Text("No accounts yet.")
+            if accountsWithData.isEmpty {
+                Text("No token usage recorded yet. Use Claude Code with `aimonitor daemon` running and it'll show up here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 8)
             } else {
-                // List EVERY managed account (matching the Limits tab), so an
-                // account with no usage in this window still shows up as "no
-                // usage" instead of silently disappearing. The hint only adds
-                // setup guidance when nothing has been recorded at all.
-                if accountsWithData.isEmpty {
-                    Text("No token usage recorded yet — use Claude Code with `aimonitor daemon` running and it'll show up here.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 2)
-                }
-                ForEach(model.accounts) { acct in
+                // Only accounts with usage in this window — an account with no
+                // recorded usage is omitted, not shown as an empty row.
+                ForEach(accountsWithData) { acct in
                     AccountTokenCard(
                         acct: acct,
                         isActive: model.status?.active_label == acct.label,
@@ -230,11 +222,15 @@ private struct AccountTokenCard: View {
         }()
 
         VStack(alignment: .leading, spacing: 6) {
-            if buckets.isEmpty {
-                // Account exists but has no recorded usage in this window — show
-                // it (so it's clear it just hasn't been used) without a useless
-                // toggle or a "0% cached" line.
+            // Clickable header — the whole row toggles expand/collapse.
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+            } label: {
                 HStack(spacing: 4) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
                     if isActive {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(.green)
@@ -242,48 +238,25 @@ private struct AccountTokenCard: View {
                     }
                     Text(acct.label).font(.headline)
                     Spacer()
-                    Text("no usage")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .help("No tokens recorded for this account in the shown window")
-                }
-            } else {
-                // Clickable header — the whole row toggles expand/collapse.
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
-                        if isActive {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                                .font(.caption)
-                        }
-                        Text(acct.label).font(.headline)
-                        Spacer()
-                        Text("\(compactTokens(windowTotal)) total")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .help("All tokens processed in the shown window — new (sent + generated) plus cached (reused context).")
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .help(expanded ? "Collapse" : "Expand the daily/hourly breakdown")
-
-                if expanded {
-                    Text("\(compactTokens(newTotal)) new · \(cachedPctText)% reused from cache")
-                        .font(.caption2.monospacedDigit())
+                    Text("\(compactTokens(windowTotal)) total")
+                        .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .help("Of \(compactTokens(windowTotal)) tokens here, \(compactTokens(newTotal)) were newly processed (your prompts + the replies, full price) and \(compactTokens(cacheTotal)) were reused from cache (earlier context, ≈10% of input price) — \(cachedPctText)% of the total.")
+                        .help("All tokens processed in the shown window — new (sent + generated) plus cached (reused context).")
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help(expanded ? "Collapse" : "Expand the daily/hourly breakdown")
 
-                    ForEach(recent, id: \.bucket) { b in
-                        bucketRow(b, maxTotal: maxTotal)
-                    }
+            if expanded {
+                Text("\(compactTokens(newTotal)) new · \(cachedPctText)% reused from cache")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .help("Of \(compactTokens(windowTotal)) tokens here, \(compactTokens(newTotal)) were newly processed (your prompts + the replies, full price) and \(compactTokens(cacheTotal)) were reused from cache (earlier context, ≈10% of input price) — \(cachedPctText)% of the total.")
+
+                ForEach(recent, id: \.bucket) { b in
+                    bucketRow(b, maxTotal: maxTotal)
                 }
             }
         }
@@ -362,7 +335,7 @@ private struct AccountTokenCard: View {
         let mi = Int(dc[1]) ?? 0
         let mon = (mi >= 1 && mi <= 12) ? months[mi] : String(dc[1])
         if parts.count == 2 {
-            return "\(dc[2]) \(parts[1])" // hourly: "16 14:00"
+            return "\(mon) \(dc[2]) \(parts[1])" // hourly: "Jun 16 14:00"
         }
         return "\(mon) \(dc[2])" // daily: "Jun 16"
     }
