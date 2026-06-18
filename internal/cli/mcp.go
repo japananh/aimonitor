@@ -222,6 +222,16 @@ func newMCPStatusCmd() *cobra.Command {
 					out.Services = append(out.Services, st)
 				}
 				_, out.Tools = mcpserver.BuildServer(cfg, creds)
+				// Emit [] rather than null for empty slices. Go serialises a nil
+				// slice as JSON null, which a non-optional decoder rejects — a
+				// never-connected user has no registered tools, so out.Tools was
+				// nil and the macOS app's MCP section stuck on "Loading…".
+				if out.Services == nil {
+					out.Services = []svcStatus{}
+				}
+				if out.Tools == nil {
+					out.Tools = []string{}
+				}
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
 				return enc.Encode(out)

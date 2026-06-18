@@ -246,6 +246,18 @@ struct MCPServiceStatus: Decodable, Identifiable {
 struct MCPStatus: Decodable {
     let services: [MCPServiceStatus]
     let tools: [String]
+
+    // Decode defensively: an older/edge-case CLI can emit `null` (or omit the
+    // key) for an empty slice — a never-connected user registers no tools, so
+    // `tools` arrived as JSON null. A non-optional [String] would throw on
+    // that, which is what left the app's MCP section stuck on "Loading…".
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        services = (try c.decodeIfPresent([MCPServiceStatus].self, forKey: .services)) ?? []
+        tools = (try c.decodeIfPresent([String].self, forKey: .tools)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey { case services, tools }
 }
 
 extension CLIBridge {

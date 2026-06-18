@@ -32,6 +32,10 @@ struct PreferencesView: View {
     @State private var backupMessage: String?
     // Integrations (MCP) state, loaded via `mcp status --json`.
     @State private var mcpServices: [MCPServiceStatus] = []
+    // Whether the first status load has finished. Drives "Loading…" vs the
+    // loaded UI — without it, an empty list (load failed, or a never-connected
+    // state that failed to decode) was indistinguishable from "still loading".
+    @State private var mcpLoaded = false
     @State private var mcpToolCount = 0
     @State private var mcpBusy: String? = nil // service with an op in flight
     @State private var mcpError: [String: String] = [:]
@@ -109,8 +113,18 @@ struct PreferencesView: View {
                     .foregroundStyle(.secondary)
             }
             Section("MCP") {
-                if mcpServices.isEmpty {
+                if !mcpLoaded {
                     Text("Loading…").font(.caption).foregroundStyle(.secondary)
+                } else if mcpServices.isEmpty {
+                    // Loaded but nothing came back (e.g. the CLI isn't installed
+                    // or errored) — offer a retry instead of an endless spinner.
+                    Text("Integrations unavailable.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    AppTextButton("Retry") {
+                        mcpLoaded = false
+                        DispatchQueue.global(qos: .userInitiated).async { reloadMCP() }
+                    }
+                    .help("Try loading the Slack and ClickUp integration status again")
                 } else {
                     ForEach(mcpServices) { svc in
                         integrationRow(svc)
@@ -462,12 +476,18 @@ struct PreferencesView: View {
         )
     }
 
+    // reloadMCP fetches `mcp status --json` (a blocking shell-out — callers run
+    // it off the main thread). It always flips mcpLoaded true, even on failure,
+    // so the section leaves "Loading…" and shows either the services or the
+    // unavailable/retry state rather than spinning forever.
     private func reloadMCP() {
-        if let st = try? CLIBridge.mcpStatus() {
-            DispatchQueue.main.async {
+        let result = try? CLIBridge.mcpStatus()
+        DispatchQueue.main.async {
+            if let st = result {
                 mcpServices = st.services
                 mcpToolCount = st.tools.count
             }
+            mcpLoaded = true
         }
     }
 
