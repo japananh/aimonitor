@@ -15,46 +15,63 @@ import (
 // fields appear.
 //
 // File layout (one JSON object per line):
-//   {"type":"assistant","timestamp":"2026-05-13T08:00:00.000Z",
-//    "sessionId":"...","requestId":"...",
-//    "message":{
-//      "model":"claude-opus-4-7",
-//      "usage":{
-//        "input_tokens":100,"output_tokens":50,
-//        "cache_creation_input_tokens":0,"cache_read_input_tokens":0
-//      }
-//    }
-//   }
+//
+//	{"type":"assistant","timestamp":"2026-05-13T08:00:00.000Z",
+//	 "sessionId":"...","requestId":"...",
+//	 "message":{
+//	   "model":"claude-opus-4-7",
+//	   "usage":{
+//	     "input_tokens":100,"output_tokens":50,
+//	     "cache_creation_input_tokens":0,"cache_read_input_tokens":0
+//	   }
+//	 }
+//	}
 //
 // User messages, summary entries, and any unknown shapes are skipped: they
 // don't carry usage data.
 type JSONL struct {
-	Type      string  `json:"type"`
+	Type string `json:"type"`
+	// RequestID is the Anthropic API request that produced this line
+	// (top-level, e.g. "req_011Cc6..."). Paired with Message.ID it forms
+	// the dedup key for usage_samples: Claude Code writes the SAME
+	// usage-bearing line multiple times during streaming/retries, so naive
+	// summation over-counts tokens ~2.6x. See ParseLine.
+	RequestID string  `json:"requestId"`
 	Timestamp string  `json:"timestamp"`
 	Message   message `json:"message"`
 }
 
 type message struct {
+	// ID is the Anthropic message id (e.g. "msg_01NXd5..."), the other
+	// half of the (request_id, message_id) dedup key.
+	ID    string `json:"id"`
 	Model string `json:"model"`
 	Usage *usage `json:"usage"`
 }
 
 type usage struct {
-	InputTokens             int64 `json:"input_tokens"`
-	OutputTokens            int64 `json:"output_tokens"`
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 }
 
 // Sample is one usage data point extracted from a JSONL line. Fields map
 // 1:1 to the usage_samples SQLite table.
+//
+// MessageID + RequestID together identify the logical API response. They
+// are the dedup key: streaming and retries write several JSONL lines for
+// one response with identical token counts, so persisting on
+// (message_id, request_id) with INSERT OR IGNORE keeps exactly one row.
 type Sample struct {
-	Ts            time.Time
-	InputTokens   int64
-	OutputTokens  int64
-	CacheRead     int64
-	CacheWrite    int64
-	Model         string
+	Ts           time.Time
+	MessageID    string
+	RequestID    string
+	InputTokens  int64
+	OutputTokens int64
+	CacheRead    int64
+	CacheWrite   int64
+	Model        string
 }
 
 // ParseLine returns (sample, true) when the line is a usage-bearing
@@ -99,6 +116,8 @@ func parseLine(line []byte) (Sample, bool, error) {
 	u := l.Message.Usage
 	return Sample{
 		Ts:           ts,
+		MessageID:    l.Message.ID,
+		RequestID:    l.RequestID,
 		InputTokens:  u.InputTokens,
 		OutputTokens: u.OutputTokens,
 		CacheRead:    u.CacheReadInputTokens,

@@ -56,6 +56,7 @@ var configKeys = []string{
 	daemon.SettingsKeyNotifyEnabled,
 	daemon.SettingsKeyNotifyWarnPct,
 	daemon.SettingsKeyNotifyCritPct,
+	daemon.SettingsKeyDailySummaryEnabled,
 	SettingsKeyAutoUpdateEnabled,
 	SettingsKeyUpdateSkippedVersion,
 	mcpserver.SettingsKeySlackEnabled,
@@ -86,6 +87,7 @@ func isStoreKey(key string) bool {
 		daemon.SettingsKeyNotifyEnabled,
 		daemon.SettingsKeyNotifyWarnPct,
 		daemon.SettingsKeyNotifyCritPct,
+		daemon.SettingsKeyDailySummaryEnabled,
 		SettingsKeyAutoUpdateEnabled,
 		SettingsKeyUpdateSkippedVersion,
 		mcpserver.SettingsKeySlackEnabled,
@@ -283,7 +285,8 @@ func validateStoreValue(key, value string) (string, error) {
 			return "", fmt.Errorf("%s: must be in (0, 100], got %v", key, f)
 		}
 		return strconv.FormatFloat(f, 'f', -1, 64), nil
-	case SettingsKeyAutoUpdateEnabled,
+	case daemon.SettingsKeyDailySummaryEnabled,
+		SettingsKeyAutoUpdateEnabled,
 		mcpserver.SettingsKeySlackEnabled,
 		mcpserver.SettingsKeyClickUpEnabled,
 		mcpserver.SettingsKeySlackReadOnly,
@@ -326,6 +329,8 @@ func storeKeyDefault(key string) string {
 		return strconv.FormatFloat(daemon.DefaultNotifyWarnPct, 'f', -1, 64)
 	case daemon.SettingsKeyNotifyCritPct:
 		return strconv.FormatFloat(daemon.DefaultNotifyCritPct, 'f', -1, 64)
+	case daemon.SettingsKeyDailySummaryEnabled:
+		return strconv.FormatBool(daemon.DefaultDailySummaryEnabled)
 	case SettingsKeyAutoUpdateEnabled:
 		return strconv.FormatBool(defaultAutoUpdateEnabled)
 	case mcpserver.SettingsKeySlackEnabled, mcpserver.SettingsKeyClickUpEnabled:

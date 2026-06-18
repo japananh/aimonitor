@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/japananh/aimonitor/internal/claudeconfig"
 	"github.com/japananh/aimonitor/internal/config"
 	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/provider/claude"
@@ -94,10 +95,26 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.auto = auto
 
+	// SampleRecorder persists each usage line to usage_samples, attributed
+	// to the account active at write time, powering the per-account token
+	// breakdown. It runs alongside auto.OnSample (which keeps its in-memory
+	// session-bar estimate); both consume the same watcher callback.
+	cc, _ := claudeconfig.New() // nil when home is unresolvable → byte-match only
+	recorder := NewSampleRecorder(
+		s.store,
+		func(ctx context.Context) (store.Account, bool, error) {
+			return ResolveActiveAccount(ctx, s.store, s.provider, cc)
+		},
+		func(err error) { logger.Error("sample recorder error", "err", err) },
+	)
+
 	w, err := NewWatcher(WatcherConfig{
-		Root:     s.root,
-		Store:    s.store,
-		OnSample: auto.OnSample,
+		Root:  s.root,
+		Store: s.store,
+		OnSample: func(ev SampleEvent) {
+			auto.OnSample(ev)
+			recorder.Record(ctx, ev)
+		},
 		OnError: func(err error) {
 			logger.Error("watcher error", "err", err)
 		},
@@ -120,6 +137,12 @@ func (s *Server) Run(ctx context.Context) error {
 		UnknownActiveEmail: resolveUnknownActiveEmail(s),
 	}
 	go func() { _ = pub.Run(ctx) }()
+
+	// DailySummaryNotifier posts a once-a-day recap of the previous day's
+	// token usage (from usage_samples). Provider-agnostic — it only reads the
+	// samples the watcher records — so it runs regardless of provider.
+	summary := &DailySummaryNotifier{Store: s.store}
+	go func() { _ = summary.Run(ctx) }()
 
 	// UsageScheduler is Claude-specific in v1 (only Claude has an OAuth
 	// usage endpoint we know about). When v2 adds a second provider the

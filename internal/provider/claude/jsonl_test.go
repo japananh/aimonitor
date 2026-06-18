@@ -29,6 +29,21 @@ func TestParseLine_AssistantWithUsage(t *testing.T) {
 	}
 }
 
+func TestParseLine_CapturesDedupKey(t *testing.T) {
+	// message.id and top-level requestId are the dedup key for usage_samples.
+	line := []byte(`{"type":"assistant","timestamp":"2026-06-01T03:13:30.123Z","requestId":"req_011Cbb","message":{"id":"msg_01Cxf","model":"claude-opus-4-8","usage":{"input_tokens":6382,"output_tokens":618}}}`)
+	s, ok := ParseLine(line)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if s.MessageID != "msg_01Cxf" {
+		t.Errorf("MessageID = %q, want msg_01Cxf", s.MessageID)
+	}
+	if s.RequestID != "req_011Cbb" {
+		t.Errorf("RequestID = %q, want req_011Cbb", s.RequestID)
+	}
+}
+
 func TestParseLine_Skips(t *testing.T) {
 	cases := map[string]string{
 		"empty":                 ``,

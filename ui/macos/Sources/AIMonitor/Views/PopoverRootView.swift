@@ -23,6 +23,12 @@ struct PopoverRootView: View {
     // Shows the add-account instructions (claude /login → import banner).
     // nil hides the affordance.
     var addAccount: (() -> Void)? = nil
+    // Opens the standalone Token-usage window. Token analytics is an
+    // occasional, lean-back review (volume/attribution/cache efficiency — none
+    // of it tied to the rate-limit windows this popover is about), so it lives
+    // in its own window rather than crowding this operational view. nil hides
+    // the affordance.
+    var openTokenUsage: (() -> Void)? = nil
 
     // Start-daemon banner state: in-flight flag + surfaced error.
     @State private var daemonStarting = false
@@ -106,14 +112,20 @@ struct PopoverRootView: View {
 
             AccountTableView(model: model, renameAccount: renameAccount, removeAccount: removeAccount, reloginAccount: reloginAccount)
 
-            // Footer actions float directly on the glass — no separator;
-            // the account cards above provide the visual grouping.
-            HStack {
+            // Footer actions float directly on the glass — no separator; the
+            // account cards above provide the visual grouping. "Token usage…"
+            // opens the standalone analytics window, kept out of this
+            // operational popover.
+            HStack(spacing: 12) {
                 AppTextButton(model.refreshingUsage ? "Refreshing…" : "Refresh usage") {
                     model.refreshUsage()
                 }
                 .disabled(model.refreshingUsage)
                 .help("Fetch the latest 5h/7d usage for every account now")
+                if let openTokenUsage {
+                    AppTextButton("Token usage", action: openTokenUsage)
+                        .help("Open the per-account token usage window (daily/hourly breakdown)")
+                }
                 Spacer()
                 AppTextButton("Quit", action: quit)
                     .help("Quit the menu-bar app (the background daemon keeps running)")

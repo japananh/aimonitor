@@ -57,6 +57,20 @@ struct UsageSamplePoint: Hashable {
     let sevenDayPct: Double
 }
 
+/// TokenBucketRow is one local-time day/hour bucket of per-account token
+/// usage from the usage_samples table, mirroring store.TokenBucket on the Go
+/// side. `total` sums all four token kinds (input + output + cache read +
+/// cache write) — the same definition the CLI uses.
+struct TokenBucketRow: Hashable {
+    let bucket: String
+    let input: Int64
+    let output: Int64
+    let cacheRead: Int64
+    let cacheWrite: Int64
+    let total: Int64
+    let messages: Int64
+}
+
 /// ProbeRow mirrors a relevant subset of probe_results.
 struct ProbeRow: Hashable {
     let accountID: Int64
@@ -324,6 +338,51 @@ final class SQLiteReader {
                 sevenDayPct: sqlite3_column_double(stmt, 3)
             )
             out[acct, default: []].append(point)
+        }
+        return out
+    }
+
+    /// Per-account token usage bucketed by local-time day (or hour when
+    /// `byHour`), for samples at or after `since`. Buckets use SQLite's
+    /// 'localtime' modifier so they match the user's wall clock, identical to
+    /// the Go aggregation (store.TokenUsageByDay/ByHour). Grouped by account
+    /// id; ordered oldest-first within each account.
+    func tokenUsage(byHour: Bool, since: Date) throws -> [Int64: [TokenBucketRow]] {
+        let format = byHour ? "%Y-%m-%d %H:00" : "%Y-%m-%d"
+        let sql = """
+            SELECT account_id,
+                   strftime(?, ts/1000, 'unixepoch', 'localtime') AS bucket,
+                   SUM(input_tokens), SUM(output_tokens),
+                   SUM(cache_read), SUM(cache_write),
+                   SUM(input_tokens + output_tokens + cache_read + cache_write),
+                   COUNT(*)
+              FROM usage_samples
+             WHERE ts >= ?
+             GROUP BY account_id, bucket
+             ORDER BY account_id ASC, bucket ASC
+            """
+        var stmt: OpaquePointer?
+        let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        if rc != SQLITE_OK {
+            throw SQLiteReaderError.prepareFailed(rc, String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, format, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 2, Int64(since.timeIntervalSince1970 * 1000.0))
+
+        var out: [Int64: [TokenBucketRow]] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let acct = sqlite3_column_int64(stmt, 0)
+            let row = TokenBucketRow(
+                bucket: String(cString: sqlite3_column_text(stmt, 1)),
+                input: sqlite3_column_int64(stmt, 2),
+                output: sqlite3_column_int64(stmt, 3),
+                cacheRead: sqlite3_column_int64(stmt, 4),
+                cacheWrite: sqlite3_column_int64(stmt, 5),
+                total: sqlite3_column_int64(stmt, 6),
+                messages: sqlite3_column_int64(stmt, 7)
+            )
+            out[acct, default: []].append(row)
         }
         return out
     }
