@@ -147,14 +147,24 @@ struct TokenUsageView: View {
                 Task { await model.refresh() }
             }
 
-            if accountsWithData.isEmpty {
-                Text("No token usage recorded yet. Use Claude Code with `aimonitor daemon` running and it'll show up here.")
+            if model.accounts.isEmpty {
+                Text("No accounts yet.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 8)
             } else {
-                ForEach(accountsWithData) { acct in
+                // List EVERY managed account (matching the Limits tab), so an
+                // account with no usage in this window still shows up as "no
+                // usage" instead of silently disappearing. The hint only adds
+                // setup guidance when nothing has been recorded at all.
+                if accountsWithData.isEmpty {
+                    Text("No token usage recorded yet — use Claude Code with `aimonitor daemon` running and it'll show up here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 2)
+                }
+                ForEach(model.accounts) { acct in
                     AccountTokenCard(
                         acct: acct,
                         isActive: model.status?.active_label == acct.label,
@@ -207,18 +217,24 @@ private struct AccountTokenCard: View {
         let windowTotal = buckets.reduce(Int64(0)) { $0 + $1.total }
         let newTotal = buckets.reduce(Int64(0)) { $0 + $1.input + $1.output }
         let cacheTotal = buckets.reduce(Int64(0)) { $0 + $1.cacheRead + $1.cacheWrite }
-        let cachedPct = windowTotal > 0 ? Int((Double(cacheTotal) / Double(windowTotal) * 100).rounded()) : 0
+        // Don't let rounding claim "100% cached" while there's still fresh work
+        // (e.g. 99.7% → 100% hid 165K new tokens), or "0%" when some cache was
+        // used — clamp to 99/1 in those edge cases. (Closure keeps this a `let`
+        // so it's valid inside the ViewBuilder body.)
+        let cachedPct: Int = {
+            guard windowTotal > 0 else { return 0 }
+            var p = Int((Double(cacheTotal) / Double(windowTotal) * 100).rounded())
+            if p >= 100 && newTotal > 0 { p = 99 }
+            if p <= 0 && cacheTotal > 0 { p = 1 }
+            return p
+        }()
 
         VStack(alignment: .leading, spacing: 6) {
-            // Clickable header — the whole row toggles expand/collapse.
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
-            } label: {
+            if buckets.isEmpty {
+                // Account exists but has no recorded usage in this window — show
+                // it (so it's clear it just hasn't been used) without a useless
+                // toggle or a "0% cached" line.
                 HStack(spacing: 4) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
                     if isActive {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(.green)
@@ -226,25 +242,48 @@ private struct AccountTokenCard: View {
                     }
                     Text(acct.label).font(.headline)
                     Spacer()
-                    Text("\(compactTokens(windowTotal)) total")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .help("All tokens processed in the shown window — new (sent + generated) plus cached (reused context).")
+                    Text("no usage")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .help("No tokens recorded for this account in the shown window")
                 }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
-            .help(expanded ? "Collapse" : "Expand the daily/hourly breakdown")
+            } else {
+                // Clickable header — the whole row toggles expand/collapse.
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                        if isActive {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                        }
+                        Text(acct.label).font(.headline)
+                        Spacer()
+                        Text("\(compactTokens(windowTotal)) total")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .help("All tokens processed in the shown window — new (sent + generated) plus cached (reused context).")
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .help(expanded ? "Collapse" : "Expand the daily/hourly breakdown")
 
-            if expanded {
-                Text("\(compactTokens(newTotal)) new · \(cachedPct)% reused from cache")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .help("Of \(compactTokens(windowTotal)) tokens here, \(compactTokens(newTotal)) were newly processed (your prompts + the replies, full price) and \(compactTokens(cacheTotal)) were reused from cache (earlier context, ≈10% of input price) — \(cachedPct)% of the total.")
+                if expanded {
+                    Text("\(compactTokens(newTotal)) new · \(cachedPct)% reused from cache")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .help("Of \(compactTokens(windowTotal)) tokens here, \(compactTokens(newTotal)) were newly processed (your prompts + the replies, full price) and \(compactTokens(cacheTotal)) were reused from cache (earlier context, ≈10% of input price) — \(cachedPct)% of the total.")
 
-                ForEach(recent, id: \.bucket) { b in
-                    bucketRow(b, maxTotal: maxTotal)
+                    ForEach(recent, id: \.bucket) { b in
+                        bucketRow(b, maxTotal: maxTotal)
+                    }
                 }
             }
         }
@@ -381,15 +420,21 @@ private struct GranularityButton: View {
 // compactTokens renders a token count in a compact form: 742, 1.2K, 31.2K,
 // 1.4M, 2.1B. Used wherever space is tight in the widget.
 func compactTokens(_ n: Int64) -> String {
-    let v = Double(n)
     switch abs(n) {
     case 0..<1_000:
         return "\(n)"
     case 1_000..<1_000_000:
-        return String(format: "%.1fK", v / 1_000)
+        return trimDotZero(Double(n) / 1_000) + "K"
     case 1_000_000..<1_000_000_000:
-        return String(format: "%.1fM", v / 1_000_000)
+        return trimDotZero(Double(n) / 1_000_000) + "M"
     default:
-        return String(format: "%.1fB", v / 1_000_000_000)
+        return trimDotZero(Double(n) / 1_000_000_000) + "B"
     }
+}
+
+// trimDotZero formats x to one decimal, dropping a trailing ".0" so whole
+// values read clean: 64.0 → "64", 64.2 → "64.2", 165.1 → "165.1".
+private func trimDotZero(_ x: Double) -> String {
+    let s = String(format: "%.1f", x)
+    return s.hasSuffix(".0") ? String(s.dropLast(2)) : s
 }
