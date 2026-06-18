@@ -217,16 +217,16 @@ private struct AccountTokenCard: View {
         let windowTotal = buckets.reduce(Int64(0)) { $0 + $1.total }
         let newTotal = buckets.reduce(Int64(0)) { $0 + $1.input + $1.output }
         let cacheTotal = buckets.reduce(Int64(0)) { $0 + $1.cacheRead + $1.cacheWrite }
-        // Don't let rounding claim "100% cached" while there's still fresh work
-        // (e.g. 99.7% → 100% hid 165K new tokens), or "0%" when some cache was
-        // used — clamp to 99/1 in those edge cases. (Closure keeps this a `let`
-        // so it's valid inside the ViewBuilder body.)
-        let cachedPct: Int = {
-            guard windowTotal > 0 else { return 0 }
-            var p = Int((Double(cacheTotal) / Double(windowTotal) * 100).rounded())
-            if p >= 100 && newTotal > 0 { p = 99 }
-            if p <= 0 && cacheTotal > 0 { p = 1 }
-            return p
+        // Cached share to 2 decimals so it reads true (99.74%) instead of
+        // rounding to a misleading 100%. Still guard the exact ends: never show
+        // "100.00" while there's fresh work, nor "0.00" when some cache ran.
+        // (Closure keeps this a `let` so it's valid inside the ViewBuilder body.)
+        let cachedPctText: String = {
+            guard windowTotal > 0 else { return "0" }
+            var p = Double(cacheTotal) / Double(windowTotal) * 100
+            if p > 99.99 && newTotal > 0 { p = 99.99 }
+            if p < 0.01 && cacheTotal > 0 { p = 0.01 }
+            return String(format: "%.2f", p)
         }()
 
         VStack(alignment: .leading, spacing: 6) {
@@ -276,10 +276,10 @@ private struct AccountTokenCard: View {
                 .help(expanded ? "Collapse" : "Expand the daily/hourly breakdown")
 
                 if expanded {
-                    Text("\(compactTokens(newTotal)) new · \(cachedPct)% reused from cache")
+                    Text("\(compactTokens(newTotal)) new · \(cachedPctText)% reused from cache")
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .help("Of \(compactTokens(windowTotal)) tokens here, \(compactTokens(newTotal)) were newly processed (your prompts + the replies, full price) and \(compactTokens(cacheTotal)) were reused from cache (earlier context, ≈10% of input price) — \(cachedPct)% of the total.")
+                        .help("Of \(compactTokens(windowTotal)) tokens here, \(compactTokens(newTotal)) were newly processed (your prompts + the replies, full price) and \(compactTokens(cacheTotal)) were reused from cache (earlier context, ≈10% of input price) — \(cachedPctText)% of the total.")
 
                     ForEach(recent, id: \.bucket) { b in
                         bucketRow(b, maxTotal: maxTotal)
