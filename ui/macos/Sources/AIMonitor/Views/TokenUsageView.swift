@@ -383,7 +383,18 @@ private var tokenNewColor: Color {
         light: NSColor(red: 0.20, green: 0.50, blue: 0.95, alpha: 1),
         dark: NSColor(red: 0.45, green: 0.68, blue: 1.00, alpha: 1))
 }
-private var tokenCachedColor: Color { tokenNewColor.opacity(0.30) }
+
+// "Cached" must be OPAQUE: the bar draws it over a gray track (quaternaryLabel)
+// inside a ZStack, so a translucent tint (the old tokenNewColor.opacity(0.30))
+// composited into a muddy grayish-blue — and disagreed with the legend swatch,
+// which paints the same color over the window background instead. These are
+// opaque light tints (≈ the old 30% blue over the typical backdrop) so the bar,
+// the legend, and the active-card variant all render identically.
+private var tokenCachedColor: Color {
+    adaptiveColor(
+        light: NSColor(red: 0.72, green: 0.83, blue: 0.98, alpha: 1),
+        dark: NSColor(red: 0.30, green: 0.43, blue: 0.64, alpha: 1))
+}
 
 // GranularityButton is one side of the Daily/Hourly toggle: a borderless text
 // button that tints + bolds when active and shows a subtle rounded background
