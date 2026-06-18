@@ -142,7 +142,10 @@ private struct TextButtonChrome: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .foregroundStyle(hovering ? Color.white : Color.accentColor)
+            // Black text at rest (Color.primary → black in light mode, and
+            // stays readable as white in dark mode); white on the solid accent
+            // fill on hover.
+            .foregroundStyle(hovering ? Color.white : Color.primary)
             .padding(.horizontal, 10)
             .padding(.vertical, 3)
             .background(Capsule().fill(hovering ? Color.accentColor : Color.accentColor.opacity(0.15)))
