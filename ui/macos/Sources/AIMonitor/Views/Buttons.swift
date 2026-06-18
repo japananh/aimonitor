@@ -148,7 +148,8 @@ private struct TextButtonChrome: ViewModifier {
             .foregroundStyle(hovering ? Color.white : Color.primary)
             .padding(.horizontal, 10)
             .padding(.vertical, 3)
-            .background(Capsule().fill(hovering ? Color.accentColor : Color.accentColor.opacity(0.15)))
+            // Rest: faint neutral gray. Hover: solid accent + white text.
+            .background(Capsule().fill(hovering ? Color.accentColor : Color.primary.opacity(0.07)))
             .contentShape(Capsule())
             .onHover { hovering = $0 }
     }

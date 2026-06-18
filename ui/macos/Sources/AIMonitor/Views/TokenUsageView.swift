@@ -92,11 +92,11 @@ struct TokenUsageWindowView: View {
                 // Keep Daily · Hourly tight together (the outer row uses wide
                 // spacing for the legend, which otherwise spread these apart).
                 HStack(spacing: 2) {
-                    GranularityButton(title: "Daily", active: !model.tokensHourly, activeColor: tokenNewColor) {
+                    GranularityButton(title: "Daily", active: !model.tokensHourly, activeColor: .accentColor) {
                         model.tokensHourly = false
                     }
                     Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
-                    GranularityButton(title: "Hourly", active: model.tokensHourly, activeColor: tokenNewColor) {
+                    GranularityButton(title: "Hourly", active: model.tokensHourly, activeColor: .accentColor) {
                         model.tokensHourly = true
                     }
                 }
