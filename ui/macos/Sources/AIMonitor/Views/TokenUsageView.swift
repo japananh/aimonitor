@@ -81,17 +81,28 @@ struct TokenUsageWindowView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
 
-            // Legend: the two swatches match the segmented bars below so the
-            // colors are self-explaining (hover each for the full definition).
+            // One row: the New/Cached legend (left) and the Daily/Hourly
+            // granularity toggle (right), aligned. Swatches match the bars.
             HStack(spacing: 14) {
                 legendItem(color: tokenNewColor, label: "New",
                            help: "Tokens sent + generated this turn — newly processed at full price.")
                 legendItem(color: tokenCachedColor, label: "Cached",
                            help: "Earlier context reused from the prompt cache — billed ≈10% of the input price.")
                 Spacer()
+                GranularityButton(title: "Daily", active: !model.tokensHourly, activeColor: tokenNewColor) {
+                    model.tokensHourly = false
+                }
+                Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
+                GranularityButton(title: "Hourly", active: model.tokensHourly, activeColor: tokenNewColor) {
+                    model.tokensHourly = true
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
+            // Reload at the new granularity the moment the user flips it.
+            .onChange(of: model.tokensHourly) { _, _ in
+                Task { await model.refresh() }
+            }
 
             ThinScrollView {
                 TokenUsageView(model: model)
@@ -126,27 +137,6 @@ struct TokenUsageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Granularity is a refinement *inside* the Tokens tab, not a peer
-            // of the Limits/Tokens tab — so it's a light, right-aligned text
-            // toggle (active = token-blue + semibold) rather than a second
-            // full-width segmented control, which stacked under the tab read
-            // as a cramped 4-button block.
-            HStack(spacing: 2) {
-                Spacer()
-                GranularityButton(title: "Daily", active: !model.tokensHourly, activeColor: tokenNewColor) {
-                    model.tokensHourly = false
-                }
-                Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
-                GranularityButton(title: "Hourly", active: model.tokensHourly, activeColor: tokenNewColor) {
-                    model.tokensHourly = true
-                }
-            }
-            // Reload at the new granularity the moment the user flips it
-            // (otherwise the change shows only on the next 2s poll).
-            .onChange(of: model.tokensHourly) { _, _ in
-                Task { await model.refresh() }
-            }
-
             if accountsWithData.isEmpty {
                 Text("No token usage recorded yet. Use Claude Code with `aimonitor daemon` running and it'll show up here.")
                     .font(.caption)
@@ -180,25 +170,26 @@ struct TokenUsageView: View {
 }
 
 // AccountTokenCard is one collapsible per-account section. Collapsed it's a
-// single header line (name + window total) so the window stays short when there
-// are many accounts; expanded it adds the new/cached composition line and the
-// per-day/hour bars. The active account starts expanded (the one you most
-// likely want to see); the rest start collapsed. The list is already capped to
-// the most-recent N buckets — the CLI (`aimonitor tokens`) is the full history.
+// single header line (name + window total); expanded it adds the new/cached
+// composition line and the per-day/hour bars. All accounts start EXPANDED, and
+// each account's open/closed choice is remembered (persisted in UserDefaults),
+// so it survives refreshes, reopening the window, and app relaunches. The list
+// is capped to the most-recent N buckets — the CLI is the full history.
 private struct AccountTokenCard: View {
     let acct: AccountRow
     let isActive: Bool
     let buckets: [TokenBucketRow] // oldest-first, as the store returns them
     let maxBuckets: Int
-    @State private var expanded: Bool
+    // Persisted per-account, keyed by id. Default false ⇒ open (details shown);
+    // storing "collapsed" means the all-open default needs no stored entries.
+    @AppStorage private var collapsed: Bool
 
     init(acct: AccountRow, isActive: Bool, buckets: [TokenBucketRow], maxBuckets: Int) {
         self.acct = acct
         self.isActive = isActive
         self.buckets = buckets
         self.maxBuckets = maxBuckets
-        // Active account open by default; others collapsed to keep it short.
-        _expanded = State(initialValue: isActive)
+        _collapsed = AppStorage(wrappedValue: false, "tokenUsage.collapsed.\(acct.id)")
     }
 
     var body: some View {
@@ -224,13 +215,13 @@ private struct AccountTokenCard: View {
         VStack(alignment: .leading, spacing: 6) {
             // Clickable header — the whole row toggles expand/collapse.
             Button {
-                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                withAnimation(.easeInOut(duration: 0.15)) { collapsed.toggle() }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .rotationEffect(.degrees(collapsed ? 0 : 90))
                     if isActive {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(.green)
@@ -247,9 +238,9 @@ private struct AccountTokenCard: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .help(expanded ? "Collapse" : "Expand the daily/hourly breakdown")
+            .help(collapsed ? "Expand the daily/hourly breakdown" : "Collapse")
 
-            if expanded {
+            if !collapsed {
                 Text("\(compactTokens(newTotal)) new · \(cachedPctText)% reused from cache")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
