@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/japananh/aimonitor/internal/config"
 	"github.com/japananh/aimonitor/internal/daemon"
@@ -141,10 +142,53 @@ func newConfigCmd() *cobra.Command {
 				return nil
 			},
 		},
+		newConfigAuditCmd(),
 		newConfigExportCmd(),
 		newConfigImportCmd(),
 	)
 	return cmd
+}
+
+// newConfigAuditCmd shows recent configuration changes recorded in
+// config_audit — useful for tracing when/how a setting flipped (e.g. an MCP
+// integration's `enabled` going to false).
+func newConfigAuditCmd() *cobra.Command {
+	var limit int
+	var key string
+	c := &cobra.Command{
+		Use:   "audit",
+		Short: "Show recent configuration changes (from `config set` and import)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			s, err := openConfigStore()
+			if err != nil {
+				return err
+			}
+			defer s.Close()
+			rows, err := s.ListConfigAudit(cmd.Context(), key, limit)
+			if err != nil {
+				return err
+			}
+			if len(rows) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No configuration changes recorded yet.")
+				return nil
+			}
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "WHEN\tKEY\tOLD\tNEW\tSOURCE")
+			for _, r := range rows {
+				old := r.OldValue
+				if old == "" {
+					old = "(unset)"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+					r.Ts.Local().Format("2006-01-02 15:04:05"), r.Key, old, r.NewValue, r.Source)
+			}
+			return w.Flush()
+		},
+	}
+	c.Flags().IntVar(&limit, "limit", 50, "max rows to show")
+	c.Flags().StringVar(&key, "key", "", "only show changes to this key")
+	return c
 }
 
 func getConfigValue(ctx context.Context, key string) (string, error) {
@@ -241,7 +285,16 @@ func setStoreSetting(ctx context.Context, key, value string) error {
 		return err
 	}
 	defer s.Close()
-	return s.PutSetting(ctx, key, norm)
+	// Capture the prior value so the change is traceable. "" when unset (a
+	// not-found GetSetting error counts as unset).
+	old, _ := s.GetSetting(ctx, key)
+	if err := s.PutSetting(ctx, key, norm); err != nil {
+		return err
+	}
+	// Best-effort audit — never fail a successful write because the audit row
+	// couldn't be recorded.
+	_ = s.InsertConfigAudit(ctx, store.ConfigAuditRecord{Key: key, OldValue: old, NewValue: norm, Source: "cli"})
+	return nil
 }
 
 func validateStoreValue(key, value string) (string, error) {
@@ -345,12 +398,14 @@ func storeKeyDefault(key string) string {
 	return ""
 }
 
+// openConfigStore opens the settings store for `config` and `mcp` operations.
+// It delegates to openStore so it honors AIMONITOR_STORE_PATH — previously it
+// always used DefaultPath, silently ignoring the override. That inconsistency
+// was a footgun: a `config set` run with AIMONITOR_STORE_PATH pointed at a temp
+// DB still wrote the REAL store (e.g. flipping mcp.<svc>.enabled), instead of
+// staying isolated like the rest of the CLI.
 func openConfigStore() (*store.Store, error) {
-	p, err := store.DefaultPath()
-	if err != nil {
-		return nil, err
-	}
-	return store.Open(p)
+	return openStore()
 }
 
 func parseBool(s string) (bool, error) {
