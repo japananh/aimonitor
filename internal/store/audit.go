@@ -120,6 +120,75 @@ func (s *Store) ListSwitchAudit(ctx context.Context, n int) ([]SwitchAuditRecord
 	return out, rows.Err()
 }
 
+// ConfigAuditRecord is one row in the config_audit table: a single change
+// made through `aimonitor config set` or config import.
+type ConfigAuditRecord struct {
+	ID       int64
+	Ts       time.Time
+	Key      string
+	OldValue string // "" when the key was previously unset
+	NewValue string
+	Source   string // "cli", "import", …
+}
+
+// InsertConfigAudit records a config change. Ts defaults to time.Now() when
+// zero; Source defaults to "cli". Callers treat this as best-effort — a failed
+// audit insert must not fail the underlying setting write.
+func (s *Store) InsertConfigAudit(ctx context.Context, r ConfigAuditRecord) error {
+	if r.Key == "" {
+		return fmt.Errorf("InsertConfigAudit: key required")
+	}
+	if r.Ts.IsZero() {
+		r.Ts = time.Now()
+	}
+	if r.Source == "" {
+		r.Source = "cli"
+	}
+	_, err := s.DB.ExecContext(ctx,
+		`INSERT INTO config_audit (ts, key, old_value, new_value, source)
+		 VALUES (?, ?, ?, ?, ?)`,
+		r.Ts.UnixMilli(), r.Key, sqlNullable(r.OldValue), r.NewValue, r.Source)
+	if err != nil {
+		return fmt.Errorf("insert config_audit: %w", err)
+	}
+	return nil
+}
+
+// ListConfigAudit returns the most recent n config changes, newest first.
+// When key is non-empty, only rows for that key are returned.
+func (s *Store) ListConfigAudit(ctx context.Context, key string, n int) ([]ConfigAuditRecord, error) {
+	if n <= 0 {
+		n = 50
+	}
+	var rows *sql.Rows
+	var err error
+	if key == "" {
+		rows, err = s.DB.QueryContext(ctx,
+			`SELECT id, ts, key, COALESCE(old_value, ''), new_value, source
+			 FROM config_audit ORDER BY ts DESC LIMIT ?`, n)
+	} else {
+		rows, err = s.DB.QueryContext(ctx,
+			`SELECT id, ts, key, COALESCE(old_value, ''), new_value, source
+			 FROM config_audit WHERE key = ? ORDER BY ts DESC LIMIT ?`, key, n)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query config_audit: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ConfigAuditRecord
+	for rows.Next() {
+		var r ConfigAuditRecord
+		var ts int64
+		if err := rows.Scan(&r.ID, &ts, &r.Key, &r.OldValue, &r.NewValue, &r.Source); err != nil {
+			return nil, err
+		}
+		r.Ts = time.UnixMilli(ts)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // sqlNullable returns a sql.NullString suitable for binding into nullable
 // TEXT columns. Empty string maps to NULL.
 func sqlNullable(s string) any {

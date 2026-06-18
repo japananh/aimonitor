@@ -279,9 +279,11 @@ func runConfigImport(ctx context.Context, cmd *cobra.Command, s *store.Store, pa
 			skipN++
 			continue
 		}
+		old, _ := s.GetSetting(ctx, k)
 		if err := s.PutSetting(ctx, k, norm); err != nil {
 			return fmt.Errorf("write setting %s: %w", k, err)
 		}
+		_ = s.InsertConfigAudit(ctx, store.ConfigAuditRecord{Key: k, OldValue: old, NewValue: norm, Source: "import"})
 		setN++
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Restored %d settings (%d skipped).\n", setN, skipN)

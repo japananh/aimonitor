@@ -76,3 +76,54 @@ func TestSwitchAudit_LimitDefault(t *testing.T) {
 		t.Errorf("default limit: got %d rows, want 20", len(got))
 	}
 }
+
+func TestConfigAudit_InsertListAndFilter(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	recs := []ConfigAuditRecord{
+		{Key: "mcp.slack.enabled", OldValue: "", NewValue: "false", Source: "cli"},
+		{Key: "mcp.slack.enabled", OldValue: "false", NewValue: "true", Source: "cli"},
+		{Key: "mcp.clickup.read_only", OldValue: "", NewValue: "true", Source: "import"},
+	}
+	for i, r := range recs {
+		r.Ts = time.Now().Add(time.Duration(i) * time.Second)
+		if err := s.InsertConfigAudit(ctx, r); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+
+	all, err := s.ListConfigAudit(ctx, "", 10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("got %d rows, want 3", len(all))
+	}
+	// Newest first.
+	if all[0].Key != "mcp.clickup.read_only" || all[0].Source != "import" {
+		t.Errorf("got[0] = %+v, want clickup read_only/import", all[0])
+	}
+
+	// Filter by key + verify old/new + unset mapping.
+	slack, err := s.ListConfigAudit(ctx, "mcp.slack.enabled", 10)
+	if err != nil {
+		t.Fatalf("List(key): %v", err)
+	}
+	if len(slack) != 2 {
+		t.Fatalf("slack rows = %d, want 2", len(slack))
+	}
+	if slack[0].OldValue != "false" || slack[0].NewValue != "true" {
+		t.Errorf("slack[0] = %+v, want old=false new=true", slack[0])
+	}
+	if slack[1].OldValue != "" { // previously-unset persists as "" (NULL)
+		t.Errorf("slack[1].OldValue = %q, want empty", slack[1].OldValue)
+	}
+}
+
+func TestConfigAudit_KeyRequired(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.InsertConfigAudit(context.Background(), ConfigAuditRecord{NewValue: "x"}); err == nil {
+		t.Error("missing key: want error")
+	}
+}
