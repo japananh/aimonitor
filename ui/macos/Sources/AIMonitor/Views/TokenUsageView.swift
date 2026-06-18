@@ -89,12 +89,16 @@ struct TokenUsageWindowView: View {
                 legendItem(color: tokenCachedColor, label: "Cached",
                            help: "Earlier context reused from the prompt cache — billed ≈10% of the input price.")
                 Spacer()
-                GranularityButton(title: "Daily", active: !model.tokensHourly, activeColor: tokenNewColor) {
-                    model.tokensHourly = false
-                }
-                Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
-                GranularityButton(title: "Hourly", active: model.tokensHourly, activeColor: tokenNewColor) {
-                    model.tokensHourly = true
+                // Keep Daily · Hourly tight together (the outer row uses wide
+                // spacing for the legend, which otherwise spread these apart).
+                HStack(spacing: 2) {
+                    GranularityButton(title: "Daily", active: !model.tokensHourly, activeColor: tokenNewColor) {
+                        model.tokensHourly = false
+                    }
+                    Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    GranularityButton(title: "Hourly", active: model.tokensHourly, activeColor: tokenNewColor) {
+                        model.tokensHourly = true
+                    }
                 }
             }
             .padding(.horizontal, 16)
