@@ -357,6 +357,44 @@ func TestClickUpRateLimit(t *testing.T) {
 	}
 }
 
+func TestClickUpUpdateComment(t *testing.T) {
+	var gotMethod, gotPath, gotText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		var body struct {
+			CommentText string `json:"comment_text"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotText = body.CommentText
+		_ = json.NewEncoder(w).Encode(map[string]any{})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceClickUp, "pk_1_TOK")
+	c := NewClient(creds)
+	res, _, err := c.clickupUpdateComment(context.Background(), nil,
+		cuUpdateCommentIn{CommentID: "C1", Comment: "edited text"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %s, want PUT", gotMethod)
+	}
+	if gotPath != "/comment/C1" {
+		t.Errorf("path = %s, want /comment/C1", gotPath)
+	}
+	if gotText != "edited text" {
+		t.Errorf("comment_text = %q, want %q", gotText, "edited text")
+	}
+	text := res.Content[0].(interface{ MarshalJSON() ([]byte, error) })
+	b, _ := text.MarshalJSON()
+	if out := string(b); !strings.Contains(out, "updated") || !strings.Contains(out, "C1") {
+		t.Errorf("result missing updated/C1: %s", out)
+	}
+}
+
 func TestVerifySlack_RejectsBotToken(t *testing.T) {
 	if _, err := VerifySlack(context.Background(), "xoxb-bot"); err == nil ||
 		!strings.Contains(err.Error(), "bot token") {
