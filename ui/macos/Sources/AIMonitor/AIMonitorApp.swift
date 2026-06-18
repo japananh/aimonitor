@@ -35,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var panel: NSPanel!
     private var clickMonitor: Any?
     private var preferencesWindow: NSWindow?
+    // Standalone Token-usage window (per-account token breakdown), kept out of
+    // the operational popover. Retained so it isn't released on close.
+    private var tokenUsageWindow: NSWindow?
     // Resigns a focused text field in Preferences when the user clicks
     // elsewhere in that window (macOS keeps a field first-responder on empty
     // clicks otherwise, so "save on click outside" never fired).
@@ -142,6 +145,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             win.title = "AIMonitor Preferences"
             win.styleMask = [.titled, .closable]
             win.isReleasedWhenClosed = false
+            // Follow the user to whatever Space is active when reopened, instead
+            // of yanking them back to the Space where it was first opened (the
+            // default for a normal window).
+            win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             preferencesWindow = win
         }
         preferencesWindow?.center()
@@ -152,6 +159,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         preferencesWindow?.makeFirstResponder(nil)
         NSApp.activate(ignoringOtherApps: true)
         installPrefsClickMonitor()
+    }
+
+    // showTokenUsage opens the standalone Token-usage window (per-account
+    // daily/hourly token breakdown). Mirrors showPreferences: a normal-level
+    // titled window, created lazily and retained. Token analytics is an
+    // occasional review, so it lives here rather than in the popover.
+    private func showTokenUsage() {
+        closePanel()
+        if tokenUsageWindow == nil {
+            let host = NSHostingController(rootView: TokenUsageWindowView(model: model))
+            let win = NSWindow(contentViewController: host)
+            win.title = "AIMonitor — Token usage"
+            win.styleMask = [.titled, .closable]
+            win.isReleasedWhenClosed = false
+            // Reopen on the user's current Space, not the one it was first
+            // opened on (same rationale as Preferences).
+            win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+            tokenUsageWindow = win
+        }
+        tokenUsageWindow?.center()
+        tokenUsageWindow?.makeKeyAndOrderFront(nil)
+        // No control auto-focused with a focus ring on open (same as the panel
+        // and Preferences) — keep the window key, no first responder.
+        tokenUsageWindow?.makeFirstResponder(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // installPrefsClickMonitor makes a click anywhere in the Preferences
@@ -322,7 +354,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             removeAccount: { [weak self] label in self?.promptRemove(label: label) },
             reloginAccount: { [weak self] label in self?.promptRelogin(label: label) },
             importAccount: { [weak self] email in self?.promptImportCurrent(email: email) },
-            addAccount: { [weak self] in self?.promptAddAccount() }
+            addAccount: { [weak self] in self?.promptAddAccount() },
+            openTokenUsage: { [weak self] in self?.showTokenUsage() }
         )
         // Liquid Glass chrome on Tahoe, solid rounded background before it
         // (see PanelChrome.swift for why glass stays on the chrome only).
@@ -350,7 +383,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // the window receives mouse-moved events. A borderless panel has this off
         // by default, so the header/row button tooltips never appeared — enable it.
         p.acceptsMouseMovedEvents = true
-        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        // .moveToActiveSpace (NOT .canJoinAllSpaces): the panel lives only on
+        // the current Space and follows the app to whatever Space is active when
+        // you click the status item. With .canJoinAllSpaces it sat on EVERY
+        // Space, so switching desktops showed it on the new Space for a beat
+        // before the space-change observer closed it — a visible flash.
+        // .fullScreenAuxiliary still lets it open above a full-screen app.
+        p.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient]
         panel = p
 
         // Keep the panel anchored under the icon when its height changes
@@ -358,10 +397,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NotificationCenter.default.addObserver(
             self, selector: #selector(panelDidResize),
             name: NSWindow.didResizeNotification, object: p)
+
+        // Dismiss the panel when the user switches Spaces / desktops, so it
+        // doesn't linger on the old Space (a 3-finger swipe produces no click,
+        // so the outside-click monitor never fires). Paired with
+        // .moveToActiveSpace above: the panel never renders on the new Space, so
+        // there's no flash — it's simply gone when you arrive.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(activeSpaceChanged),
+            name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
     }
 
     @objc private func panelDidResize(_ note: Notification) {
         if panel.isVisible { positionPanel() }
+    }
+
+    @objc private func activeSpaceChanged() {
+        if panel?.isVisible == true { closePanel() }
     }
 
     @objc private func togglePopover(_ sender: Any?) {
@@ -377,6 +429,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // Preferences already closes the panel — see showPreferences.)
         if let prefs = preferencesWindow, prefs.isVisible {
             prefs.orderOut(nil)
+        }
+        // Same for the Token-usage window — the panel floats above it and would
+        // cover its close button.
+        if let tokens = tokenUsageWindow, tokens.isVisible {
+            tokens.orderOut(nil)
         }
         // Fresh data the moment it opens, without waiting for the 2s tick.
         Task { @MainActor in await model.refresh() }

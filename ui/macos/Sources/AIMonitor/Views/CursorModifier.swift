@@ -18,10 +18,18 @@ extension View {
 
 private struct PointerCursorModifier: ViewModifier {
     func body(content: Content) -> some View {
-        content.onHover { inside in
-            if inside {
+        // onContinuousHover (not plain onHover) re-asserts the cursor on every
+        // mouse move inside the view. onHover fires only on enter/exit, so an
+        // AppKit control hosted underneath — e.g. a segmented Picker — can
+        // reset the cursor back to the arrow as the pointer moves across it,
+        // and the pointing hand never appears. Re-setting on each move keeps it
+        // stable. set() (vs push/pop) can't get unbalanced if the popover
+        // closes mid-hover; worst case the cursor self-corrects on next move.
+        content.onContinuousHover { phase in
+            switch phase {
+            case .active:
                 NSCursor.pointingHand.set()
-            } else {
+            case .ended:
                 NSCursor.arrow.set()
             }
         }
