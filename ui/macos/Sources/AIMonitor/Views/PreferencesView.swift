@@ -550,7 +550,17 @@ struct PreferencesView: View {
                 }
                 let key = "mcp.\(svc.service).\(settingSuffix)"
                 DispatchQueue.global(qos: .userInitiated).async {
-                    try? CLIBridge.configSet(key, newValue ? "true" : "false")
+                    // Surface a failed write instead of swallowing it: a silent
+                    // failure left the optimistic toggle ON while the stored
+                    // value stayed OFF, so the next reload "spontaneously"
+                    // reverted it with no explanation. On error, show the
+                    // message; reloadMCP then reconciles the toggle to the
+                    // actual stored value either way.
+                    do {
+                        try CLIBridge.configSet(key, newValue ? "true" : "false")
+                    } catch {
+                        DispatchQueue.main.async { mcpError[svc.service] = CLIBridge.userMessage(error) }
+                    }
                     reloadMCP()
                 }
             }
