@@ -81,17 +81,32 @@ struct TokenUsageWindowView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
 
-            // Legend: the two swatches match the segmented bars below so the
-            // colors are self-explaining (hover each for the full definition).
+            // One row: the New/Cached legend (left) and the Daily/Hourly
+            // granularity toggle (right), aligned. Swatches match the bars.
             HStack(spacing: 14) {
                 legendItem(color: tokenNewColor, label: "New",
                            help: "Tokens sent + generated this turn — newly processed at full price.")
                 legendItem(color: tokenCachedColor, label: "Cached",
                            help: "Earlier context reused from the prompt cache — billed ≈10% of the input price.")
                 Spacer()
+                // Keep Daily · Hourly tight together (the outer row uses wide
+                // spacing for the legend, which otherwise spread these apart).
+                HStack(spacing: 2) {
+                    GranularityButton(title: "Daily", active: !model.tokensHourly, activeColor: .accentColor) {
+                        model.tokensHourly = false
+                    }
+                    Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    GranularityButton(title: "Hourly", active: model.tokensHourly, activeColor: .accentColor) {
+                        model.tokensHourly = true
+                    }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
+            // Reload at the new granularity the moment the user flips it.
+            .onChange(of: model.tokensHourly) { _, _ in
+                Task { await model.refresh() }
+            }
 
             ThinScrollView {
                 TokenUsageView(model: model)
@@ -126,45 +141,16 @@ struct TokenUsageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Granularity is a refinement *inside* the Tokens tab, not a peer
-            // of the Limits/Tokens tab — so it's a light, right-aligned text
-            // toggle (active = token-blue + semibold) rather than a second
-            // full-width segmented control, which stacked under the tab read
-            // as a cramped 4-button block.
-            HStack(spacing: 2) {
-                Spacer()
-                GranularityButton(title: "Daily", active: !model.tokensHourly, activeColor: tokenNewColor) {
-                    model.tokensHourly = false
-                }
-                Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
-                GranularityButton(title: "Hourly", active: model.tokensHourly, activeColor: tokenNewColor) {
-                    model.tokensHourly = true
-                }
-            }
-            // Reload at the new granularity the moment the user flips it
-            // (otherwise the change shows only on the next 2s poll).
-            .onChange(of: model.tokensHourly) { _, _ in
-                Task { await model.refresh() }
-            }
-
-            if model.accounts.isEmpty {
-                Text("No accounts yet.")
+            if accountsWithData.isEmpty {
+                Text("No token usage recorded yet. Use Claude Code with `aimonitor daemon` running and it'll show up here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 8)
             } else {
-                // List EVERY managed account (matching the Limits tab), so an
-                // account with no usage in this window still shows up as "no
-                // usage" instead of silently disappearing. The hint only adds
-                // setup guidance when nothing has been recorded at all.
-                if accountsWithData.isEmpty {
-                    Text("No token usage recorded yet — use Claude Code with `aimonitor daemon` running and it'll show up here.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 2)
-                }
-                ForEach(model.accounts) { acct in
+                // Only accounts with usage in this window — an account with no
+                // recorded usage is omitted, not shown as an empty row.
+                ForEach(accountsWithData) { acct in
                     AccountTokenCard(
                         acct: acct,
                         isActive: model.status?.active_label == acct.label,
@@ -188,25 +174,26 @@ struct TokenUsageView: View {
 }
 
 // AccountTokenCard is one collapsible per-account section. Collapsed it's a
-// single header line (name + window total) so the window stays short when there
-// are many accounts; expanded it adds the new/cached composition line and the
-// per-day/hour bars. The active account starts expanded (the one you most
-// likely want to see); the rest start collapsed. The list is already capped to
-// the most-recent N buckets — the CLI (`aimonitor tokens`) is the full history.
+// single header line (name + window total); expanded it adds the new/cached
+// composition line and the per-day/hour bars. All accounts start EXPANDED, and
+// each account's open/closed choice is remembered (persisted in UserDefaults),
+// so it survives refreshes, reopening the window, and app relaunches. The list
+// is capped to the most-recent N buckets — the CLI is the full history.
 private struct AccountTokenCard: View {
     let acct: AccountRow
     let isActive: Bool
     let buckets: [TokenBucketRow] // oldest-first, as the store returns them
     let maxBuckets: Int
-    @State private var expanded: Bool
+    // Persisted per-account, keyed by id. Default false ⇒ open (details shown);
+    // storing "collapsed" means the all-open default needs no stored entries.
+    @AppStorage private var collapsed: Bool
 
     init(acct: AccountRow, isActive: Bool, buckets: [TokenBucketRow], maxBuckets: Int) {
         self.acct = acct
         self.isActive = isActive
         self.buckets = buckets
         self.maxBuckets = maxBuckets
-        // Active account open by default; others collapsed to keep it short.
-        _expanded = State(initialValue: isActive)
+        _collapsed = AppStorage(wrappedValue: false, "tokenUsage.collapsed.\(acct.id)")
     }
 
     var body: some View {
@@ -230,11 +217,15 @@ private struct AccountTokenCard: View {
         }()
 
         VStack(alignment: .leading, spacing: 6) {
-            if buckets.isEmpty {
-                // Account exists but has no recorded usage in this window — show
-                // it (so it's clear it just hasn't been used) without a useless
-                // toggle or a "0% cached" line.
+            // Clickable header — the whole row toggles expand/collapse.
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { collapsed.toggle() }
+            } label: {
                 HStack(spacing: 4) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(collapsed ? 0 : 90))
                     if isActive {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(.green)
@@ -242,48 +233,25 @@ private struct AccountTokenCard: View {
                     }
                     Text(acct.label).font(.headline)
                     Spacer()
-                    Text("no usage")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .help("No tokens recorded for this account in the shown window")
-                }
-            } else {
-                // Clickable header — the whole row toggles expand/collapse.
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
-                        if isActive {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                                .font(.caption)
-                        }
-                        Text(acct.label).font(.headline)
-                        Spacer()
-                        Text("\(compactTokens(windowTotal)) total")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .help("All tokens processed in the shown window — new (sent + generated) plus cached (reused context).")
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .help(expanded ? "Collapse" : "Expand the daily/hourly breakdown")
-
-                if expanded {
-                    Text("\(compactTokens(newTotal)) new · \(cachedPctText)% reused from cache")
-                        .font(.caption2.monospacedDigit())
+                    Text("\(compactTokens(windowTotal)) total")
+                        .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .help("Of \(compactTokens(windowTotal)) tokens here, \(compactTokens(newTotal)) were newly processed (your prompts + the replies, full price) and \(compactTokens(cacheTotal)) were reused from cache (earlier context, ≈10% of input price) — \(cachedPctText)% of the total.")
+                        .help("All tokens processed in the shown window — new (sent + generated) plus cached (reused context).")
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .help(collapsed ? "Expand the daily/hourly breakdown" : "Collapse")
 
-                    ForEach(recent, id: \.bucket) { b in
-                        bucketRow(b, maxTotal: maxTotal)
-                    }
+            if !collapsed {
+                Text("\(compactTokens(newTotal)) new · \(cachedPctText)% reused from cache")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .help("Of \(compactTokens(windowTotal)) tokens here, \(compactTokens(newTotal)) were newly processed (your prompts + the replies, full price) and \(compactTokens(cacheTotal)) were reused from cache (earlier context, ≈10% of input price) — \(cachedPctText)% of the total.")
+
+                ForEach(recent, id: \.bucket) { b in
+                    bucketRow(b, maxTotal: maxTotal)
                 }
             }
         }
@@ -329,18 +297,21 @@ private struct AccountTokenCard: View {
                     .foregroundStyle(.secondary)
             }
             GeometryReader { geo in
-                let frac = CGFloat(Double(b.total) / Double(maxTotal))
-                let barW = max(2, geo.size.width * frac)
-                let newFrac = b.total > 0 ? CGFloat(Double(newTok) / Double(b.total)) : 0
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color(nsColor: .quaternaryLabelColor))
-                    HStack(spacing: 0) {
-                        Rectangle().fill(tokenNewColor).frame(width: barW * newFrac)
-                        Rectangle().fill(tokenCachedColor)
-                    }
-                    .frame(width: barW)
-                    .clipShape(Capsule())
+                let frac = b.total > 0 ? Double(b.total) / Double(maxTotal) : 0
+                // Bar length = this bucket vs the busiest bucket (so a smaller
+                // bucket is simply a shorter bar). No gray track — only two
+                // colors: New (dark) | Cached (light).
+                let barW = max(2, geo.size.width * CGFloat(frac))
+                let newFrac = b.total > 0 ? Double(newTok) / Double(b.total) : 0
+                // Floor "new" to a thin sliver so a tiny-but-real share (cache
+                // often dominates >99%) still shows instead of vanishing.
+                let newW = newTok > 0 ? min(barW, max(2, barW * CGFloat(newFrac))) : 0
+                HStack(spacing: 0) {
+                    Rectangle().fill(tokenNewColor).frame(width: newW)
+                    Rectangle().fill(tokenCachedColor)
                 }
+                .frame(width: barW)
+                .clipShape(Capsule())
             }
             .frame(height: 6)
         }
@@ -359,7 +330,7 @@ private struct AccountTokenCard: View {
         let mi = Int(dc[1]) ?? 0
         let mon = (mi >= 1 && mi <= 12) ? months[mi] : String(dc[1])
         if parts.count == 2 {
-            return "\(dc[2]) \(parts[1])" // hourly: "16 14:00"
+            return "\(mon) \(dc[2]) \(parts[1])" // hourly: "Jun 16 14:00"
         }
         return "\(mon) \(dc[2])" // daily: "Jun 16"
     }
@@ -383,7 +354,18 @@ private var tokenNewColor: Color {
         light: NSColor(red: 0.20, green: 0.50, blue: 0.95, alpha: 1),
         dark: NSColor(red: 0.45, green: 0.68, blue: 1.00, alpha: 1))
 }
-private var tokenCachedColor: Color { tokenNewColor.opacity(0.30) }
+
+// "Cached" must be OPAQUE: the bar draws it over a gray track (quaternaryLabel)
+// inside a ZStack, so a translucent tint (the old tokenNewColor.opacity(0.30))
+// composited into a muddy grayish-blue — and disagreed with the legend swatch,
+// which paints the same color over the window background instead. These are
+// opaque light tints (≈ the old 30% blue over the typical backdrop) so the bar,
+// the legend, and the active-card variant all render identically.
+private var tokenCachedColor: Color {
+    adaptiveColor(
+        light: NSColor(red: 0.72, green: 0.83, blue: 0.98, alpha: 1),
+        dark: NSColor(red: 0.30, green: 0.43, blue: 0.64, alpha: 1))
+}
 
 // GranularityButton is one side of the Daily/Hourly toggle: a borderless text
 // button that tints + bolds when active and shows a subtle rounded background

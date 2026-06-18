@@ -176,6 +176,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // Reopen on the user's current Space, not the one it was first
             // opened on (same rationale as Preferences).
             win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+            // .help() tooltips need mouse-moved events; without this they fire
+            // unreliably in this window (e.g. not on the active/expanded card).
+            win.acceptsMouseMovedEvents = true
             tokenUsageWindow = win
         }
         tokenUsageWindow?.center()
