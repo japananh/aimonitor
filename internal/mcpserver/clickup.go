@@ -410,6 +410,21 @@ func (c *Client) clickupDeleteComment(ctx context.Context, _ *mcp.CallToolReques
 	return textResult(map[string]string{"comment_id": in.CommentID, "status": "deleted"})
 }
 
+type cuUpdateCommentIn struct {
+	CommentID string `json:"comment_id" jsonschema:"comment ID (from clickup_list_comments or clickup_add_comment)"`
+	Comment   string `json:"comment" jsonschema:"new comment text"`
+}
+
+// clickupUpdateComment edits a comment's text in place via PUT /comment/{id},
+// so the comment keeps its id and thread position (unlike delete + re-add).
+func (c *Client) clickupUpdateComment(ctx context.Context, _ *mcp.CallToolRequest, in cuUpdateCommentIn) (*mcp.CallToolResult, any, error) {
+	body := map[string]any{"comment_text": in.Comment}
+	if err := c.clickup(ctx, http.MethodPut, "/comment/"+url.PathEscape(in.CommentID), nil, body, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"comment_id": in.CommentID, "status": "updated"})
+}
+
 // --- docs (API v3) --------------------------------------------------------
 // A ClickUp Doc is a container; the CONTENT lives in its pages. URL shape:
 // app.clickup.com/<workspace>/v/dc/<doc_id>/<page_id>.
