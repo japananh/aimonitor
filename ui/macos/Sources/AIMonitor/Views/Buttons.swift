@@ -1,9 +1,8 @@
-// The ONE text-button component, app-wide. Since the Tahoe (macOS 26)
-// restyle it pins no font/controlSize — the system default type scale (13pt)
-// matches System Settings. It carries a rounded chrome with a hover highlight
-// (a subtle base fill that brightens on mouse-over), applied through
-// TextButtonChrome so every text button — plain or custom-label — behaves the
-// same.
+// The ONE text-button component, app-wide. It pins no font/controlSize — the
+// system default type scale (13pt) matches System Settings. It carries a
+// relogin-style pill chrome (faint accent tint → solid accent + white text on
+// hover, capsule, pointer cursor, no border/shadow), applied through
+// TextButtonChrome so every text button — plain or custom-label — matches.
 
 import SwiftUI
 
@@ -133,21 +132,25 @@ struct IconActionButton<MenuContent: View>: View {
     }
 }
 
-/// Rounded chrome with a hover highlight. Base fill is a faint neutral so the
-/// button reads as tappable; hovering deepens it. Color.primary adapts to
-/// light/dark (dark text on light, light on dark).
+/// The ONE text-button look, app-wide — a relogin-style pill: a faint accent
+/// tint with accent text at rest, filling to a solid accent capsule with white
+/// text on hover. No border, no shadow. Shared by AppTextButton and
+/// appTextButtonChrome so every text button (plain or custom-label) matches the
+/// Re-login button's style.
 private struct TextButtonChrome: ViewModifier {
     @State private var hovering = false
 
     func body(content: Content) -> some View {
         content
-            .padding(.horizontal, 8)
+            // Black text at rest (Color.primary → black in light mode, and
+            // stays readable as white in dark mode); white on the solid accent
+            // fill on hover.
+            .foregroundStyle(hovering ? Color.white : Color.primary)
+            .padding(.horizontal, 10)
             .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.primary.opacity(hovering ? 0.16 : 0.07))
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            // Rest: faint neutral gray. Hover: solid accent + white text.
+            .background(Capsule().fill(hovering ? Color.accentColor : Color.primary.opacity(0.07)))
+            .contentShape(Capsule())
             .onHover { hovering = $0 }
     }
 }
