@@ -329,18 +329,21 @@ private struct AccountTokenCard: View {
                     .foregroundStyle(.secondary)
             }
             GeometryReader { geo in
-                let frac = CGFloat(Double(b.total) / Double(maxTotal))
-                let barW = max(2, geo.size.width * frac)
-                let newFrac = b.total > 0 ? CGFloat(Double(newTok) / Double(b.total)) : 0
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color(nsColor: .quaternaryLabelColor))
-                    HStack(spacing: 0) {
-                        Rectangle().fill(tokenNewColor).frame(width: barW * newFrac)
-                        Rectangle().fill(tokenCachedColor)
-                    }
-                    .frame(width: barW)
-                    .clipShape(Capsule())
+                let frac = b.total > 0 ? Double(b.total) / Double(maxTotal) : 0
+                // Bar length = this bucket vs the busiest bucket (so a smaller
+                // bucket is simply a shorter bar). No gray track — only two
+                // colors: New (dark) | Cached (light).
+                let barW = max(2, geo.size.width * CGFloat(frac))
+                let newFrac = b.total > 0 ? Double(newTok) / Double(b.total) : 0
+                // Floor "new" to a thin sliver so a tiny-but-real share (cache
+                // often dominates >99%) still shows instead of vanishing.
+                let newW = newTok > 0 ? min(barW, max(2, barW * CGFloat(newFrac))) : 0
+                HStack(spacing: 0) {
+                    Rectangle().fill(tokenNewColor).frame(width: newW)
+                    Rectangle().fill(tokenCachedColor)
                 }
+                .frame(width: barW)
+                .clipShape(Capsule())
             }
             .frame(height: 6)
         }
