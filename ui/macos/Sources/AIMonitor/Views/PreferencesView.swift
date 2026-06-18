@@ -32,17 +32,29 @@ struct PreferencesView: View {
     @State private var backupMessage: String?
     // Integrations (MCP) state, loaded via `mcp status --json`.
     @State private var mcpServices: [MCPServiceStatus] = []
+    // Whether the first status load has finished. Drives "Loading…" vs the
+    // loaded UI — without it, an empty list (load failed, or a never-connected
+    // state that failed to decode) was indistinguishable from "still loading".
+    @State private var mcpLoaded = false
     @State private var mcpToolCount = 0
     @State private var mcpBusy: String? = nil // service with an op in flight
     @State private var mcpError: [String: String] = [:]
-    @State private var mcpTokenPrompt: String? = nil // service awaiting a pasted token
-    @State private var mcpTokenInput = ""
+    // Services whose paste-token form is open. A Set (not one value) so opening
+    // one service's form never closes another's — each closes only on its own
+    // Cancel or a successful connect.
+    @State private var mcpPrompts: Set<String> = []
+    // Pasted token text, keyed by service (forms can be open simultaneously, so
+    // each needs its own field text).
+    @State private var mcpTokenInput: [String: String] = [:]
     // Appearance preference, persisted in UserDefaults; applied via NSApp.
     @AppStorage(appThemeKey) private var appTheme = defaultAppTheme
     // Dock-icon preference, persisted in UserDefaults; applied live.
     @AppStorage(showDockIconKey) private var showDockIcon = false
 
     private let repoURL = URL(string: "https://github.com/japananh/aimonitor")!
+    // README's MCP section — Slack scopes + token setup, linked from the
+    // connect prompt's "Setup guide".
+    private let mcpDocsURL = URL(string: "https://github.com/japananh/aimonitor#mcp-server-slack--clickup-for-claude-code")!
 
     var body: some View {
         Form {
@@ -109,8 +121,18 @@ struct PreferencesView: View {
                     .foregroundStyle(.secondary)
             }
             Section("MCP") {
-                if mcpServices.isEmpty {
+                if !mcpLoaded {
                     Text("Loading…").font(.caption).foregroundStyle(.secondary)
+                } else if mcpServices.isEmpty {
+                    // Loaded but nothing came back (e.g. the CLI isn't installed
+                    // or errored) — offer a retry instead of an endless spinner.
+                    Text("Integrations unavailable.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    AppTextButton("Retry") {
+                        mcpLoaded = false
+                        DispatchQueue.global(qos: .userInitiated).async { reloadMCP() }
+                    }
+                    .help("Try loading the Slack and ClickUp integration status again")
                 } else {
                     ForEach(mcpServices) { svc in
                         integrationRow(svc)
@@ -381,6 +403,33 @@ struct PreferencesView: View {
         return (obj["encrypted"] as? Bool) == true
     }
 
+    // tokenGuide is the paste-prompt copy for a service: field placeholder, a
+    // one-line intro, numbered steps for where to get the token, the page to
+    // open, and a scopes/notes tooltip. Keeps "where do I get a token" guidance
+    // inline so the user never has to guess. The Slack scope list mirrors
+    // SlackUserTokenScopes in internal/mcpserver/scopes.go (source of truth).
+    private func tokenGuide(_ service: String)
+        -> (placeholder: String, intro: String, steps: String, linkLabel: String, url: URL, scopesHelp: String) {
+        if service == "slack" {
+            return (
+                "xoxp-… user token",
+                "Paste your Slack user token (xoxp-…) below.",
+                "1. Open api.slack.com/apps and create an app (or open an existing one).\n2. OAuth & Permissions → add the User Token Scopes (see Setup guide), then “Install to Workspace”.\n3. Copy the User OAuth Token and paste it below.",
+                "Open Slack API",
+                URL(string: "https://api.slack.com/apps")!,
+                "Required User Token Scopes: search:read, users:read, channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, chat:write, files:write"
+            )
+        }
+        return (
+            "pk_… personal token",
+            "Paste your ClickUp personal token (pk_…) below.",
+            "1. In ClickUp, open Settings → Apps.\n2. Under “API Token”, click Generate (or Copy).\n3. Paste the token below.",
+            "Open ClickUp settings",
+            URL(string: "https://app.clickup.com/settings/apps")!,
+            "A personal API token is all you need — no app or scopes to configure."
+        )
+    }
+
     // integrationRow renders one service: status line, Connect/Disconnect,
     // Enabled + Read-only toggles, inline token paste when migration fails.
     // integrationRow emits SIBLING form rows (no wrapping VStack: a nested
@@ -400,7 +449,10 @@ struct PreferencesView: View {
             if svc.connected {
                 AppTextButton("Disconnect") { mcpDisconnect(svc.service) }
                     .disabled(mcpBusy != nil)
-            } else {
+            } else if !mcpPrompts.contains(svc.service) {
+                // Hide the row's Connect button once its paste form is open —
+                // the form's own Connect button is the action then, so only one
+                // shows at a time.
                 AppTextButton(mcpBusy == svc.service ? "Connecting…" : "Connect") { mcpConnect(svc.service) }
                     .disabled(mcpBusy != nil)
             }
@@ -408,13 +460,56 @@ struct PreferencesView: View {
         if let err = mcpError[svc.service] {
             Text(err).font(.caption2).foregroundStyle(.red).textSelection(.enabled)
         }
-        if mcpTokenPrompt == svc.service {
-            HStack(spacing: 6) {
-                SecureField(svc.service == "slack" ? "xoxp-… user token" : "pk_… personal token", text: $mcpTokenInput)
-                    .textFieldStyle(.roundedBorder)
-                AppTextButton("Verify & Save") { mcpConnectWithToken(svc.service) }
-                    .disabled(mcpTokenInput.trimmingCharacters(in: .whitespaces).isEmpty || mcpBusy != nil)
-                    .pointerCursor()
+        if mcpPrompts.contains(svc.service) {
+            let g = tokenGuide(svc.service)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(g.intro)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(g.steps)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 12) {
+                    Link(g.linkLabel, destination: g.url)
+                        .font(.caption2).pointerCursor()
+                        .help("Opens \(g.url.host ?? "the provider") in your browser")
+                    Link("Setup guide", destination: mcpDocsURL)
+                        .font(.caption2).pointerCursor()
+                        .help(g.scopesHelp)
+                }
+                // alignment .center + a shared height so the field's text and
+                // the button labels line up vertically (the roundedBorder field
+                // is otherwise taller than the button pills, so default packing
+                // left them looking off-center).
+                HStack(alignment: .center, spacing: 8) {
+                    // Empty title + labelsHidden: in a Form the title argument
+                    // renders as a LEADING label, not an in-field placeholder —
+                    // which is the stray text that showed at the start of the
+                    // field. `prompt:` is the actual in-field placeholder.
+                    // Editing the field clears any prior verify error for this
+                    // service (so a fixed token doesn't sit under a stale error).
+                    SecureField("", text: Binding(
+                        get: { mcpTokenInput[svc.service] ?? "" },
+                        set: { mcpTokenInput[svc.service] = $0; mcpError[svc.service] = nil }
+                    ), prompt: Text(g.placeholder))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(height: 24)
+                    AppTextButton(mcpBusy == svc.service ? "Connecting…" : "Connect") { mcpConnectWithToken(svc.service) }
+                        .disabled((mcpTokenInput[svc.service] ?? "").trimmingCharacters(in: .whitespaces).isEmpty || mcpBusy != nil)
+                        .frame(height: 24)
+                        .help("Verifies the token with \(svc.service == "slack" ? "Slack" : "ClickUp"), then saves it")
+                    // Cancel closes THIS service's form and clears its field +
+                    // error. Other services' open forms are untouched.
+                    AppTextButton("Cancel") {
+                        mcpPrompts.remove(svc.service)
+                        mcpTokenInput[svc.service] = nil
+                        mcpError[svc.service] = nil
+                    }
+                    .disabled(mcpBusy == svc.service)
+                    .frame(height: 24)
+                    .help("Close this without connecting")
+                }
             }
         }
         if svc.connected {
@@ -462,12 +557,18 @@ struct PreferencesView: View {
         )
     }
 
+    // reloadMCP fetches `mcp status --json` (a blocking shell-out — callers run
+    // it off the main thread). It always flips mcpLoaded true, even on failure,
+    // so the section leaves "Loading…" and shows either the services or the
+    // unavailable/retry state rather than spinning forever.
     private func reloadMCP() {
-        if let st = try? CLIBridge.mcpStatus() {
-            DispatchQueue.main.async {
+        let result = try? CLIBridge.mcpStatus()
+        DispatchQueue.main.async {
+            if let st = result {
                 mcpServices = st.services
                 mcpToolCount = st.tools.count
             }
+            mcpLoaded = true
         }
     }
 
@@ -480,18 +581,22 @@ struct PreferencesView: View {
                 _ = try CLIBridge.mcpConnect(service: service)
                 reloadMCP()
             } catch {
-                // No migratable claude-bar token → ask for a pasted one.
+                // No existing token to import automatically — the normal case
+                // for a first-time connect, not an error worth surfacing. Open
+                // THIS service's paste prompt with step-by-step guidance (see
+                // tokenGuide). Other services' open forms stay open — each
+                // closes only on its own Cancel or a successful connect.
                 DispatchQueue.main.async {
-                    mcpTokenPrompt = service
-                    mcpTokenInput = ""
-                    mcpError[service] = "No claude-bar token to migrate — paste a token below."
+                    mcpPrompts.insert(service)
+                    mcpTokenInput[service] = ""
+                    mcpError[service] = nil
                 }
             }
         }
     }
 
     private func mcpConnectWithToken(_ service: String) {
-        let token = mcpTokenInput.trimmingCharacters(in: .whitespaces)
+        let token = (mcpTokenInput[service] ?? "").trimmingCharacters(in: .whitespaces)
         mcpBusy = service
         mcpError[service] = nil
         DispatchQueue.global(qos: .userInitiated).async {
@@ -499,12 +604,14 @@ struct PreferencesView: View {
             do {
                 _ = try CLIBridge.mcpConnect(service: service, token: token)
                 DispatchQueue.main.async {
-                    mcpTokenPrompt = nil
-                    mcpTokenInput = ""
+                    mcpPrompts.remove(service)
+                    mcpTokenInput[service] = nil
                 }
                 reloadMCP()
             } catch {
-                DispatchQueue.main.async { mcpError[service] = "\(error)" }
+                // Surface a clean line (e.g. a missing-scope message), not the
+                // raw CLIBridgeError enum.
+                DispatchQueue.main.async { mcpError[service] = CLIBridge.userMessage(error) }
             }
         }
     }
