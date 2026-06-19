@@ -643,3 +643,75 @@ func TestAutoSwap_GraceCancelledWhenActiveDropsBelowThreshold(t *testing.T) {
 		t.Errorf("no switch should have fired, got %v", fsw.switched)
 	}
 }
+
+// Reset-awareness (#1): a candidate that just rolled over its window still
+// reads a stale-high pct (100%) while inside the FetchedAt freshness window.
+// Because its reset_at is now in the past, the JIT refresh must re-fetch it so
+// it's selected on real post-reset headroom — not skipped-as-fresh and then
+// excluded as exhausted. Without the fix, no candidate is found and no swap
+// fires.
+func TestAutoSwap_RefreshesResetCrossedCandidate(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "r0"})
+	reset, _ := s.CreateAccount(ctx, store.Account{Label: "just-reset", KeyringRef: "r1"})
+
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 90, FetchedAt: base})
+	// Fresh by FetchedAt, but its 5h window reset a minute ago → stored 100% stale.
+	_ = s.PutLimits(ctx, reset.ID, provider.Limits{
+		FiveHourPct: 100, FetchedAt: base, FiveHourResetAt: base.Add(-time.Minute),
+	})
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	a.Now = func() time.Time { return base }
+	immediateSwap(t, s)
+	// JIT refresh returns real post-reset headroom (0%) with a future reset.
+	a.RefreshUsage = func(ctx context.Context, acct store.Account) (provider.Limits, error) {
+		lim := provider.Limits{
+			AccountID: acct.ID, FiveHourPct: 0, SevenDayPct: 0, FetchedAt: base,
+			FiveHourResetAt: base.Add(5 * time.Hour), SevenDayResetAt: base.Add(7 * 24 * time.Hour),
+		}
+		_ = s.PutLimits(ctx, acct.ID, lim)
+		return lim, nil
+	}
+
+	if _, err := a.MaybeSwap(ctx, "active"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fsw.switched) != 1 || fsw.switched[0] != "just-reset" {
+		t.Fatalf("expected swap to just-reset (refreshed to 0%%), got %v", fsw.switched)
+	}
+}
+
+// Reset-awareness (#2): same just-reset candidate, but no refresh is possible
+// (RefreshUsage nil — e.g. an expired refresh token). The stale 100% must NOT
+// exclude it as exhausted; a reset-crossed snapshot drops to the uncertain
+// (last-resort) tier and is still selectable, so the swap off the exhausted
+// active account still happens. Without the fix it's excluded → no swap.
+func TestAutoSwap_ResetCrossedCandidateSelectableWithoutRefresh(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "r0"})
+	reset, _ := s.CreateAccount(ctx, store.Account{Label: "just-reset", KeyringRef: "r1"})
+
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 100, FetchedAt: base}) // exhausted
+	_ = s.PutLimits(ctx, reset.ID, provider.Limits{
+		FiveHourPct: 100, FetchedAt: base, FiveHourResetAt: base.Add(-time.Minute),
+	})
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	a.Now = func() time.Time { return base }
+	immediateSwap(t, s)
+	// RefreshUsage left nil → no JIT refresh; selection falls back to stored data.
+
+	if _, err := a.MaybeSwap(ctx, "active"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fsw.switched) != 1 || fsw.switched[0] != "just-reset" {
+		t.Fatalf("expected swap to just-reset via uncertain tier, got %v", fsw.switched)
+	}
+}
