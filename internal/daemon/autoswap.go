@@ -259,6 +259,23 @@ func bindingWindow(lim provider.Limits, threshold5h, threshold7d float64) (windo
 	return window5h, lim.FiveHourPct, threshold5h
 }
 
+// windowResetCrossed reports whether either rate-limit window's reset time
+// has already passed at `now` — i.e. the window has rolled over since the
+// snapshot was taken, so the stored percentage is stale-high and no longer
+// valid (the "just reset to 0% but still reads ~100%" case). A reset time is
+// always in the future when fetched, so `now.After(resetAt)` unambiguously
+// means "rolled over since". A zero reset time means the provider didn't
+// report it — we can't reason about it, so it doesn't count as crossed.
+func windowResetCrossed(lim provider.Limits, now time.Time) bool {
+	if !lim.FiveHourResetAt.IsZero() && now.After(lim.FiveHourResetAt) {
+		return true
+	}
+	if !lim.SevenDayResetAt.IsZero() && now.After(lim.SevenDayResetAt) {
+		return true
+	}
+	return false
+}
+
 // shouldRefreshCandidates reports whether a just-in-time candidate refresh
 // is warranted: the hook is wired, auto-swap is enabled, and the active
 // account is at/over threshold (a swap is imminent). Reads are unlocked and
@@ -304,8 +321,9 @@ func (a *AutoSwapper) refreshStaleCandidates(ctx context.Context, activeID int64
 		if acct.CooldownUntil.After(a.now()) {
 			continue
 		}
-		if lim, err := a.Store.GetLimits(ctx, acct.ID); err == nil && a.now().Sub(lim.FetchedAt) <= candidateFreshWindow {
-			continue // already fresh enough to trust
+		if lim, err := a.Store.GetLimits(ctx, acct.ID); err == nil &&
+			a.now().Sub(lim.FetchedAt) <= candidateFreshWindow && !windowResetCrossed(lim, a.now()) {
+			continue // fresh AND no window has reset since the snapshot — trust it
 		}
 		if _, err := a.RefreshUsage(ctx, acct); err != nil {
 			recordThrottle(ctx, a.Store, acct, err)
@@ -424,7 +442,13 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 		}
 		lim, err := a.Store.GetLimits(ctx, acct.ID)
 		known := err == nil
-		isFresh := known && now.Sub(lim.FetchedAt) <= candidateFreshWindow
+		// A snapshot whose window has reset since FetchedAt reads a stale-high
+		// pct (a just-reset account still showing ~100%). Treat it as not-fresh
+		// so it drops to the uncertain (last-resort) tier instead of being
+		// excluded as exhausted below. The JIT refresh above normally re-fetches
+		// it to real post-reset headroom first; this is the fallback for when a
+		// refresh wasn't possible (e.g. an expired refresh token).
+		isFresh := known && now.Sub(lim.FetchedAt) <= candidateFreshWindow && !windowResetCrossed(lim, now)
 		if !isFresh {
 			uncertain = append(uncertain, candidate{
 				Label:      acct.Label,
