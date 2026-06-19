@@ -64,9 +64,11 @@ func newUpdateInstallCmd() *cobra.Command {
 
 It runs detached on purpose: 'brew upgrade --cask' quits the running app
 mid-upgrade, so the upgrade can't be performed by a process the app owns —
-it would be killed partway. The detached job survives the app quitting,
-and the cask's postflight relaunches the widget when it finishes. Progress
-is logged to ~/Library/Logs/aimonitor/update.log.`,
+it would be killed partway. The detached job survives the app quitting, and
+when brew finishes it clears the Gatekeeper quarantine and relaunches the
+widget itself (the cask postflight only registers daemon autostart, and the
+unsigned app would otherwise stay quit). Progress is logged to
+~/Library/Logs/aimonitor/update.log.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			brew, err := findBrew()
 			if err != nil {
@@ -124,24 +126,7 @@ func updateLogPath() (string, error) {
 // to `brew update`. brew is invoked by absolute path for the same minimal-PATH
 // reason as findBrew.
 func spawnDetachedUpgrade(brew, logPath string) error {
-	// Timestamps use the same ISO-8601 local format as the daemon's slog
-	// lines (2026-06-06T19:25:39+07:00) so update.log reads consistently
-	// with aimonitor.daemon.log. RC is captured before the date call (which
-	// would otherwise reset $?).
-	script := fmt.Sprintf(`
-set +e
-TS() { date +%%Y-%%m-%%dT%%H:%%M:%%S%%z; }
-echo "=== aimonitor self-update $(TS) ==="
-TAP="$(%[1]q --repository)/Library/Taps/japananh/homebrew-tap"
-if [ -d "$TAP/.git" ]; then
-  git -C "$TAP" pull --ff-only || %[1]q update
-else
-  %[1]q update
-fi
-%[1]q upgrade --cask aimonitor
-RC=$?
-echo "=== done $(TS) (exit $RC) ==="
-`, brew)
+	script := upgradeScript(brew)
 
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -154,4 +139,41 @@ echo "=== done $(TS) (exit $RC) ==="
 	c.Stderr = logFile
 	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return c.Start() // detached: deliberately not Wait()
+}
+
+// upgradeScript builds the detached self-update shell script: refresh the tap,
+// run the cask upgrade, then ALWAYS bring the menu-bar app back. The relaunch
+// is the load-bearing part — brew quits the app mid-upgrade and nothing else
+// reopens it (the cask postflight only sets daemon autostart, and the unsigned
+// app is Gatekeeper-quarantined after a fresh download), so without this an
+// upgrade — successful OR reverted — leaves the user with no app.
+//
+// Timestamps use the daemon's ISO-8601 local format so update.log reads
+// consistently with aimonitor.daemon.log. RC is captured right after the
+// upgrade (before the date call, which would otherwise reset $?).
+func upgradeScript(brew string) string {
+	return fmt.Sprintf(`
+set +e
+TS() { date +%%Y-%%m-%%dT%%H:%%M:%%S%%z; }
+echo "=== aimonitor self-update $(TS) ==="
+TAP="$(%[1]q --repository)/Library/Taps/japananh/homebrew-tap"
+if [ -d "$TAP/.git" ]; then
+  git -C "$TAP" pull --ff-only || %[1]q update
+else
+  %[1]q update
+fi
+%[1]q upgrade --cask aimonitor
+RC=$?
+# Reopen whatever is now installed — the new version on success, or the version
+# brew reverted to on a failed upgrade — after clearing the Gatekeeper
+# quarantine. Absolute paths: the detached job inherits a minimal PATH.
+if [ -d /Applications/AIMonitor.app ]; then
+  /usr/bin/xattr -dr com.apple.quarantine /Applications/AIMonitor.app 2>/dev/null
+  /usr/bin/open /Applications/AIMonitor.app
+  echo "relaunched app (xattr cleared)"
+else
+  echo "WARNING: /Applications/AIMonitor.app missing after upgrade (exit $RC) — not relaunched"
+fi
+echo "=== done $(TS) (exit $RC) ==="
+`, brew)
 }
