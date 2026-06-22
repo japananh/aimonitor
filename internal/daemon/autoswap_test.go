@@ -102,8 +102,8 @@ func TestAutoSwap_SkipsCooledCandidate(t *testing.T) {
 	cooled, _ := s.CreateAccount(ctx, store.Account{Label: "cooled", KeyringRef: "ref-c"})
 	warm, _ := s.CreateAccount(ctx, store.Account{Label: "warm", KeyringRef: "ref-w"})
 	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95})
-	_ = s.PutLimits(ctx, cooled.ID, provider.Limits{FiveHourPct: 5})  // best headroom…
-	_ = s.PutLimits(ctx, warm.ID, provider.Limits{FiveHourPct: 40})   // …but only this one is usable
+	_ = s.PutLimits(ctx, cooled.ID, provider.Limits{FiveHourPct: 5}) // best headroom…
+	_ = s.PutLimits(ctx, warm.ID, provider.Limits{FiveHourPct: 40})  // …but only this one is usable
 	// Park the low-usage account for the next hour.
 	if err := s.SetCooldown(ctx, cooled.ID, time.Now().Add(time.Hour), "rate-limited (429)"); err != nil {
 		t.Fatal(err)
@@ -120,6 +120,95 @@ func TestAutoSwap_SkipsCooledCandidate(t *testing.T) {
 	}
 	if len(fsw.switched) != 1 || fsw.switched[0] != "warm" {
 		t.Errorf("switched to %v, want [warm] — cooled candidate must be excluded", fsw.switched)
+	}
+}
+
+// An account the user barred as a swap target (issue #13,
+// auto_swap.excluded_account_ids) must never be switched to — even with the
+// lowest usage of all. Here the excluded account has the best headroom (5%)
+// but is off-limits; the swap must pick the allowed account (40%).
+func TestAutoSwap_SkipsExcludedTarget(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	excluded, _ := s.CreateAccount(ctx, store.Account{Label: "excluded", KeyringRef: "ref-e"})
+	warm, _ := s.CreateAccount(ctx, store.Account{Label: "warm", KeyringRef: "ref-w"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95})
+	_ = s.PutLimits(ctx, excluded.ID, provider.Limits{FiveHourPct: 5}) // best headroom…
+	_ = s.PutLimits(ctx, warm.ID, provider.Limits{FiveHourPct: 40})    // …but only this one is allowed
+	if err := s.PutSetting(ctx, SettingsKeyAutoSwapExcluded, strconv.FormatInt(excluded.ID, 10)); err != nil {
+		t.Fatal(err)
+	}
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if !swapped {
+		t.Fatalf("expected a swap (active 95%% over threshold)")
+	}
+	if len(fsw.switched) != 1 || fsw.switched[0] != "warm" {
+		t.Errorf("switched to %v, want [warm] — excluded target must be skipped", fsw.switched)
+	}
+}
+
+// When every other account is excluded as a swap target, there is no candidate
+// and no swap fires — the active account stays put even over threshold.
+func TestAutoSwap_NoSwapWhenAllTargetsExcluded(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	other, _ := s.CreateAccount(ctx, store.Account{Label: "other", KeyringRef: "ref-o"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95})
+	_ = s.PutLimits(ctx, other.ID, provider.Limits{FiveHourPct: 5})
+	if err := s.PutSetting(ctx, SettingsKeyAutoSwapExcluded, strconv.FormatInt(other.ID, 10)); err != nil {
+		t.Fatal(err)
+	}
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if swapped || len(fsw.switched) != 0 {
+		t.Errorf("expected no swap (only target is excluded), got swapped=%v switched=%v", swapped, fsw.switched)
+	}
+}
+
+// When the ONLY account with headroom is one the user excluded, the "no
+// candidate" notification must name it so the user knows the exclusion (not
+// exhaustion) is what's blocking the swap. Active is over threshold, the one
+// allowed alternative is worse, and the account with real headroom is excluded.
+func TestAutoSwap_NoCandidateNotifNamesExcludedHeadroom(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	worse, _ := s.CreateAccount(ctx, store.Account{Label: "worse", KeyringRef: "ref-w"})
+	excluded, _ := s.CreateAccount(ctx, store.Account{Label: "be-three", KeyringRef: "ref-h"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95})
+	_ = s.PutLimits(ctx, worse.ID, provider.Limits{FiveHourPct: 98})    // allowed, but worse → not a candidate
+	_ = s.PutLimits(ctx, excluded.ID, provider.Limits{FiveHourPct: 10}) // real headroom, but excluded
+	if err := s.PutSetting(ctx, SettingsKeyAutoSwapExcluded, strconv.FormatInt(excluded.ID, 10)); err != nil {
+		t.Fatal(err)
+	}
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	var notifBody string
+	a.Notify = func(_, body string) { notifBody = body }
+
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if swapped || len(fsw.switched) != 0 {
+		t.Fatalf("expected no swap, got swapped=%v switched=%v", swapped, fsw.switched)
+	}
+	if !strings.Contains(notifBody, "be-three") || !strings.Contains(notifBody, "switch") {
+		t.Errorf("notification must name the excluded account and suggest switching to it; got %q", notifBody)
 	}
 }
 
@@ -231,7 +320,7 @@ func TestAutoSwap_AllNearLimit_NoSwap(t *testing.T) {
 	if swapped || len(fsw.switched) != 0 {
 		t.Errorf("no candidate beats active on the binding window — should not swap; got %v", fsw.switched)
 	}
-	if len(notes) != 1 || notes[0] != "No better account to switch to" {
+	if len(notes) != 1 || notes[0] != "No account to switch to" {
 		t.Errorf("want the all-accounts-near-limit notification, got %v", notes)
 	}
 }

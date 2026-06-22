@@ -22,6 +22,15 @@ struct PreferencesView: View {
     // settings table; edited via the ThresholdRow fields below.
     @State private var threshold5h = 80
     @State private var threshold7d = 80
+    // Account IDs the user excluded as auto-switch targets (issue #13). Empty =
+    // none excluded (every account eligible). Persisted as a CSV in
+    // auto_swap.excluded_account_ids; the UI keeps at least one eligible.
+    @State private var excludedTargets: Set<Int64> = []
+    // Set when the user tries to uncheck the last eligible account; shown in red
+    // under the list, auto-hiding after a couple seconds (or on the next valid
+    // toggle). The token guards against an older timer hiding a newer message.
+    @State private var swapTargetError: String?
+    @State private var swapTargetErrorToken = 0
     @State private var autoUpdateOn = true
     // Threshold notifications (active only when auto-switch is off).
     @State private var notifyOn = true
@@ -91,6 +100,24 @@ struct PreferencesView: View {
                         value: $threshold7d
                     )
                     .help("Any whole number from 1 to 100. When the active account's 7-day usage reaches it, AIMonitor switches — even if the alternatives are 5-hour-hot, since weekly caps last days while 5-hour windows recover in hours.")
+                    if model.accounts.count > 1 {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Accounts it may switch to")
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(model.accounts) { acct in
+                                    swapTargetRow(acct)
+                                }
+                                if let err = swapTargetError {
+                                    Text(err)
+                                        .font(.caption2)
+                                        .foregroundStyle(.red)
+                                        .padding(.top, 2)
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                        .help("Pick which accounts auto-switch is allowed to move to. At least one must stay checked.")
+                    }
                 }
                 Text("Crossing either threshold switches to the account with the most remaining headroom.")
                     .font(.caption2)
@@ -225,6 +252,8 @@ struct PreferencesView: View {
             let upd = (try? CLIBridge.configGet("auto_update.enabled")) != "false"
             let thr5 = Int((try? CLIBridge.configGet("auto_swap.threshold_pct")) ?? "80") ?? 80
             let thr7 = Int((try? CLIBridge.configGet("auto_swap.threshold_7d_pct")) ?? "80") ?? 80
+            let exRaw = (try? CLIBridge.configGet("auto_swap.excluded_account_ids")) ?? ""
+            let exSet = Set(exRaw.split(separator: ",").compactMap { Int64($0.trimmingCharacters(in: .whitespaces)) })
             let notif = (try? CLIBridge.configGet("notify.enabled")) != "false"
             let warn = Int((try? CLIBridge.configGet("notify.warn_pct")) ?? "80") ?? 80
             let crit = Int((try? CLIBridge.configGet("notify.crit_pct")) ?? "95") ?? 95
@@ -242,6 +271,7 @@ struct PreferencesView: View {
                 autoUpdateOn = upd
                 threshold5h = thr5
                 threshold7d = thr7
+                excludedTargets = exSet
                 notifyOn = notif
                 notifyWarn = warn
                 notifyCrit = crit
@@ -254,6 +284,71 @@ struct PreferencesView: View {
     private func setSetting(_ key: String, _ on: Bool) {
         DispatchQueue.global(qos: .utility).async {
             try? CLIBridge.configSet(key, on ? "true" : "false")
+        }
+    }
+
+    // One row in the "Accounts it may switch to" list. Checked = eligible (NOT
+    // excluded). Unchecking excludes the account from auto-swap targets.
+    @ViewBuilder
+    private func swapTargetRow(_ acct: AccountRow) -> some View {
+        let eligible = !excludedTargets.contains(acct.id)
+        let isActive = acct.label == model.status?.active_label
+        let help: String = {
+            if isActive {
+                return "Currently active. Auto-switch never moves to the account you're already on — unchecking only stops it from switching back here after it later moves away."
+            }
+            return eligible
+                ? "Auto-switch may move to \(acct.label). Uncheck to exclude it."
+                : "Excluded — auto-switch will not switch to \(acct.label)."
+        }()
+        Toggle(isOn: Binding(
+            get: { !excludedTargets.contains(acct.id) },
+            set: { on in setSwapTarget(acct.id, eligible: on) }
+        )) {
+            Text(acct.label)
+        }
+        .toggleStyle(.checkbox)
+        .pointerCursor()
+        .help(help)
+    }
+
+    // Toggle an account's eligibility as an auto-swap target, then persist.
+    // Refuses to exclude the last remaining eligible account (issue #13: at
+    // least one must stay selectable), so the off-toggle simply reverts.
+    private func setSwapTarget(_ id: Int64, eligible: Bool) {
+        if eligible {
+            excludedTargets.remove(id)
+        } else {
+            let remaining = model.accounts.filter { $0.id != id && !excludedTargets.contains($0.id) }.count
+            guard remaining >= 1 else {
+                flashSwapTargetError("At least one account must stay selected for auto-switch.")
+                return
+            }
+            excludedTargets.insert(id)
+        }
+        swapTargetError = nil
+        persistExcludedTargets()
+    }
+
+    // Flash the "keep at least one" error, auto-hiding after 2.5s. The token
+    // ensures an older timer can't clear a message raised after it.
+    private func flashSwapTargetError(_ message: String) {
+        swapTargetError = message
+        swapTargetErrorToken += 1
+        let token = swapTargetErrorToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            if token == swapTargetErrorToken { swapTargetError = nil }
+        }
+    }
+
+    // Persist the excluded set as a sorted CSV of account IDs, pruned to
+    // accounts that still exist so deleted-account IDs don't linger (or, with
+    // rowid reuse, silently bar a future account). Empty = exclude nothing.
+    private func persistExcludedTargets() {
+        let live = Set(model.accounts.map { $0.id })
+        let csv = excludedTargets.intersection(live).sorted().map(String.init).joined(separator: ",")
+        DispatchQueue.global(qos: .utility).async {
+            try? CLIBridge.configSet("auto_swap.excluded_account_ids", csv)
         }
     }
 
@@ -702,9 +797,7 @@ private struct ThresholdRow: View {
                     // No pointerCursor() here: a forced pointing-hand
                     // suppresses AppKit's native I-beam over text fields,
                     // which is the cue that the field is typeable.
-                Stepper("", value: stepper, in: 1...100)
-                    .labelsHidden()
-                    .frame(height: 22)
+                StepperButtons(value: stepper)
             }
             // Inline feedback: red validation error, or a green "Saved"
             // that auto-hides after 2 seconds.
@@ -778,5 +871,45 @@ private struct ThresholdRow: View {
                 commit()
             }
         )
+    }
+}
+
+// A compact up/down stepper replacing the native NSStepper, which shows no
+// hover feedback. Each arrow gets a rounded background on hover (the same
+// Color.primary.opacity(0.12) highlight IconActionButton uses) plus a pointer
+// cursor. The binding's own setter clamps the value, so +/- can't escape range.
+private struct StepperButtons: View {
+    @Binding var value: Int
+
+    var body: some View {
+        // Overlap the two hover boxes slightly (negative spacing) so the
+        // arrows read as a tight pair, while each chevron stays centered in its
+        // own box — so the hover highlight is balanced around the glyph.
+        VStack(spacing: -4) {
+            StepperArrow(symbol: "chevron.up") { value += 1 }
+            StepperArrow(symbol: "chevron.down") { value -= 1 }
+        }
+        .frame(height: 28)
+    }
+}
+
+private struct StepperArrow: View {
+    let symbol: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(Color.primary.opacity(hovering ? 0.12 : 0))
+                .frame(width: 20, height: 16)
+                .overlay {
+                    Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .pointerCursor()
     }
 }
