@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -54,6 +55,7 @@ var configKeys = []string{
 	daemon.SettingsKeyAutoSwapThreshold,
 	daemon.SettingsKeyAutoSwapThreshold7d,
 	daemon.SettingsKeyAutoSwapGrace,
+	daemon.SettingsKeyAutoSwapExcluded,
 	daemon.SettingsKeyNotifyEnabled,
 	daemon.SettingsKeyNotifyWarnPct,
 	daemon.SettingsKeyNotifyCritPct,
@@ -85,6 +87,7 @@ func isStoreKey(key string) bool {
 		daemon.SettingsKeyAutoSwapThreshold,
 		daemon.SettingsKeyAutoSwapThreshold7d,
 		daemon.SettingsKeyAutoSwapGrace,
+		daemon.SettingsKeyAutoSwapExcluded,
 		daemon.SettingsKeyNotifyEnabled,
 		daemon.SettingsKeyNotifyWarnPct,
 		daemon.SettingsKeyNotifyCritPct,
@@ -323,6 +326,31 @@ func validateStoreValue(key, value string) (string, error) {
 			return "", fmt.Errorf("%s: must be >= 0, got %d", key, n)
 		}
 		return strconv.Itoa(n), nil
+	case daemon.SettingsKeyAutoSwapExcluded:
+		// Comma-separated account IDs to exclude as auto-swap targets.
+		// Normalise: parse each as an int64, drop blanks/dupes, sort
+		// ascending. Empty is valid and means "exclude nothing".
+		seen := map[int64]bool{}
+		var ids []int64
+		for _, p := range strings.Split(value, ",") {
+			if p = strings.TrimSpace(p); p == "" {
+				continue
+			}
+			id, perr := strconv.ParseInt(p, 10, 64)
+			if perr != nil {
+				return "", fmt.Errorf("%s: not an account id: %q", key, p)
+			}
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		parts := make([]string, len(ids))
+		for i, id := range ids {
+			parts[i] = strconv.FormatInt(id, 10)
+		}
+		return strings.Join(parts, ","), nil
 	case daemon.SettingsKeyNotifyEnabled:
 		b, err := parseBool(value)
 		if err != nil {
@@ -376,6 +404,9 @@ func storeKeyDefault(key string) string {
 		return strconv.FormatFloat(daemon.DefaultAutoSwapThreshold7d, 'f', -1, 64)
 	case daemon.SettingsKeyAutoSwapGrace:
 		return strconv.Itoa(daemon.DefaultAutoSwapGraceSec)
+	case daemon.SettingsKeyAutoSwapExcluded:
+		// Empty = exclude nothing (every account is an eligible target).
+		return ""
 	case daemon.SettingsKeyNotifyEnabled:
 		return strconv.FormatBool(daemon.DefaultNotifyEnabled)
 	case daemon.SettingsKeyNotifyWarnPct:

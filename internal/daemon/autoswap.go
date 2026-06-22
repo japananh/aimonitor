@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,12 @@ const (
 	// SettingsKeyAutoSwapThreshold7d is the 7-day-window threshold.
 	SettingsKeyAutoSwapThreshold7d = "auto_swap.threshold_7d_pct"
 	SettingsKeyAutoSwapGrace       = "auto_swap.grace_sec"
+	// SettingsKeyAutoSwapExcluded lists account IDs (comma-separated) that
+	// auto-swap must NOT switch to. Empty/unset means no exclusions — every
+	// account is an eligible target, and accounts added later stay eligible by
+	// default (a blocklist, so a new account never silently drops out). The UI
+	// guarantees at least one account remains eligible.
+	SettingsKeyAutoSwapExcluded = "auto_swap.excluded_account_ids"
 )
 
 // Defaults applied when the corresponding auto_swap.* setting is unset.
@@ -199,11 +206,13 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 			"window", binding, "active", activeLabel, "pct", activePct)
 		a.pending = nil
 		a.cooldownUntil = a.now().Add(cooldownAfterExhausted)
-		a.notify(
-			"No better account to switch to",
-			fmt.Sprintf("%q hit %.0f%% of its %s limit, but no other account has lower %s usage than yours (or they're already exhausted). Staying on %q.",
-				activeLabel, activePct, binding, binding, activeLabel),
-		)
+		body := fmt.Sprintf("%q hit %.0f%% of its %s limit — no other account has headroom.", activeLabel, activePct, binding)
+		// If the only account with headroom is one the user excluded, suggest
+		// switching to it manually — auto-swap won't, since it's excluded.
+		if exLabel, ok := a.excludedCandidateWithHeadroom(ctx, activeAcct.ID, activeLim, binding); ok {
+			body = fmt.Sprintf("%q hit %.0f%% (%s) — switch to %q (excluded, has headroom).", activeLabel, activePct, binding, exLabel)
+		}
+		a.notify("No account to switch to", body)
 		return false, nil
 	}
 
@@ -311,13 +320,17 @@ func (a *AutoSwapper) refreshStaleCandidates(ctx context.Context, activeID int64
 	if err != nil {
 		return
 	}
+	excluded := a.excludedTargets(ctx)
 	done := 0
 	for _, acct := range accounts {
 		if acct.ID == activeID {
 			continue
 		}
-		// Don't spend a refresh on an account that's parked after a 429 —
-		// pickCandidate will exclude it anyway.
+		// Barred as a swap target (issue #13) or parked after a 429 —
+		// pickCandidate will skip it either way, so don't spend a refresh on it.
+		if excluded[acct.ID] {
+			continue
+		}
 		if acct.CooldownUntil.After(a.now()) {
 			continue
 		}
@@ -412,6 +425,10 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 	if err != nil {
 		return candidate{}, false, err
 	}
+	// Accounts the user barred from being swap targets (issue #13). Empty set
+	// = nothing excluded. Excluded accounts are skipped exactly like the active
+	// one — never considered, never ranked.
+	excluded := a.excludedTargets(ctx)
 	activeBindingPct := activeLim.FiveHourPct
 	if binding == window7d {
 		activeBindingPct = activeLim.SevenDayPct
@@ -433,6 +450,10 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 	var tier1, tier2, uncertain []candidate
 	for _, acct := range accounts {
 		if acct.ID == activeID {
+			continue
+		}
+		// User barred this account from being a swap target (issue #13).
+		if excluded[acct.ID] {
 			continue
 		}
 		// Parked after a 429: it would just 429 again on use, so it's not a
@@ -552,6 +573,85 @@ func (a *AutoSwapper) config(ctx context.Context) (enabled bool, threshold5h, th
 	}
 
 	return enabled, threshold5h, threshold7d, graceSec, nil
+}
+
+// excludedTargets returns the set of account IDs the user has barred from
+// being auto-swap targets (auto_swap.excluded_account_ids). An unset/empty
+// setting — or any unparseable entry — yields an empty set, i.e. nothing
+// excluded and every account eligible. Best-effort: a read error is logged and
+// treated as "no exclusions" rather than blocking a swap decision (auto-swap
+// is a safety feature; an unreadable preference must never strand it).
+func (a *AutoSwapper) excludedTargets(ctx context.Context) map[int64]bool {
+	excluded := map[int64]bool{}
+	v, err := a.Store.GetSetting(ctx, SettingsKeyAutoSwapExcluded)
+	if err != nil {
+		if !errors.Is(err, store.ErrSettingNotFound) {
+			a.log().Warn("auto-swap read excluded targets", "err", err)
+		}
+		return excluded
+	}
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if id, perr := strconv.ParseInt(part, 10, 64); perr == nil {
+			excluded[id] = true
+		}
+	}
+	return excluded
+}
+
+// excludedCandidateWithHeadroom finds an account the user excluded as a swap
+// target (auto_swap.excluded_account_ids) that nonetheless WOULD be a viable
+// target — fresh snapshot, not exhausted, and lower binding-window usage than
+// the active account. It exists so the "no candidate" notification can be
+// actionable: when the only account with headroom is one the user excluded, the
+// exclusion (not exhaustion) is what's blocking the swap, and we can name it and
+// point them at the toggle. Returns the lowest-usage such account, or ("", false).
+func (a *AutoSwapper) excludedCandidateWithHeadroom(ctx context.Context, activeID int64, activeLim provider.Limits, binding windowKind) (string, bool) {
+	excluded := a.excludedTargets(ctx)
+	if len(excluded) == 0 {
+		return "", false
+	}
+	accounts, err := a.Store.ListAccounts(ctx)
+	if err != nil {
+		return "", false
+	}
+	now := a.now()
+	activeBindingPct := activeLim.FiveHourPct
+	if binding == window7d {
+		activeBindingPct = activeLim.SevenDayPct
+	}
+	best, bestPct := "", activeBindingPct // candidate must beat the active to count
+	for _, acct := range accounts {
+		if acct.ID == activeID || !excluded[acct.ID] {
+			continue
+		}
+		if acct.CooldownUntil.After(now) {
+			continue
+		}
+		lim, err := a.Store.GetLimits(ctx, acct.ID)
+		if err != nil {
+			continue
+		}
+		// Same freshness/exhaustion bar pickCandidate uses — don't vouch for a
+		// stale, reset-crossed, or exhausted account's "headroom".
+		if now.Sub(lim.FetchedAt) > candidateFreshWindow || windowResetCrossed(lim, now) {
+			continue
+		}
+		if lim.FiveHourPct >= exhaustedPct || lim.SevenDayPct >= exhaustedPct {
+			continue
+		}
+		p := lim.FiveHourPct
+		if binding == window7d {
+			p = lim.SevenDayPct
+		}
+		if p < bestPct {
+			best, bestPct = acct.Label, p
+		}
+	}
+	return best, best != ""
 }
 
 func (a *AutoSwapper) now() time.Time {
