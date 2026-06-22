@@ -15,6 +15,9 @@ func TestValidateStoreValue(t *testing.T) {
 		{daemon.SettingsKeyAutoSwapThreshold, "62.5", "62.5"},
 		{daemon.SettingsKeyAutoSwapGrace, "0", "0"},
 		{daemon.SettingsKeyAutoSwapGrace, "120", "120"},
+		{daemon.SettingsKeyAutoSwapExcluded, "3,1,1,2", "1,2,3"}, // dedupe + sort
+		{daemon.SettingsKeyAutoSwapExcluded, " 2 , 5 ", "2,5"},   // trim whitespace
+		{daemon.SettingsKeyAutoSwapExcluded, "", ""},             // empty = exclude nothing
 	}
 	for _, c := range ok {
 		got, err := validateStoreValue(c.key, c.in)
@@ -34,6 +37,8 @@ func TestValidateStoreValue(t *testing.T) {
 		{daemon.SettingsKeyAutoSwapThreshold, "abc"},
 		{daemon.SettingsKeyAutoSwapGrace, "-5"}, // must be >= 0
 		{daemon.SettingsKeyAutoSwapGrace, "1.5"},
+		{daemon.SettingsKeyAutoSwapExcluded, "abc"},   // not an account id
+		{daemon.SettingsKeyAutoSwapExcluded, "1,abc"}, // one bad entry fails the whole value
 	}
 	for _, c := range bad {
 		if _, err := validateStoreValue(c.key, c.in); err == nil {
