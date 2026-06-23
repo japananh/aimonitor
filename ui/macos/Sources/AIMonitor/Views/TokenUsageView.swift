@@ -61,10 +61,12 @@ struct TokenUsageWindowView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .help("""
-                        Tokens Claude Code actually processed — per account, by local-time day or hour.
-                        This is VOLUME only: it is NOT your rate limit (that's in the menu bar) and NOT a bill (subscription plans aren't charged per token).
-                        New = tokens sent + generated this turn, processed at full price.
-                        Cached = earlier context reused from the prompt cache, billed ≈10% of the input price.
+                        Token volume Claude Code processed on this computer — per account, by day or hour. Read from Claude Code's own logs, since AIMonitor started tracking.
+
+                        Volume only — NOT your rate limit (the menu-bar 5h/7d % covers your whole account across every device, so they won't match) and not a bill.
+
+                        New = your prompts + the replies, processed fresh.
+                        Cached = earlier context reused from the prompt cache — much cheaper than New.
                         """)
                 Spacer()
             }
@@ -74,7 +76,7 @@ struct TokenUsageWindowView: View {
 
             // Plain-language explainer up front so the numbers below aren't
             // misread as a rate limit or a dollar cost.
-            Text("Actual tokens processed — volume only, not your rate limit or a bill.")
+            Text("Actual tokens processed on this computer — volume only, not your rate limit or a bill.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -85,9 +87,9 @@ struct TokenUsageWindowView: View {
             // granularity toggle (right), aligned. Swatches match the bars.
             HStack(spacing: 14) {
                 legendItem(color: tokenNewColor, label: "New",
-                           help: "Tokens sent + generated this turn — newly processed at full price.")
+                           help: "Your prompts + the replies, processed fresh.")
                 legendItem(color: tokenCachedColor, label: "Cached",
-                           help: "Earlier context reused from the prompt cache — billed ≈10% of the input price.")
+                           help: "Earlier context reused from the prompt cache — much cheaper than New.")
                 Spacer()
                 // Keep Daily · Hourly tight together (the outer row uses wide
                 // spacing for the legend, which otherwise spread these apart).
@@ -248,7 +250,7 @@ private struct AccountTokenCard: View {
                 Text("\(compactTokens(newTotal)) new · \(cachedPctText)% reused from cache")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .help("Of \(compactTokens(windowTotal)) tokens here, \(compactTokens(newTotal)) were newly processed (your prompts + the replies, full price) and \(compactTokens(cacheTotal)) were reused from cache (earlier context, ≈10% of input price) — \(cachedPctText)% of the total.")
+                    .help("Of \(compactTokens(windowTotal)) tokens here, \(compactTokens(newTotal)) were newly processed (your prompts + the replies) and \(compactTokens(cacheTotal)) came from the prompt cache (earlier context reused — far lighter than new tokens) — \(cachedPctText)% of the total.")
 
                 ForEach(recent, id: \.bucket) { b in
                     bucketRow(b, maxTotal: maxTotal)
