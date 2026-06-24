@@ -252,11 +252,12 @@ type cuTaskIn struct {
 func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in cuTaskIn) (*mcp.CallToolResult, any, error) {
 	var out struct {
 		rawCUTask
-		Description string `json:"description"`
-		DateCreated string `json:"date_created"`
-		DateUpdated string `json:"date_updated"`
-		Parent      string `json:"parent"`
-		Creator     struct {
+		Description    string `json:"description"`
+		DateCreated    string `json:"date_created"`
+		DateUpdated    string `json:"date_updated"`
+		Parent         string `json:"parent"`
+		TopLevelParent string `json:"top_level_parent"`
+		Creator        struct {
 			Username string `json:"username"`
 		} `json:"creator"`
 	}
@@ -272,6 +273,12 @@ func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in 
 	}
 	if out.Parent != "" {
 		res["parent"] = out.Parent
+	}
+	// top_level_parent comes back in the same GET /task response (no extra
+	// request); surface it so callers can jump to the top of a subtask
+	// hierarchy in one hop instead of walking up via repeated get_task.
+	if out.TopLevelParent != "" {
+		res["top_level_parent"] = out.TopLevelParent
 	}
 	return textResult(res)
 }
