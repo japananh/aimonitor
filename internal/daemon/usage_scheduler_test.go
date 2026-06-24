@@ -239,3 +239,34 @@ func TestDoubleCapped(t *testing.T) {
 		}
 	}
 }
+
+// successInterval must speed up not only when the active account is near its
+// limit (pct >= SpeedupAtPct) but also whenever a swap is armed — even below
+// the threshold — so the grace deadline isn't a full baseline interval late.
+// Error/backoff paths never call this, so a pending swap can't undercut a 429
+// backoff (that precedence lives in Run's switch).
+func TestUsageScheduler_SuccessInterval(t *testing.T) {
+	u := &UsageScheduler{}
+	u.defaults() // SpeedupAtPct=90, Baseline=300s, SpeedupInterval=60s
+
+	cases := []struct {
+		name    string
+		pct     float64
+		known   bool
+		pending bool
+		want    time.Duration
+	}{
+		{"below threshold, no pending", 50, true, false, u.Baseline},
+		{"below threshold, pending", 50, true, true, u.SpeedupInterval},
+		{"at/above threshold, no pending", 95, true, false, u.SpeedupInterval},
+		{"at/above threshold, pending", 95, true, true, u.SpeedupInterval},
+		{"pct unknown, no pending", 0, false, false, u.Baseline},
+		{"pct unknown, pending", 0, false, true, u.SpeedupInterval},
+	}
+	for _, c := range cases {
+		if got := u.successInterval(c.pct, c.known, c.pending); got != c.want {
+			t.Errorf("%s: successInterval(%v,%v,%v) = %v, want %v",
+				c.name, c.pct, c.known, c.pending, got, c.want)
+		}
+	}
+}

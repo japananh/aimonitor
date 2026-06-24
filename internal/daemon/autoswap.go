@@ -654,6 +654,19 @@ func (a *AutoSwapper) excludedCandidateWithHeadroom(ctx context.Context, activeI
 	return best, best != ""
 }
 
+// HasPending reports whether a swap is armed and waiting out its grace window.
+// The UsageScheduler polls at its speed-up cadence while this is true, so the
+// grace deadline is honoured within ~one speed-up interval — a swap can arm
+// below the scheduler's speed-up threshold, which would otherwise fire it a
+// full baseline interval (~5 min) late. NOTE: pending lives in memory only — a
+// daemon restart drops it and the next tick re-arms, costing one more grace
+// window (cheaper than the old full-baseline miss, but not free).
+func (a *AutoSwapper) HasPending() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.pending != nil
+}
+
 func (a *AutoSwapper) now() time.Time {
 	if a.Now != nil {
 		return a.Now()

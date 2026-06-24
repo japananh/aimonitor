@@ -804,3 +804,31 @@ func TestAutoSwap_ResetCrossedCandidateSelectableWithoutRefresh(t *testing.T) {
 		t.Fatalf("expected swap to just-reset via uncertain tier, got %v", fsw.switched)
 	}
 }
+
+// While a swap is armed (grace window not yet elapsed) HasPending must report
+// true, so the UsageScheduler keeps polling at the speed-up cadence and the
+// grace deadline fires promptly instead of a full baseline interval late.
+func TestAutoSwap_HasPendingWhileArmed(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "r-a"})
+	cand, _ := s.CreateAccount(ctx, store.Account{Label: "cand", KeyringRef: "r-c"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95})
+	_ = s.PutLimits(ctx, cand.ID, provider.Limits{FiveHourPct: 10})
+	// Default grace (60s, no immediateSwap) so the swap ARMS without firing.
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	if a.HasPending() {
+		t.Fatal("HasPending should be false before any decision")
+	}
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if swapped || len(fsw.switched) != 0 {
+		t.Fatalf("should arm (grace>0), not fire; got swapped=%v switched=%v", swapped, fsw.switched)
+	}
+	if !a.HasPending() {
+		t.Error("HasPending should be true while a swap is armed")
+	}
+}
