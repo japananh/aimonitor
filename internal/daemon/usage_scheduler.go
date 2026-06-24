@@ -179,7 +179,10 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 			return nil
 		case <-timer.C:
 			err := u.tickOnce(ctx)
-			next := u.Baseline
+			// Every switch case below assigns next (the default via
+			// successInterval), so don't pre-seed it — that would be a dead
+			// store (ineffassign).
+			var next time.Duration
 			switch {
 			case claude.IsRefreshExpired(err):
 				// The refresh token was rejected. This is either a genuinely
