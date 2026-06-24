@@ -363,13 +363,41 @@ func (c *Client) clickupUpdateTask(ctx context.Context, _ *mcp.CallToolRequest, 
 
 // --- comments -----------------------------------------------------------
 
+// commentBody builds the request body for create/update comment. With no
+// mentions it sends the flat comment_text (unchanged behaviour). With mentions
+// it sends ClickUp's structured `comment` array — the text followed by one
+// `type:tag` block per user id — so each tag becomes a live @mention that
+// notifies the user instead of staying plain text.
+//
+// NOTE: ClickUp documents the `comment` array for CREATE (POST
+// /task/{id}/comment). Its acceptance on UPDATE (PUT /comment/{id}) and the
+// actual notification firing are not documented and are unverified against a
+// live workspace.
+func commentBody(text string, mentions []int) map[string]any {
+	if len(mentions) == 0 {
+		return map[string]any{"comment_text": text}
+	}
+	blocks := make([]map[string]any, 0, 1+2*len(mentions))
+	if text != "" {
+		blocks = append(blocks, map[string]any{"text": text})
+	}
+	for _, uid := range mentions {
+		blocks = append(blocks,
+			map[string]any{"text": " "},
+			map[string]any{"type": "tag", "user": map[string]any{"id": uid}},
+		)
+	}
+	return map[string]any{"comment": blocks}
+}
+
 type cuAddCommentIn struct {
-	TaskID  string `json:"task_id" jsonschema:"task to comment on"`
-	Comment string `json:"comment" jsonschema:"comment text"`
+	TaskID   string `json:"task_id" jsonschema:"task to comment on"`
+	Comment  string `json:"comment" jsonschema:"comment text"`
+	Mentions []int  `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members"`
 }
 
 func (c *Client) clickupAddComment(ctx context.Context, _ *mcp.CallToolRequest, in cuAddCommentIn) (*mcp.CallToolResult, any, error) {
-	body := map[string]any{"comment_text": in.Comment}
+	body := commentBody(in.Comment, in.Mentions)
 	var out struct {
 		ID any `json:"id"`
 	}
@@ -420,12 +448,13 @@ func (c *Client) clickupDeleteComment(ctx context.Context, _ *mcp.CallToolReques
 type cuUpdateCommentIn struct {
 	CommentID string `json:"comment_id" jsonschema:"comment ID (from clickup_list_comments or clickup_add_comment)"`
 	Comment   string `json:"comment" jsonschema:"new comment text"`
+	Mentions  []int  `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members"`
 }
 
 // clickupUpdateComment edits a comment's text in place via PUT /comment/{id},
 // so the comment keeps its id and thread position (unlike delete + re-add).
 func (c *Client) clickupUpdateComment(ctx context.Context, _ *mcp.CallToolRequest, in cuUpdateCommentIn) (*mcp.CallToolResult, any, error) {
-	body := map[string]any{"comment_text": in.Comment}
+	body := commentBody(in.Comment, in.Mentions)
 	if err := c.clickup(ctx, http.MethodPut, "/comment/"+url.PathEscape(in.CommentID), nil, body, nil); err != nil {
 		return nil, nil, err
 	}
