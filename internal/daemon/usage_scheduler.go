@@ -85,6 +85,15 @@ type UsageScheduler struct {
 	// AutoSwapper decision. Nil disables the hook.
 	AfterFetch func(ctx context.Context, activeLabel string)
 
+	// SwapPending, when set, reports whether the AutoSwapper has a swap armed
+	// and waiting out its grace window. While true the scheduler polls at
+	// SpeedupInterval even below SpeedupAtPct, so the grace deadline fires
+	// within one speed-up interval instead of a full baseline interval late
+	// (a swap can arm below SpeedupAtPct). Nil disables it (tests / no
+	// auto-swap). Only consulted on a successful fetch — error backoffs always
+	// win, so a pending swap never undercuts a 429 backoff.
+	SwapPending func() bool
+
 	// RefreshActive, when set, ensures the live credential holds a valid
 	// access token before each fetch — refreshing it under the switch lock
 	// when expired (force=false) or after a 401 (force=true) — and returns
@@ -134,6 +143,20 @@ func (u *UsageScheduler) initialDelay() time.Duration {
 	return d
 }
 
+// successInterval picks the poll interval after a SUCCESSFUL fetch: the
+// speed-up cadence when the active account is near its limit (pct known and
+// >= SpeedupAtPct) OR a swap is armed and waiting out its grace window —
+// otherwise that swap, which can arm below SpeedupAtPct, would fire a full
+// baseline interval late. Baseline otherwise. Error/backoff intervals are
+// chosen by Run's other switch cases and deliberately never reach here, so a
+// 429 backoff is never undercut by a pending swap.
+func (u *UsageScheduler) successInterval(pct float64, pctKnown, pending bool) time.Duration {
+	if (pctKnown && pct >= u.SpeedupAtPct) || pending {
+		return u.SpeedupInterval
+	}
+	return u.Baseline
+}
+
 // Run blocks until ctx is cancelled, fetching limits for the active
 // account on a jittered, error-aware schedule. The first fetch happens
 // after a single jittered baseline interval so the daemon doesn't spike
@@ -156,7 +179,10 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 			return nil
 		case <-timer.C:
 			err := u.tickOnce(ctx)
-			next := u.Baseline
+			// Every switch case below assigns next (the default via
+			// successInterval), so don't pre-seed it — that would be a dead
+			// store (ineffassign).
+			var next time.Duration
 			switch {
 			case claude.IsRefreshExpired(err):
 				// The refresh token was rejected. This is either a genuinely
@@ -206,11 +232,11 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 				// accounts are fetched on demand — when the popover opens, and at
 				// swap-decision time (refreshStaleCandidates) — not on a
 				// continuous round-robin, which would keep hitting Anthropic for
-				// shared accounts nobody's looking at. Speed up only while the
-				// active account is near its limit.
-				if pct, ok := u.activePct(ctx); ok && pct >= u.SpeedupAtPct {
-					next = u.SpeedupInterval
-				}
+				// shared accounts nobody's looking at. Speed up while the active
+				// account is near its limit, or while a swap is armed so its
+				// grace deadline fires promptly (it can arm below SpeedupAtPct).
+				pct, ok := u.activePct(ctx)
+				next = u.successInterval(pct, ok, u.SwapPending != nil && u.SwapPending())
 			}
 			timer.Reset(u.jittered(next))
 		}

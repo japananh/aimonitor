@@ -190,6 +190,10 @@ func (s *Server) Run(ctx context.Context) error {
 				}
 				notifier.Evaluate(ctx, label)
 			},
+			// Keep polling at the speed-up cadence while a swap is armed so its
+			// grace deadline fires within ~one interval, not a full baseline
+			// one (a swap can arm below SpeedupAtPct).
+			SwapPending: autoSwap.HasPending,
 		}
 		go func() { _ = usage.Run(ctx) }()
 	}
