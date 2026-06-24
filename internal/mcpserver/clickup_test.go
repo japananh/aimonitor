@@ -2,6 +2,45 @@ package mcpserver
 
 import "testing"
 
+// slimTask must surface the numeric ids a caller needs to recreate/act on a
+// known task via clickup_create_task — list_id, assignee_ids, and tags — not
+// just their human-readable names (#27).
+func TestSlimTask_CapturesIDsForRecreate(t *testing.T) {
+	var raw rawCUTask
+	raw.ID = "abc"
+	raw.Name = "T"
+	raw.List.ID = "901600123"
+	raw.List.Name = "Sprint 102"
+	raw.Assignees = []struct {
+		ID       int    `json:"id"`
+		Username string `json:"username"`
+	}{{ID: 11, Username: "alice"}, {ID: 22, Username: "bob"}}
+	raw.Tags = []struct {
+		Name string `json:"name"`
+	}{{Name: "bug"}, {Name: "p1"}}
+	raw.Parent = "86c2parent"
+	raw.TopLevelParent = "86c2top"
+
+	got := slimTask(raw)
+
+	if got.Parent != "86c2parent" || got.TopLevelParent != "86c2top" {
+		t.Errorf("parent = %q / top = %q, want 86c2parent / 86c2top", got.Parent, got.TopLevelParent)
+	}
+
+	if got.ListID != "901600123" || got.List != "Sprint 102" {
+		t.Errorf("list = %q / %q, want Sprint 102 / 901600123", got.List, got.ListID)
+	}
+	if len(got.AssigneeIDs) != 2 || got.AssigneeIDs[0] != 11 || got.AssigneeIDs[1] != 22 {
+		t.Errorf("AssigneeIDs = %v, want [11 22]", got.AssigneeIDs)
+	}
+	if len(got.Assignees) != 2 || got.Assignees[0] != "alice" {
+		t.Errorf("Assignees = %v, want [alice bob]", got.Assignees)
+	}
+	if len(got.Tags) != 2 || got.Tags[0] != "bug" || got.Tags[1] != "p1" {
+		t.Errorf("Tags = %v, want [bug p1]", got.Tags)
+	}
+}
+
 // No mentions, no rich array → flat comment_text, exactly as before (fallback).
 func TestCommentBody_FlatWhenNoMentions(t *testing.T) {
 	b := commentBody("hello", nil, nil)

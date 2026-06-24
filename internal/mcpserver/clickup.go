@@ -14,14 +14,19 @@ import (
 // raw task payloads are enormous (custom fields, watchers, checklists);
 // keep the fields needed to identify, triage, and link.
 type cuTask struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Status    string   `json:"status,omitempty"`
-	Assignees []string `json:"assignees,omitempty"`
-	Priority  string   `json:"priority,omitempty"`
-	DueDate   string   `json:"due_date,omitempty"`
-	List      string   `json:"list,omitempty"`
-	URL       string   `json:"url,omitempty"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Status         string   `json:"status,omitempty"`
+	Assignees      []string `json:"assignees,omitempty"`
+	AssigneeIDs    []int    `json:"assignee_ids,omitempty"`
+	Priority       string   `json:"priority,omitempty"`
+	DueDate        string   `json:"due_date,omitempty"`
+	List           string   `json:"list,omitempty"`
+	ListID         string   `json:"list_id,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
+	Parent         string   `json:"parent,omitempty"`
+	TopLevelParent string   `json:"top_level_parent,omitempty"`
+	URL            string   `json:"url,omitempty"`
 }
 
 type rawCUTask struct {
@@ -31,6 +36,7 @@ type rawCUTask struct {
 		Status string `json:"status"`
 	} `json:"status"`
 	Assignees []struct {
+		ID       int    `json:"id"`
 		Username string `json:"username"`
 	} `json:"assignees"`
 	Priority *struct {
@@ -38,18 +44,29 @@ type rawCUTask struct {
 	} `json:"priority"`
 	DueDate string `json:"due_date"`
 	List    struct {
+		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"list"`
-	URL string `json:"url"`
+	Tags []struct {
+		Name string `json:"name"`
+	} `json:"tags"`
+	Parent         string `json:"parent"`
+	TopLevelParent string `json:"top_level_parent"`
+	URL            string `json:"url"`
 }
 
 func slimTask(t rawCUTask) cuTask {
 	out := cuTask{
 		ID: t.ID, Name: t.Name, Status: t.Status.Status,
-		DueDate: t.DueDate, List: t.List.Name, URL: t.URL,
+		DueDate: t.DueDate, List: t.List.Name, ListID: t.List.ID,
+		Parent: t.Parent, TopLevelParent: t.TopLevelParent, URL: t.URL,
 	}
 	for _, a := range t.Assignees {
 		out.Assignees = append(out.Assignees, a.Username)
+		out.AssigneeIDs = append(out.AssigneeIDs, a.ID)
+	}
+	for _, tag := range t.Tags {
+		out.Tags = append(out.Tags, tag.Name)
 	}
 	if t.Priority != nil {
 		out.Priority = t.Priority.Priority
@@ -252,33 +269,24 @@ type cuTaskIn struct {
 func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in cuTaskIn) (*mcp.CallToolResult, any, error) {
 	var out struct {
 		rawCUTask
-		Description    string `json:"description"`
-		DateCreated    string `json:"date_created"`
-		DateUpdated    string `json:"date_updated"`
-		Parent         string `json:"parent"`
-		TopLevelParent string `json:"top_level_parent"`
-		Creator        struct {
+		Description string `json:"description"`
+		DateCreated string `json:"date_created"`
+		DateUpdated string `json:"date_updated"`
+		Creator     struct {
 			Username string `json:"username"`
 		} `json:"creator"`
 	}
 	if err := c.clickup(ctx, http.MethodGet, "/task/"+url.PathEscape(in.TaskID), nil, nil, &out); err != nil {
 		return nil, nil, err
 	}
+	// parent / top_level_parent ride on the slim task now (so list_tasks and
+	// search_tasks expose them too), all from this one GET — no extra request.
 	res := map[string]any{
 		"task":         slimTask(out.rawCUTask),
 		"description":  out.Description,
 		"date_created": out.DateCreated,
 		"date_updated": out.DateUpdated,
 		"creator":      out.Creator.Username,
-	}
-	if out.Parent != "" {
-		res["parent"] = out.Parent
-	}
-	// top_level_parent comes back in the same GET /task response (no extra
-	// request); surface it so callers can jump to the top of a subtask
-	// hierarchy in one hop instead of walking up via repeated get_task.
-	if out.TopLevelParent != "" {
-		res["top_level_parent"] = out.TopLevelParent
 	}
 	return textResult(res)
 }
