@@ -363,17 +363,24 @@ func (c *Client) clickupUpdateTask(ctx context.Context, _ *mcp.CallToolRequest, 
 
 // --- comments -----------------------------------------------------------
 
-// commentBody builds the request body for create/update comment. With no
-// mentions it sends the flat comment_text (unchanged behaviour). With mentions
-// it sends ClickUp's structured `comment` array — the text followed by one
-// `type:tag` block per user id — so each tag becomes a live @mention that
-// notifies the user instead of staying plain text.
+// commentBody builds the request body for create/update comment, in priority
+// order:
+//
+//	rich     → sent verbatim as ClickUp's structured `comment` array (full rich
+//	           text: bullet lists, code blocks, bold, plus its own type:tag
+//	           blocks). Overrides text/mentions.
+//	mentions → `comment` array of the text followed by one type:tag block per
+//	           user id, so each tag is a live @mention that notifies the user.
+//	otherwise→ flat `comment_text` (unchanged plain-text behaviour).
 //
 // NOTE: ClickUp documents the `comment` array for CREATE (POST
 // /task/{id}/comment). Its acceptance on UPDATE (PUT /comment/{id}) and the
 // actual notification firing are not documented and are unverified against a
 // live workspace.
-func commentBody(text string, mentions []int) map[string]any {
+func commentBody(text string, mentions []int, rich []map[string]any) map[string]any {
+	if len(rich) > 0 {
+		return map[string]any{"comment": rich}
+	}
 	if len(mentions) == 0 {
 		return map[string]any{"comment_text": text}
 	}
@@ -391,13 +398,14 @@ func commentBody(text string, mentions []int) map[string]any {
 }
 
 type cuAddCommentIn struct {
-	TaskID   string `json:"task_id" jsonschema:"task to comment on"`
-	Comment  string `json:"comment" jsonschema:"comment text"`
-	Mentions []int  `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members"`
+	TaskID      string           `json:"task_id" jsonschema:"task to comment on"`
+	Comment     string           `json:"comment,omitempty" jsonschema:"comment text (plain); optional if comment_json or mentions is given"`
+	Mentions    []int            `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members"`
+	CommentJSON []map[string]any `json:"comment_json,omitempty" jsonschema:"optional ClickUp rich-text comment array (segments like {text, attributes} and/or {type:tag, user:{id}}); when set it is sent verbatim and overrides comment/mentions — use for bullet lists, code blocks, bold, etc."`
 }
 
 func (c *Client) clickupAddComment(ctx context.Context, _ *mcp.CallToolRequest, in cuAddCommentIn) (*mcp.CallToolResult, any, error) {
-	body := commentBody(in.Comment, in.Mentions)
+	body := commentBody(in.Comment, in.Mentions, in.CommentJSON)
 	var out struct {
 		ID any `json:"id"`
 	}
@@ -446,15 +454,16 @@ func (c *Client) clickupDeleteComment(ctx context.Context, _ *mcp.CallToolReques
 }
 
 type cuUpdateCommentIn struct {
-	CommentID string `json:"comment_id" jsonschema:"comment ID (from clickup_list_comments or clickup_add_comment)"`
-	Comment   string `json:"comment" jsonschema:"new comment text"`
-	Mentions  []int  `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members"`
+	CommentID   string           `json:"comment_id" jsonschema:"comment ID (from clickup_list_comments or clickup_add_comment)"`
+	Comment     string           `json:"comment,omitempty" jsonschema:"new comment text (plain); optional if comment_json or mentions is given"`
+	Mentions    []int            `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members"`
+	CommentJSON []map[string]any `json:"comment_json,omitempty" jsonschema:"optional ClickUp rich-text comment array (segments like {text, attributes} and/or {type:tag, user:{id}}); when set it is sent verbatim and overrides comment/mentions. NOTE: an update replaces the whole comment, so include the full rich text to avoid losing existing formatting (list_comments returns plain text only)."`
 }
 
 // clickupUpdateComment edits a comment's text in place via PUT /comment/{id},
 // so the comment keeps its id and thread position (unlike delete + re-add).
 func (c *Client) clickupUpdateComment(ctx context.Context, _ *mcp.CallToolRequest, in cuUpdateCommentIn) (*mcp.CallToolResult, any, error) {
-	body := commentBody(in.Comment, in.Mentions)
+	body := commentBody(in.Comment, in.Mentions, in.CommentJSON)
 	if err := c.clickup(ctx, http.MethodPut, "/comment/"+url.PathEscape(in.CommentID), nil, body, nil); err != nil {
 		return nil, nil, err
 	}
