@@ -56,7 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // click monitor, and the monitors swallow each other's clicks so the
         // panel never opens. If another instance of this bundle id is already
         // running, bow out before creating any UI — the first one wins.
-        if let bundleID = Bundle.main.bundleIdentifier {
+        if let bundleID = Bundle.main.bundleIdentifier,
+           ProcessInfo.processInfo.environment["AIMONITOR_SKIP_GUARD"] == nil {
             let me = NSRunningApplication.current
             let others = NSRunningApplication
                 .runningApplications(withBundleIdentifier: bundleID)
@@ -179,6 +180,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // .help() tooltips need mouse-moved events; without this they fire
             // unreliably in this window (e.g. not on the active/expanded card).
             win.acceptsMouseMovedEvents = true
+            // Stop fetching the heavy token buckets once the window closes.
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(tokenWindowWillClose),
+                name: NSWindow.willCloseNotification, object: win)
             tokenUsageWindow = win
         }
         tokenUsageWindow?.center()
@@ -187,6 +192,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // and Preferences) — keep the window key, no first responder.
         tokenUsageWindow?.makeFirstResponder(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // Start fetching token buckets and pull them once right away.
+        model.tokenWindowDidOpen()
+    }
+
+    @objc private func tokenWindowWillClose() {
+        model.tokenWindowDidClose()
     }
 
     // installPrefsClickMonitor makes a click anywhere in the Preferences
@@ -438,8 +449,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if let tokens = tokenUsageWindow, tokens.isVisible {
             tokens.orderOut(nil)
         }
-        // Fresh data the moment it opens, without waiting for the 2s tick.
-        Task { @MainActor in await model.refresh() }
+        // Switch to the fast cadence and pull the full snapshot the moment it
+        // opens, without waiting for the next idle tick.
+        model.panelDidOpen()
         // Inactive accounts aren't polled in the background — fetch them now
         // that the popover is open (throttled in the model). The daemon keeps
         // the active account fresh on its own cadence.
@@ -505,6 +517,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             clickMonitor = nil
         }
         panel?.orderOut(nil)
+        // Back to the idle cadence + menu-bar-only polling now that nothing in
+        // the popover is on screen.
+        model.panelDidClose()
     }
 
     // promptAddAccount explains the add flow (option C): the actual sign-in

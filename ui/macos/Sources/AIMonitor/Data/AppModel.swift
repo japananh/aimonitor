@@ -13,7 +13,6 @@ import Combine
 final class AppModel: ObservableObject {
     @Published var status: DaemonStatus? = nil
     @Published var accounts: [AccountRow] = []
-    @Published var probes: [ProbeRow] = []
     // Per-account rate-limit snapshots keyed by account id, for the
     // per-account 5h/7d bars. A row may be stale (see LimitsRow.fetchedAt).
     @Published var limitsByAccount: [Int64: LimitsRow] = [:]
@@ -68,6 +67,17 @@ final class AppModel: ObservableObject {
     private var timer: AnyCancellable?
     private let workQueue = DispatchQueue(label: "dev.aimonitor.dbpoll", qos: .utility)
 
+    // What's on screen drives how much each poll fetches and how fast it runs.
+    // When nothing is open, only the menu-bar title needs data (status +
+    // accounts), so the per-account detail and the heavy token scan are
+    // skipped and the poll slows down. A long-running idle app otherwise
+    // refreshed all six queries every 2s for days, and that churn accumulated
+    // reachable memory in the offscreen SwiftUI graph (#32).
+    private var panelVisible = false
+    private var tokenWindowVisible = false
+    private let activeInterval = 2.0
+    private let idleInterval = 5.0
+
     init(dbPath: String = AppModel.defaultDBPath()) {
         self.dbPath = dbPath
     }
@@ -84,13 +94,56 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
-        // Immediate refresh on launch so the popover doesn't open blank.
+        // Immediate refresh on launch so the menu-bar title isn't blank.
         Task { await refresh() }
-        timer = Timer.publish(every: 2.0, on: .main, in: .common)
+        // Launches with the popover closed → idle cadence.
+        scheduleTimer(every: idleInterval)
+    }
+
+    /// (Re)schedules the poll at `interval`, overridable via AIMONITOR_POLL_MS
+    /// (debug/QA only) so a dev build can compress days of polling into minutes
+    /// to profile the long-running memory footprint.
+    private func scheduleTimer(every interval: TimeInterval) {
+        timer?.cancel()
+        timer = Timer.publish(every: AppModel.pollInterval(default: interval), on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 Task { [weak self] in await self?.refresh() }
             }
+    }
+
+    nonisolated static func pollInterval(default def: TimeInterval) -> TimeInterval {
+        if let s = ProcessInfo.processInfo.environment["AIMONITOR_POLL_MS"],
+           let ms = Double(s), ms > 0 {
+            return ms / 1000.0
+        }
+        return def
+    }
+
+    /// Popover opened: switch to the fast cadence and pull the full snapshot now
+    /// so it isn't blank.
+    func panelDidOpen() {
+        panelVisible = true
+        scheduleTimer(every: activeInterval)
+        Task { await refresh() }
+    }
+
+    /// Popover closed: drop back to the idle cadence; the next polls fetch only
+    /// what the menu bar needs.
+    func panelDidClose() {
+        panelVisible = false
+        scheduleTimer(every: idleInterval)
+    }
+
+    /// Token-usage window opened: start fetching the (heavy) token buckets and
+    /// pull them once right away.
+    func tokenWindowDidOpen() {
+        tokenWindowVisible = true
+        Task { await refresh() }
+    }
+
+    func tokenWindowDidClose() {
+        tokenWindowVisible = false
     }
 
     func stop() {
@@ -98,42 +151,59 @@ final class AppModel: ObservableObject {
         timer = nil
     }
 
+    /// One poll's worth of data. The per-account detail (`limits`, `history`)
+    /// and the heavy `tokens` scan are nil when their view isn't on screen, so
+    /// an idle poll only carries the cheap menu-bar fields.
+    private struct Snapshot {
+        let status: DaemonStatus?
+        let accounts: [AccountRow]
+        let limits: [Int64: LimitsRow]?
+        let history: [Int64: [UsageSamplePoint]]?
+        let tokens: [Int64: [TokenBucketRow]]?
+    }
+
     func refresh() async {
         let path = dbPath
-        // Capture the Tokens-tab granularity on the main actor before the
-        // background read. Daily looks back 14 days, hourly 48 hours — enough
-        // history for the popover without an unbounded scan.
+        // Capture what's visible on the main actor before the background read,
+        // so the poll fetches only what something is actually showing.
+        let wantDetail = panelVisible
+        let wantTokens = tokenWindowVisible
+        // Tokens-tab granularity: daily looks back 14 days, hourly 48 hours —
+        // enough history for the window without an unbounded scan.
         let hourly = self.tokensHourly
         let tokenSince = hourly
             ? Date().addingTimeInterval(-48 * 3600)
             : Date().addingTimeInterval(-14 * 24 * 3600)
-        let result: Result<(DaemonStatus?, [AccountRow], [ProbeRow], [Int64: LimitsRow], [Int64: [UsageSamplePoint]], [Int64: [TokenBucketRow]]), Error> = await withCheckedContinuation { cont in
+        let result: Result<Snapshot, Error> = await withCheckedContinuation { cont in
             workQueue.async {
                 do {
                     let r = try SQLiteReader(path: path)
+                    // Always cheap — drives the menu-bar title.
                     let st = try r.daemonStatus()
                     let accs = try r.listAccounts()
-                    let pr = try r.listProbes()
-                    let lim = try r.limits()
-                    // Last 24h of trend for the sparkline. One query, grouped
-                    // by account; bounded (~288 points/account at the 5-min
-                    // cadence) so it's cheap on the 2s poll.
-                    let hist = try r.usageHistory(since: Date().addingTimeInterval(-24 * 3600))
-                    let toks = try r.tokenUsage(byHour: hourly, since: tokenSince)
-                    cont.resume(returning: .success((st, accs, pr, lim, hist, toks)))
+                    // Per-account detail only feeds the popover; the 24h trend
+                    // is bounded (~288 points/account at the 5-min cadence).
+                    let lim = wantDetail ? try r.limits() : nil
+                    let hist = wantDetail ? try r.usageHistory(since: Date().addingTimeInterval(-24 * 3600)) : nil
+                    // The token scan is the heaviest query and only feeds the
+                    // standalone Token-usage window.
+                    let toks = wantTokens ? try r.tokenUsage(byHour: hourly, since: tokenSince) : nil
+                    cont.resume(returning: .success(Snapshot(status: st, accounts: accs, limits: lim, history: hist, tokens: toks)))
                 } catch {
                     cont.resume(returning: .failure(error))
                 }
             }
         }
         switch result {
-        case .success(let (st, accs, pr, lim, hist, toks)):
-            self.status = st
-            self.accounts = accs
-            self.probes = pr
-            self.limitsByAccount = lim
-            self.historyByAccount = hist
-            self.tokenUsageByAccount = toks
+        case .success(let snap):
+            self.status = snap.status
+            self.accounts = snap.accounts
+            // Leave the detail maps untouched when this poll skipped them, so a
+            // reopened popover shows the last values instantly while the next
+            // active poll refreshes them — no empty flash.
+            if let lim = snap.limits { self.limitsByAccount = lim }
+            if let hist = snap.history { self.historyByAccount = hist }
+            if let toks = snap.tokens { self.tokenUsageByAccount = toks }
             self.lastError = nil
         case .failure(let err):
             self.lastError = "\(err)"
