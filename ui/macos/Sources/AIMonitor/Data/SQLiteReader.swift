@@ -71,15 +71,6 @@ struct TokenBucketRow: Hashable {
     let messages: Int64
 }
 
-/// ProbeRow mirrors a relevant subset of probe_results.
-struct ProbeRow: Hashable {
-    let accountID: Int64
-    let probedAt: Date
-    let tokensRemaining: Int64
-    let resetAt: Date
-    let httpStatus: Int
-}
-
 /// DaemonStatus is the JSON snapshot the Go daemon publishes to the
 /// settings table every ~2s. Field names match the Go side exactly.
 struct DaemonStatus: Codable {
@@ -241,36 +232,6 @@ final class SQLiteReader {
         if sqlite3_column_type(stmt, col) == SQLITE_NULL { return nil }
         let s = String(cString: sqlite3_column_text(stmt, col))
         return s.isEmpty ? nil : s
-    }
-
-    func listProbes() throws -> [ProbeRow] {
-        let sql = """
-            SELECT account_id, probed_at, tokens_remaining, reset_at, http_status
-              FROM probe_results
-            """
-        var stmt: OpaquePointer?
-        let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
-        if rc != SQLITE_OK {
-            throw SQLiteReaderError.prepareFailed(rc, String(cString: sqlite3_errmsg(db)))
-        }
-        defer { sqlite3_finalize(stmt) }
-
-        var rows: [ProbeRow] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let acct = sqlite3_column_int64(stmt, 0)
-            let probedMs = sqlite3_column_int64(stmt, 1)
-            let remaining = sqlite3_column_int64(stmt, 2)
-            let resetMs = sqlite3_column_int64(stmt, 3)
-            let status = Int(sqlite3_column_int(stmt, 4))
-            rows.append(ProbeRow(
-                accountID: acct,
-                probedAt: Date(timeIntervalSince1970: TimeInterval(probedMs) / 1000.0),
-                tokensRemaining: remaining,
-                resetAt: Date(timeIntervalSince1970: TimeInterval(resetMs) / 1000.0),
-                httpStatus: status
-            ))
-        }
-        return rows
     }
 
     /// Returns the latest rate-limit snapshot per account, keyed by
