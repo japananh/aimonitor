@@ -193,10 +193,11 @@ func (c *Client) clickupListMembers(ctx context.Context, _ *mcp.CallToolRequest,
 // --- tasks --------------------------------------------------------------
 
 type cuListTasksIn struct {
-	ListID        string   `json:"list_id" jsonschema:"list ID"`
-	Statuses      []string `json:"statuses,omitempty" jsonschema:"only these statuses"`
-	IncludeClosed bool     `json:"include_closed,omitempty" jsonschema:"include closed tasks"`
-	Page          int      `json:"page,omitempty" jsonschema:"page number (0-based; 100 tasks per page)"`
+	ListID          string   `json:"list_id" jsonschema:"list ID"`
+	Statuses        []string `json:"statuses,omitempty" jsonschema:"only these statuses"`
+	IncludeClosed   bool     `json:"include_closed,omitempty" jsonschema:"include closed tasks"`
+	IncludeSubtasks bool     `json:"include_subtasks,omitempty" jsonschema:"also return subtasks (ClickUp omits them by default)"`
+	Page            int      `json:"page,omitempty" jsonschema:"page number (0-based; 100 tasks per page)"`
 }
 
 func (c *Client) clickupListTasks(ctx context.Context, _ *mcp.CallToolRequest, in cuListTasksIn) (*mcp.CallToolResult, any, error) {
@@ -206,6 +207,9 @@ func (c *Client) clickupListTasks(ctx context.Context, _ *mcp.CallToolRequest, i
 	}
 	if in.IncludeClosed {
 		q.Set("include_closed", "true")
+	}
+	if in.IncludeSubtasks {
+		q.Set("subtasks", "true")
 	}
 	if in.Page > 0 {
 		q.Set("page", strconv.Itoa(in.Page))
@@ -224,12 +228,13 @@ func (c *Client) clickupListTasks(ctx context.Context, _ *mcp.CallToolRequest, i
 }
 
 type cuSearchTasksIn struct {
-	WorkspaceID   string   `json:"workspace_id" jsonschema:"workspace (team) ID"`
-	AssigneeIDs   []string `json:"assignee_ids,omitempty" jsonschema:"only tasks assigned to these user IDs"`
-	Statuses      []string `json:"statuses,omitempty" jsonschema:"only these statuses"`
-	IncludeClosed bool     `json:"include_closed,omitempty" jsonschema:"include closed tasks"`
-	UpdatedAfter  string   `json:"updated_after,omitempty" jsonschema:"unix ms timestamp; only tasks updated after this"`
-	Page          int      `json:"page,omitempty" jsonschema:"page number (0-based)"`
+	WorkspaceID     string   `json:"workspace_id" jsonschema:"workspace (team) ID"`
+	AssigneeIDs     []string `json:"assignee_ids,omitempty" jsonschema:"only tasks assigned to these user IDs"`
+	Statuses        []string `json:"statuses,omitempty" jsonschema:"only these statuses"`
+	IncludeClosed   bool     `json:"include_closed,omitempty" jsonschema:"include closed tasks"`
+	IncludeSubtasks bool     `json:"include_subtasks,omitempty" jsonschema:"also return subtasks (ClickUp omits them by default)"`
+	UpdatedAfter    string   `json:"updated_after,omitempty" jsonschema:"unix ms timestamp; only tasks updated after this"`
+	Page            int      `json:"page,omitempty" jsonschema:"page number (0-based)"`
 }
 
 func (c *Client) clickupSearchTasks(ctx context.Context, _ *mcp.CallToolRequest, in cuSearchTasksIn) (*mcp.CallToolResult, any, error) {
@@ -242,6 +247,9 @@ func (c *Client) clickupSearchTasks(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 	if in.IncludeClosed {
 		q.Set("include_closed", "true")
+	}
+	if in.IncludeSubtasks {
+		q.Set("subtasks", "true")
 	}
 	if in.UpdatedAfter != "" {
 		q.Set("date_updated_gt", in.UpdatedAfter)
@@ -262,21 +270,34 @@ func (c *Client) clickupSearchTasks(ctx context.Context, _ *mcp.CallToolRequest,
 	return textResult(map[string]any{"tasks": tasks})
 }
 
+// cuTaskIn carries the task id and an opt-out for the subtask tree. The flag is
+// a *bool so the default is "include" (nil) while an explicit false still keeps
+// the payload small — a plain bool couldn't tell "omitted" from "set false".
 type cuTaskIn struct {
-	TaskID string `json:"task_id" jsonschema:"task ID (e.g. 86c2j3k4m or custom ID)"`
+	TaskID          string `json:"task_id" jsonschema:"task ID (e.g. 86c2j3k4m or custom ID)"`
+	IncludeSubtasks *bool  `json:"include_subtasks,omitempty" jsonschema:"include the task's subtasks and sub-subtasks (flattened descendant tree, each carrying parent / top_level_parent); default true"`
 }
 
 func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in cuTaskIn) (*mcp.CallToolResult, any, error) {
+	// Default to including the tree; only an explicit false opts out.
+	includeSubtasks := in.IncludeSubtasks == nil || *in.IncludeSubtasks
+	q := url.Values{}
+	if includeSubtasks {
+		// ClickUp only returns the `subtasks` array on GET /task/{id} when this
+		// is set; it returns every descendant flattened, not just direct kids.
+		q.Set("include_subtasks", "true")
+	}
 	var out struct {
 		rawCUTask
-		Description string `json:"description"`
-		DateCreated string `json:"date_created"`
-		DateUpdated string `json:"date_updated"`
+		Description string      `json:"description"`
+		DateCreated string      `json:"date_created"`
+		DateUpdated string      `json:"date_updated"`
+		Subtasks    []rawCUTask `json:"subtasks"`
 		Creator     struct {
 			Username string `json:"username"`
 		} `json:"creator"`
 	}
-	if err := c.clickup(ctx, http.MethodGet, "/task/"+url.PathEscape(in.TaskID), nil, nil, &out); err != nil {
+	if err := c.clickup(ctx, http.MethodGet, "/task/"+url.PathEscape(in.TaskID), q, nil, &out); err != nil {
 		return nil, nil, err
 	}
 	// parent / top_level_parent ride on the slim task now (so list_tasks and
@@ -287,6 +308,16 @@ func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in 
 		"date_created": out.DateCreated,
 		"date_updated": out.DateUpdated,
 		"creator":      out.Creator.Username,
+	}
+	// Slim the descendants with the same shape as list/search; each carries
+	// parent / top_level_parent so the caller can rebuild the nesting. Only set
+	// the key when asked, so callers can tell "none" from "didn't request".
+	if includeSubtasks {
+		subtasks := make([]cuTask, 0, len(out.Subtasks))
+		for _, t := range out.Subtasks {
+			subtasks = append(subtasks, slimTask(t))
+		}
+		res["subtasks"] = subtasks
 	}
 	return textResult(res)
 }
