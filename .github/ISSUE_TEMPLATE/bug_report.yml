@@ -1,103 +1,29 @@
 name: 🐞 Bug report
-description: Something in aimonitor isn't working as expected
+description: Something in aimonitor isn't working
 labels: ["bug"]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        Thanks for taking the time to file a bug! A few specifics up front make it far
-        faster to fix. **Please don't paste raw tokens** — `aimonitor` redacts its own
-        logs, but copy/paste from elsewhere might not.
-
   - type: checkboxes
     id: preflight
     attributes:
       label: Before filing
       options:
-        - label: I searched [existing issues](https://github.com/japananh/aimonitor/issues?q=is%3Aissue) and didn't find a duplicate.
+        - label: I searched existing issues, and any logs I paste contain no tokens or secrets.
           required: true
-        - label: I'm on the latest release (`aimonitor update check`), or have noted my version below.
-          required: true
-        - label: Any logs/output I paste contain no OAuth tokens or other secrets.
-          required: true
-
-  - type: input
-    id: version
-    attributes:
-      label: aimonitor version
-      description: Output of `aimonitor version`.
-      placeholder: "aimonitor 1.0.0"
-    validations:
-      required: true
-
-  - type: dropdown
-    id: os
-    attributes:
-      label: Operating system
-      options:
-        - macOS (Apple Silicon)
-        - macOS (Intel)
-        - Linux
-    validations:
-      required: true
-
-  - type: dropdown
-    id: install
-    attributes:
-      label: How did you install it?
-      options:
-        - Homebrew cask (japananh/tap)
-        - Linux install.sh
-        - go install
-        - Built from source
-    validations:
-      required: true
-
-  - type: dropdown
-    id: area
-    attributes:
-      label: Which part?
-      options:
-        - Menu-bar app / popover
-        - Background daemon
-        - CLI (add / switch / list / import / …)
-        - Auto-swap
-        - Usage bars
-        - Self-update
-        - Other / not sure
-    validations:
-      required: true
-
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
-      description: What you saw, and what you expected instead.
+      description: What you saw, what you expected, and how to reproduce it.
     validations:
       required: true
-
-  - type: textarea
-    id: repro
+  - type: input
+    id: env
     attributes:
-      label: Steps to reproduce
-      placeholder: |
-        1. …
-        2. …
-        3. …
-
-  - type: textarea
-    id: doctor
-    attributes:
-      label: "`aimonitor doctor` output"
-      description: Helps pinpoint daemon / keychain / config issues. (Run it and paste the output.)
-      render: text
-
+      label: Version + OS (optional)
+      placeholder: "aimonitor 1.1.27 · macOS Apple Silicon"
   - type: textarea
     id: logs
     attributes:
-      label: Relevant logs
-      description: |
-        The daemon log is `~/Library/Logs/aimonitor/aimonitor.daemon.log` (macOS); the update
-        helper logs to `~/Library/Logs/aimonitor/update.log`. In the app, Preferences → About →
-        "Show Logs in Finder" opens this folder. Paste anything relevant — double-check for secrets first.
+      label: Logs / doctor (optional)
+      description: "`aimonitor doctor`, or the daemon log at ~/Library/Logs/aimonitor/ — check for secrets first."
       render: text
