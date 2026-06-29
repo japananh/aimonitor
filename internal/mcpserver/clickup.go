@@ -1,8 +1,10 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -507,6 +509,73 @@ func (c *Client) clickupUpdateComment(ctx context.Context, _ *mcp.CallToolReques
 		return nil, nil, err
 	}
 	return textResult(map[string]string{"comment_id": in.CommentID, "status": "updated"})
+}
+
+// --- attachments --------------------------------------------------------
+
+type cuUploadAttachmentIn struct {
+	TaskID   string `json:"task_id" jsonschema:"task to attach the file to"`
+	Filename string `json:"filename" jsonschema:"file name including extension (e.g. errors.csv)"`
+	Content  string `json:"content" jsonschema:"the file's content as text"`
+}
+
+// multipartFile builds a single-file multipart/form-data body under the given
+// form field, and returns the body plus its Content-Type (with boundary).
+func multipartFile(field, filename string, content []byte) (*bytes.Buffer, string, error) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile(field, filename)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := part.Write(content); err != nil {
+		return nil, "", err
+	}
+	if err := mw.Close(); err != nil {
+		return nil, "", err
+	}
+	return &buf, mw.FormDataContentType(), nil
+}
+
+// clickupUploadAttachment attaches a file to a task via
+// POST /task/{id}/attachment — multipart/form-data with a single `attachment`
+// field. ClickUp wants the raw token in Authorization (no Bearer), like every
+// other ClickUp call, but the multipart body bypasses the JSON `clickup` helper.
+func (c *Client) clickupUploadAttachment(ctx context.Context, _ *mcp.CallToolRequest, in cuUploadAttachmentIn) (*mcp.CallToolResult, any, error) {
+	if in.TaskID == "" || in.Filename == "" || in.Content == "" {
+		return nil, nil, fmt.Errorf("task_id, filename and content are required")
+	}
+	tok, err := c.token(ServiceClickUp)
+	if err != nil {
+		return nil, nil, err
+	}
+	body, ctype, err := multipartFile("attachment", in.Filename, []byte(in.Content))
+	if err != nil {
+		return nil, nil, err
+	}
+	u := clickupAPIBase + "/task/" + url.PathEscape(in.TaskID) + "/attachment"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, body)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", tok)
+	req.Header.Set("Content-Type", ctype)
+	var out struct {
+		ID    string `json:"id"`
+		URL   string `json:"url"`
+		Title string `json:"title"`
+	}
+	if err := c.do(req, &out); err != nil {
+		return nil, nil, err
+	}
+	res := map[string]any{"status": "attached", "filename": in.Filename}
+	if out.ID != "" {
+		res["attachment_id"] = out.ID
+	}
+	if out.URL != "" {
+		res["url"] = out.URL
+	}
+	return textResult(res)
 }
 
 // --- docs (API v3) --------------------------------------------------------
