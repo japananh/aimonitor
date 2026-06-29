@@ -5,35 +5,48 @@
 import AppKit
 import SwiftUI
 
-/// severityColor maps utilization (0..100) to the bar/trend tint, one set of
+/// severityNSColor maps utilization (0..100) to the bar/trend tint, one set of
 /// thresholds everywhere: green <60, amber <85, red ≥85. Softer than the
 /// full-saturation .systemGreen/.systemYellow/.systemRed (which read as garish),
 /// and APPEARANCE-AWARE: a slightly deeper shade on light backgrounds, a
 /// brighter one on dark — so it reads well whether the user is in light or dark.
-func severityColor(for pct: Double) -> Color {
+/// Returned as an NSColor so callers building NSAttributedStrings (the menu-bar
+/// title) get the same dynamic light/dark color the SwiftUI bars use.
+func severityNSColor(for pct: Double) -> NSColor {
     switch pct {
     case ..<60:
-        return adaptiveColor(
+        return dynamicNSColor(
             light: NSColor(red: 0.13, green: 0.78, blue: 0.34, alpha: 1),
             dark: NSColor(red: 0.46, green: 0.95, blue: 0.58, alpha: 1))
     case ..<85:
-        return adaptiveColor(
+        return dynamicNSColor(
             light: NSColor(red: 0.98, green: 0.80, blue: 0.12, alpha: 1),
             dark: NSColor(red: 1.00, green: 0.92, blue: 0.40, alpha: 1))
     default:
-        return adaptiveColor(
+        return dynamicNSColor(
             light: NSColor(red: 0.90, green: 0.22, blue: 0.20, alpha: 1),
             dark: NSColor(red: 1.00, green: 0.46, blue: 0.42, alpha: 1))
     }
 }
 
-/// adaptiveColor returns a Color that resolves to `light` under the Aqua
+/// severityColor is the SwiftUI wrapper over severityNSColor — same thresholds,
+/// same dynamic color, for views that want a `Color`.
+func severityColor(for pct: Double) -> Color {
+    Color(nsColor: severityNSColor(for: pct))
+}
+
+/// dynamicNSColor returns an NSColor that resolves to `light` under the Aqua
 /// appearance and `dark` under Dark Aqua, so fixed RGBs don't look wrong in one
 /// of the two modes the user switches between.
-func adaptiveColor(light: NSColor, dark: NSColor) -> Color {
-    Color(nsColor: NSColor(name: nil) { appearance in
+func dynamicNSColor(light: NSColor, dark: NSColor) -> NSColor {
+    NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-    })
+    }
+}
+
+/// adaptiveColor is the SwiftUI wrapper over dynamicNSColor.
+func adaptiveColor(light: NSColor, dark: NSColor) -> Color {
+    Color(nsColor: dynamicNSColor(light: light, dark: dark))
 }
 
 /// UserDefaults key for the appearance preference: "system", "light", "dark".
