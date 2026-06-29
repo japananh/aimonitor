@@ -108,7 +108,7 @@ See [`docs/architecture.md`](docs/architecture.md) and [`docs/thresholds.md`](do
 
 ## MCP server (Slack + ClickUp for Claude Code)
 
-One stdio process serving 31 tools — no extra runtimes.
+One stdio process serving 32 tools — no extra runtimes.
 
 ```sh
 aimonitor mcp connect slack     # store a Slack user token (xoxp-…)
