@@ -141,7 +141,7 @@ func catalog() []toolDef {
 				return c.clickupSearchTasks
 			})},
 		{name: "clickup_get_task", svc: ServiceClickUp,
-			desc: "Get one ClickUp task with its description",
+			desc: "Get one ClickUp task with its description and, by default, its flattened subtask/sub-subtask tree",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuTaskIn, any] {
 				return c.clickupGetTask
 			})},

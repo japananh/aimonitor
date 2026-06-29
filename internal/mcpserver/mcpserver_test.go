@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/japananh/aimonitor/internal/secret"
 	"github.com/japananh/aimonitor/internal/store"
 )
@@ -422,5 +424,144 @@ func TestSlackSearchURLEncoding(t *testing.T) {
 	}
 	if gotQuery.Get("count") != "20" {
 		t.Errorf("default count = %q, want 20", gotQuery.Get("count"))
+	}
+}
+
+// resultJSON returns the tool result's inner JSON text (unwrapped from the
+// {type,text} envelope) so callers can assert on the actual payload shape.
+func resultJSON(t *testing.T, res *mcp.CallToolResult) string {
+	t.Helper()
+	text, ok := res.Content[0].(interface{ MarshalJSON() ([]byte, error) })
+	if !ok {
+		t.Fatalf("content[0] = %T, want JSON-marshalable text", res.Content[0])
+	}
+	b, err := text.MarshalJSON()
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	var wrap struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(b, &wrap); err != nil {
+		t.Fatalf("unmarshal result envelope: %v", err)
+	}
+	return wrap.Text
+}
+
+// clickup_get_task must, by default, ask ClickUp for the subtask tree
+// (include_subtasks=true) and surface every flattened descendant slimmed,
+// each carrying parent / top_level_parent so the caller can rebuild the
+// nesting from one GET (#30).
+func TestClickUpGetTask_SubtasksTreeByDefault(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/task/EPIC" {
+			t.Errorf("path = %s, want /task/EPIC", r.URL.Path)
+		}
+		gotQuery = r.URL.Query()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "EPIC", "name": "The epic",
+			"status":      map[string]any{"status": "open"},
+			"description": "do the thing",
+			// ClickUp flattens ALL descendants into subtasks, each with parent.
+			"subtasks": []map[string]any{
+				{"id": "c1", "name": "child one", "parent": "EPIC", "top_level_parent": "EPIC",
+					"status": map[string]any{"status": "open"}},
+				{"id": "g1", "name": "grandchild", "parent": "c1", "top_level_parent": "EPIC",
+					"status": map[string]any{"status": "open"}},
+			},
+		})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceClickUp, "pk_1_TOK")
+	c := NewClient(creds)
+	res, _, err := c.clickupGetTask(context.Background(), nil, cuTaskIn{TaskID: "EPIC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery.Get("include_subtasks") != "true" {
+		t.Errorf("include_subtasks = %q, want true by default", gotQuery.Get("include_subtasks"))
+	}
+	out := resultJSON(t, res)
+	for _, want := range []string{"child one", "grandchild", `"parent": "c1"`, `"top_level_parent": "EPIC"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("subtask tree missing %q in %s", want, out)
+		}
+	}
+}
+
+// An explicit include_subtasks=false keeps the payload small: no query param,
+// and no subtasks key in the result.
+func TestClickUpGetTask_SubtasksOptOut(t *testing.T) {
+	no := false
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "EPIC", "name": "The epic"})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceClickUp, "pk_1_TOK")
+	c := NewClient(creds)
+	res, _, err := c.clickupGetTask(context.Background(), nil, cuTaskIn{TaskID: "EPIC", IncludeSubtasks: &no})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery.Has("include_subtasks") {
+		t.Errorf("include_subtasks must be absent when opted out, got %q", gotQuery.Get("include_subtasks"))
+	}
+	if out := resultJSON(t, res); strings.Contains(out, "subtasks") {
+		t.Errorf("opt-out must omit subtasks key: %s", out)
+	}
+}
+
+// list_tasks / search_tasks expose subtasks only when asked (ClickUp omits them
+// by default); the flag threads ClickUp's subtasks=true param.
+func TestClickUpListAndSearch_IncludeSubtasksFlag(t *testing.T) {
+	cases := []struct {
+		name     string
+		path     string
+		wantPath string
+		call     func(*Client) error
+	}{
+		{"list off", "/list/L1/task", "/list/L1/task", func(c *Client) error {
+			_, _, err := c.clickupListTasks(context.Background(), nil, cuListTasksIn{ListID: "L1"})
+			return err
+		}},
+		{"list on", "/list/L1/task", "/list/L1/task", func(c *Client) error {
+			_, _, err := c.clickupListTasks(context.Background(), nil, cuListTasksIn{ListID: "L1", IncludeSubtasks: true})
+			return err
+		}},
+		{"search on", "/team/T1/task", "/team/T1/task", func(c *Client) error {
+			_, _, err := c.clickupSearchTasks(context.Background(), nil, cuSearchTasksIn{WorkspaceID: "T1", IncludeSubtasks: true})
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotQuery url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotQuery = r.URL.Query()
+				_ = json.NewEncoder(w).Encode(map[string]any{"tasks": []map[string]any{}})
+			}))
+			defer srv.Close()
+			pointAPIsAt(t, srv)
+
+			creds, _ := testCreds(t)
+			_ = creds.Store(ServiceClickUp, "pk_1_TOK")
+			c := NewClient(creds)
+			if err := tc.call(c); err != nil {
+				t.Fatal(err)
+			}
+			wantSub := strings.HasSuffix(tc.name, "on")
+			if got := gotQuery.Get("subtasks") == "true"; got != wantSub {
+				t.Errorf("subtasks=true present = %v, want %v (query %v)", got, wantSub, gotQuery)
+			}
+		})
 	}
 }
