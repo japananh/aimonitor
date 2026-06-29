@@ -264,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     // updateStatusTitle renders the status item as a compact two-line text:
     //   <account name>
-    //   5h | <usage>%
+    //   <5h|7d> | <usage>%     (the window closer to its limit, severity-tinted)
     // replacing the chart icon whenever an active account is known. The
     // icon returns as the fallback when there's no active account / no
     // daemon data yet. A tooltip carries the full picture (name, email,
@@ -286,9 +286,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // a genuine 0% (fresh, unused account) is real data and must show
         // "0%", while a never-fetched account shows "–". (The daemon
         // publishes five_hour_pct without omitempty so 0 survives the JSON.)
+        //
+        // Show whichever window is CLOSER to its limit, not always 5h: a
+        // 7d-exhausted account whose 5h has since reset would otherwise read
+        // as a healthy "5h | 15%" and hide that it's out of tokens. Tint the
+        // number with the shared severity scale (amber ≥60, red ≥85), so a
+        // maxed account is unmistakable on the menu bar instead of looking
+        // normal.
         let bottom: String
-        if model.status?.limits_fetched_at != nil, let pct5 = model.status?.five_hour_pct {
-            bottom = "5h | " + String(format: "%.0f%%", pct5)
+        var bottomColor = NSColor.labelColor
+        if model.status?.limits_fetched_at != nil,
+           let pct5 = model.status?.five_hour_pct,
+           let pct7 = model.status?.seven_day_pct {
+            if pct7 > pct5 {
+                bottom = "7d | " + String(format: "%.0f%%", pct7)
+            } else {
+                bottom = "5h | " + String(format: "%.0f%%", pct5)
+            }
+            bottomColor = severityNSColor(for: max(pct5, pct7))
         } else {
             bottom = "5h | –"
         }
@@ -307,10 +322,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         paraPct.alignment = .center
         paraPct.minimumLineHeight = 12
         paraPct.maximumLineHeight = 12
-        // Usage line at full label color + semibold so it reads as the
-        // brighter, highlighted line. The name keeps the default menu-bar
-        // text color. Semantic colors (not literal white) stay correct in
-        // both a light and a dark menu bar.
+        // Usage line in semibold, tinted by severity (bottomColor) so a
+        // maxed window stands out; default label color while healthy. The
+        // name keeps the default menu-bar text color. The severity colors are
+        // appearance-aware, so they stay correct in a light or dark menu bar.
         let top = NSMutableAttributedString(
             string: name + "\n",
             attributes: [
@@ -321,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             string: bottom,
             attributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: NSColor.labelColor,
+                .foregroundColor: bottomColor,
                 .paragraphStyle: paraPct,
             ]))
         // Nudge the block down so the two lines sit centered in the bar.
