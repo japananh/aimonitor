@@ -14,6 +14,10 @@ struct PreferencesView: View {
     // Invoked by the "Check for Updates…" button; the app delegate runs the
     // check and shows the install/skip/later prompt.
     let checkForUpdates: () -> Void
+    // Returns to the main panel. Preferences is a separate window from the
+    // popover, so without this the only way back was to close this window and
+    // re-click the menu-bar icon.
+    let backToMain: () -> Void
 
     @State private var autostartOn = false
     @State private var autostartError: String?
@@ -213,6 +217,19 @@ struct PreferencesView: View {
             }
         }
         .formStyle(.grouped)
+        // A "Back" bar pinned above the form returns to the main panel — the
+        // form scrolls under it. safeAreaInset avoids reindenting the whole
+        // body just to wrap it in a VStack.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+                AppTextButton("‹ Back", action: backToMain)
+                    .help("Return to the main panel")
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.bar)
+        }
         // Make every label selectable (the modifier propagates to all
         // descendant Text), so users can drag-select and ⌘C any value —
         // version, MCP identity, error strings — for a bug report. Pairs
