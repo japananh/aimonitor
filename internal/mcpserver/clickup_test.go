@@ -1,6 +1,44 @@
 package mcpserver
 
-import "testing"
+import (
+	"io"
+	"mime"
+	"mime/multipart"
+	"strings"
+	"testing"
+)
+
+// multipartFile must produce a multipart/form-data body whose single part
+// carries the given field name, filename, and content verbatim — the shape
+// ClickUp's POST /task/{id}/attachment expects (field "attachment").
+func TestMultipartFile_RoundTrip(t *testing.T) {
+	const data = "code,msg\n1,boom\n"
+	body, ctype, err := multipartFile("attachment", "errors.csv", []byte(data))
+	if err != nil {
+		t.Fatalf("multipartFile: %v", err)
+	}
+	if !strings.HasPrefix(ctype, "multipart/form-data; boundary=") {
+		t.Fatalf("content-type = %q, want multipart/form-data", ctype)
+	}
+	_, params, err := mime.ParseMediaType(ctype)
+	if err != nil {
+		t.Fatalf("parse content-type: %v", err)
+	}
+	part, err := multipart.NewReader(body, params["boundary"]).NextPart()
+	if err != nil {
+		t.Fatalf("read part: %v", err)
+	}
+	if part.FormName() != "attachment" {
+		t.Errorf("form field = %q, want attachment", part.FormName())
+	}
+	if part.FileName() != "errors.csv" {
+		t.Errorf("filename = %q, want errors.csv", part.FileName())
+	}
+	got, _ := io.ReadAll(part)
+	if string(got) != data {
+		t.Errorf("content = %q, want %q", got, data)
+	}
+}
 
 // slimTask must surface the numeric ids a caller needs to recreate/act on a
 // known task via clickup_create_task — list_id, assignee_ids, and tags — not

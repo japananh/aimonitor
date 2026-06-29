@@ -205,6 +205,11 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuTaskIn, any] {
 				return c.clickupListComments
 			})},
+		{name: "clickup_upload_attachment", svc: ServiceClickUp, write: true,
+			desc: "Attach a file (given as text content) to a ClickUp task",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUploadAttachmentIn, any] {
+				return c.clickupUploadAttachment
+			})},
 	}
 }
 
