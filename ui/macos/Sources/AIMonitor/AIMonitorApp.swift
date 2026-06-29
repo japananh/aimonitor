@@ -677,6 +677,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             let failure: String?
             do {
                 try CLIBridge.adoptCurrent(label: label)
+                // The CLI add doesn't fetch usage, so the new account would
+                // show blank bars until the daemon's next poll (or a manual
+                // refresh). Pull its usage now — adopt-current makes it the
+                // active account, so this routes to the active refresh path.
+                // try?: a fetch failure leaves bars blank (the prior
+                // behavior), it must not fail the import itself.
+                try? CLIBridge.refreshUsage(label: label)
                 failure = nil
             } catch {
                 failure = error.localizedDescription
