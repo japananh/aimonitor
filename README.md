@@ -108,7 +108,7 @@ See [`docs/architecture.md`](docs/architecture.md) and [`docs/thresholds.md`](do
 
 ## MCP server (Slack + ClickUp for Claude Code)
 
-One stdio process serving 30 tools — no extra runtimes.
+One stdio process serving 31 tools — no extra runtimes.
 
 ```sh
 aimonitor mcp connect slack     # store a Slack user token (xoxp-…)
@@ -117,7 +117,7 @@ aimonitor mcp register          # add the server to Claude Code
 ```
 
 - **Slack:** post to channels/threads (mrkdwn, code blocks), upload, search, history, permalinks.
-- **ClickUp:** workspace hierarchy, tasks, comments, Docs (read & write).
+- **ClickUp:** workspace hierarchy, tasks, comments, attachments, Docs (read & write).
 - **Safety:** Claude Code's per-tool prompts are the approval layer; per-service Enabled / Read-only switches and a per-tool disable list refine it. Tokens are verified live, then stored in the OS keyring — never in SQLite or logs.
 
 > **Slack token scopes.** The Slack token is a **user** token (`xoxp-…`). Grant these **User Token Scopes** on your Slack app (api.slack.com → OAuth & Permissions), reinstall, then connect — a missing one surfaces as `slack: missing scope "…"` on the affected tool:
