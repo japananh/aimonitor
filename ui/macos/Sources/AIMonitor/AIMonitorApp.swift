@@ -139,7 +139,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if preferencesWindow == nil {
             let view = PreferencesView(
                 model: model,
-                checkForUpdates: { [weak self] in self?.checkForUpdates(userInitiated: true) }
+                checkForUpdates: { [weak self] in self?.checkForUpdates(userInitiated: true) },
+                backToMain: { [weak self] in self?.backToMainFromPreferences() }
             )
             let host = NSHostingController(rootView: view)
             let win = NSWindow(contentViewController: host)
@@ -160,6 +161,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         preferencesWindow?.makeFirstResponder(nil)
         NSApp.activate(ignoringOtherApps: true)
         installPrefsClickMonitor()
+    }
+
+    // backToMainFromPreferences returns from the Preferences window to the main
+    // panel: hide Preferences and open the popover. togglePopover opens the
+    // panel when it's hidden (it is, while Preferences is up) and already
+    // orders out a lingering Preferences window as it opens.
+    private func backToMainFromPreferences() {
+        preferencesWindow?.orderOut(nil)
+        if !panel.isVisible { togglePopover(nil) }
     }
 
     // showTokenUsage opens the standalone Token-usage window (per-account

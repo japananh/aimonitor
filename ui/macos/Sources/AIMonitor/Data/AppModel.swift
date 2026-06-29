@@ -95,7 +95,13 @@ final class AppModel: ObservableObject {
 
     func start() {
         // Immediate refresh on launch so the menu-bar title isn't blank.
-        Task { await refresh() }
+        // forceDetail warms the per-account limits (and trend history) cache
+        // even though the popover is closed: the inactive accounts aren't
+        // polled in the background, so without this the FIRST popover open
+        // after launch shows "no usage data yet" until the on-demand network
+        // fetch lands ~2-3s later. Priming the cache makes that open render
+        // the last-known numbers instantly, then refresh in place.
+        Task { await refresh(forceDetail: true) }
         // Launches with the popover closed → idle cadence.
         scheduleTimer(every: idleInterval)
     }
@@ -162,11 +168,13 @@ final class AppModel: ObservableObject {
         let tokens: [Int64: [TokenBucketRow]]?
     }
 
-    func refresh() async {
+    func refresh(forceDetail: Bool = false) async {
         let path = dbPath
         // Capture what's visible on the main actor before the background read,
         // so the poll fetches only what something is actually showing.
-        let wantDetail = panelVisible
+        // forceDetail overrides visibility to prime the caches once at launch
+        // (see start()), so the first popover open isn't blank.
+        let wantDetail = panelVisible || forceDetail
         let wantTokens = tokenWindowVisible
         // Tokens-tab granularity: daily looks back 14 days, hourly 48 hours —
         // enough history for the window without an unbounded scan.
