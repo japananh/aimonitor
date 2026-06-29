@@ -264,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     // updateStatusTitle renders the status item as a compact two-line text:
     //   <account name>
-    //   <5h|7d> | <usage>%     (the window closer to its limit, severity-tinted)
+    //   5h | <usage>%          (or "7d | …" once the weekly window is maxed)
     // replacing the chart icon whenever an active account is known. The
     // icon returns as the fallback when there's no active account / no
     // daemon data yet. A tooltip carries the full picture (name, email,
@@ -287,23 +287,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // "0%", while a never-fetched account shows "–". (The daemon
         // publishes five_hour_pct without omitempty so 0 survives the JSON.)
         //
-        // Show whichever window is CLOSER to its limit, not always 5h: a
-        // 7d-exhausted account whose 5h has since reset would otherwise read
-        // as a healthy "5h | 15%" and hide that it's out of tokens. Tint the
-        // number with the shared severity scale (amber ≥60, red ≥85), so a
-        // maxed account is unmistakable on the menu bar instead of looking
-        // normal.
+        // Default to the 5h window — the fast-moving one you watch during a
+        // session. Switch to 7d ONLY once the weekly window has hit its limit
+        // (≥ sevenDayAtLimitPct): otherwise a 7d-maxed account whose 5h has
+        // since reset would read as a healthy "5h | 15%" and hide that it's
+        // out of tokens. The shown number is tinted by the shared severity
+        // scale (amber ≥60, red ≥85), so a maxed window is unmistakable.
         let bottom: String
         var bottomColor = NSColor.labelColor
         if model.status?.limits_fetched_at != nil,
            let pct5 = model.status?.five_hour_pct,
            let pct7 = model.status?.seven_day_pct {
-            if pct7 > pct5 {
+            if pct7 >= sevenDayAtLimitPct {
                 bottom = "7d | " + String(format: "%.0f%%", pct7)
+                bottomColor = severityNSColor(for: pct7)
             } else {
                 bottom = "5h | " + String(format: "%.0f%%", pct5)
+                bottomColor = severityNSColor(for: pct5)
             }
-            bottomColor = severityNSColor(for: max(pct5, pct7))
         } else {
             bottom = "5h | –"
         }
