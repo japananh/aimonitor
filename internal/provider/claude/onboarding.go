@@ -55,7 +55,12 @@ type onboardingDeps struct {
 // The returned Credential's Bytes are owned by the caller and should
 // be zeroed when no longer needed.
 func AdoptCurrent(ctx context.Context) (provider.Credential, error) {
-	k, err := newKeychainOps()
+	// Route through sharedOps (not a fresh newKeychainOps) so this shares the
+	// one process-wide backend like every other helper: identical in
+	// production (a fresh `aimonitor add` process has a cold cache, so the
+	// live-slot read still hits the keychain), and it lets SetKeyringForTest
+	// redirect the read in tests.
+	k, err := sharedOps()
 	if err != nil {
 		return provider.Credential{}, err
 	}
