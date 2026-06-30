@@ -805,6 +805,123 @@ func TestAutoSwap_ResetCrossedCandidateSelectableWithoutRefresh(t *testing.T) {
 	}
 }
 
+// Tier-1 ranking: among candidates that beat the active on BOTH windows, the
+// winner is the one with the MOST overall headroom — lowest max(5h, 7d) — not
+// merely the lowest binding-window pct. Here the binding window is 5h: "lowest
+// 5h" would pick low5 (5h=10) but its 7d=70 leaves little weekly headroom;
+// balanced (5h=30, 7d=20) has more overall room (max 30 < max 70) and must win.
+func TestAutoSwap_Tier1PicksMostOverallHeadroom(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	low5, _ := s.CreateAccount(ctx, store.Account{Label: "low5", KeyringRef: "ref-l"})
+	balanced, _ := s.CreateAccount(ctx, store.Account{Label: "balanced", KeyringRef: "ref-b"})
+	// Active over the 5h threshold (binding window = 5h), high on both.
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95, SevenDayPct: 78})
+	// Both beat active on BOTH windows → both tier 1.
+	_ = s.PutLimits(ctx, low5.ID, provider.Limits{FiveHourPct: 10, SevenDayPct: 70})     // lowest 5h, but max=70
+	_ = s.PutLimits(ctx, balanced.ID, provider.Limits{FiveHourPct: 30, SevenDayPct: 20}) // max=30 → most overall headroom
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if !swapped || len(fsw.switched) != 1 || fsw.switched[0] != "balanced" {
+		t.Errorf("tier1 must pick most overall headroom (balanced, max 30), got swapped=%v switched=%v", swapped, fsw.switched)
+	}
+}
+
+// After a no-candidate tick, the engine arms the no-candidate cooldown
+// (cooldownAfterExhausted) so it doesn't recompute — and re-notify — every
+// tick while nothing has headroom. A second tick inside that window (active
+// still over threshold, clock unmoved) must stay suppressed and NOT re-notify.
+func TestAutoSwap_NoCandidateSetsCooldown(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	hot, _ := s.CreateAccount(ctx, store.Account{Label: "hot", KeyringRef: "ref-o"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 90})
+	_ = s.PutLimits(ctx, hot.ID, provider.Limits{FiveHourPct: 95}) // hotter than active → no candidate
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	clock := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	a.Now = func() time.Time { return clock }
+	var notes int
+	a.Notify = func(_, _ string) { notes++ }
+
+	// Tick 1: no candidate → notify once and arm the cooldown.
+	if swapped, err := a.MaybeSwap(ctx, "active"); err != nil || swapped {
+		t.Fatalf("tick1: swapped=%v err=%v, want no swap", swapped, err)
+	}
+	if notes != 1 {
+		t.Fatalf("tick1 should notify once, got %d", notes)
+	}
+
+	// Tick 2 well inside the cooldown: even though active is still over
+	// threshold, the cooldown suppresses re-evaluation — no second notification.
+	clock = clock.Add(cooldownAfterExhausted / 2)
+	if swapped, err := a.MaybeSwap(ctx, "active"); err != nil || swapped {
+		t.Fatalf("tick2: swapped=%v err=%v, want no swap", swapped, err)
+	}
+	if notes != 1 {
+		t.Errorf("no-candidate cooldown should suppress the second tick; notifications=%d want 1", notes)
+	}
+	if len(fsw.switched) != 0 {
+		t.Errorf("no switch should ever fire, got %v", fsw.switched)
+	}
+}
+
+// The normal anti-thrash guard: after a swap fires, the post-swap cooldown
+// (cooldownAfterSwap, 5 min) suppresses re-arming so the freshly-active
+// account's limits can be re-fetched before it's judged again. A tick inside
+// that window — even with a now-hot active and a healthy candidate — must NOT
+// swap again. (Distinct from the exhausted-bypass case: here the active is hot
+// but under 100%, so the cooldown holds.)
+func TestAutoSwap_PostSwapCooldownSuppressesReArm(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	low, _ := s.CreateAccount(ctx, store.Account{Label: "low", KeyringRef: "ref-l"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 95})
+	_ = s.PutLimits(ctx, low.ID, provider.Limits{FiveHourPct: 10})
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	clock := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	a.Now = func() time.Time { return clock }
+
+	// Tick 1: swap fires (grace disabled) and arms the post-swap cooldown.
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil || !swapped {
+		t.Fatalf("tick1: swapped=%v err=%v, want swap", swapped, err)
+	}
+	if len(fsw.switched) != 1 {
+		t.Fatalf("tick1 should switch once, got %v", fsw.switched)
+	}
+
+	// Tick 2 inside the 5-min cooldown: active still hot (<100%), a healthy
+	// candidate exists — but the cooldown must suppress a second swap.
+	clock = clock.Add(cooldownAfterSwap - time.Minute)
+	if swapped, err := a.MaybeSwap(ctx, "active"); err != nil || swapped {
+		t.Fatalf("tick2 inside cooldown: swapped=%v err=%v, want suppressed", swapped, err)
+	}
+	if len(fsw.switched) != 1 {
+		t.Errorf("post-swap cooldown should suppress re-arming; switched=%v want one switch total", fsw.switched)
+	}
+
+	// Tick 3 past the cooldown: the still-hot active swaps again.
+	clock = clock.Add(2 * time.Minute) // now past cooldownAfterSwap
+	if swapped, err := a.MaybeSwap(ctx, "active"); err != nil || !swapped {
+		t.Fatalf("tick3 past cooldown: swapped=%v err=%v, want swap", swapped, err)
+	}
+	if len(fsw.switched) != 2 {
+		t.Errorf("past cooldown the hot active should swap again; switched=%v", fsw.switched)
+	}
+}
+
 // While a swap is armed (grace window not yet elapsed) HasPending must report
 // true, so the UsageScheduler keeps polling at the speed-up cadence and the
 // grace deadline fires promptly instead of a full baseline interval late.
