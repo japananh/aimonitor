@@ -33,7 +33,7 @@ func newPublisher(t *testing.T, s *store.Store) (*StatusPublisher, *AutoSwitcher
 }
 
 // readStatus decodes the published daemon-status setting.
-func readStatus(t *testing.T, ctx context.Context, s *store.Store) Status {
+func readStatus(ctx context.Context, t *testing.T, s *store.Store) Status {
 	t.Helper()
 	raw, err := s.GetSetting(ctx, store.SettingsKeyDaemonStatus)
 	if err != nil {
@@ -56,7 +56,7 @@ func TestPublish_NoLabel(t *testing.T) {
 
 	pub.publish(ctx)
 
-	st := readStatus(t, ctx, s)
+	st := readStatus(ctx, t, s)
 	if st.ActiveLabel != "" {
 		t.Errorf("ActiveLabel = %q, want empty", st.ActiveLabel)
 	}
@@ -86,7 +86,7 @@ func TestPublish_WithLabelAndLimits(t *testing.T) {
 	pub.ActiveLabel = func(context.Context) string { return "work" }
 	pub.publish(ctx)
 
-	st := readStatus(t, ctx, s)
+	st := readStatus(ctx, t, s)
 	if st.ActiveLabel != "work" {
 		t.Errorf("ActiveLabel = %q want work", st.ActiveLabel)
 	}
@@ -110,7 +110,7 @@ func TestPublish_LabelButNoLimitsRow(t *testing.T) {
 	pub.ActiveLabel = func(context.Context) string { return "fresh" }
 	pub.publish(ctx)
 
-	st := readStatus(t, ctx, s)
+	st := readStatus(ctx, t, s)
 	if st.ActiveLabel != "fresh" {
 		t.Errorf("ActiveLabel = %q want fresh", st.ActiveLabel)
 	}
@@ -141,7 +141,7 @@ func TestPublish_ExternalWatchAndUnknownEmail(t *testing.T) {
 
 	pub.publish(ctx)
 
-	st := readStatus(t, ctx, s)
+	st := readStatus(ctx, t, s)
 	if st.UnknownActiveEmail != "stranger@x.com" {
 		t.Errorf("UnknownActiveEmail = %q", st.UnknownActiveEmail)
 	}

@@ -293,7 +293,7 @@ func TestExportBundle_EncryptedUnmarshalFails(t *testing.T) {
 func TestConfigExport_IncludeTokensMissingPassphrase(t *testing.T) {
 	_, dbPath := e2eEnv(t)
 	seedAccount(t, dbPath, store.Account{Label: "work"}, validBlob("sk"))
-	os.Unsetenv("AIMONITOR_PASSPHRASE")
+	_ = os.Unsetenv("AIMONITOR_PASSPHRASE")
 	_, err := runCLI(t, "", "config", "export", "--include-tokens")
 	if err == nil || !strings.Contains(err.Error(), "passphrase is required") {
 		t.Fatalf("expected passphrase-required error, got %v", err)
@@ -365,8 +365,17 @@ func TestRestoreAccount_CreateAndRefresh(t *testing.T) {
 
 	id := exportAccount{Label: "work", Email: "w@example.com", OrganizationUUID: "org-1", OrganizationName: "Org One"}
 
+	// validBlob embeds time.Now() (so re-calling it yields different bytes), and
+	// restoreAccount zeroes the credential it is handed (defer cred.Zero(), which
+	// blanks the passed slice's backing array). So build each blob once and keep
+	// an independent copy of the expected bytes for the post-call comparison.
+	blobV1 := validBlob("sk-v1")
+	wantV1 := append([]byte(nil), blobV1...)
+	blobV2 := validBlob("sk-v2")
+	wantV2 := append([]byte(nil), blobV2...)
+
 	// First call: new identity → creates the account, returns added=true.
-	added, err := restoreAccount(ctx, s, id, validBlob("sk-v1"))
+	added, err := restoreAccount(ctx, s, id, blobV1)
 	if err != nil {
 		t.Fatalf("restoreAccount create: %v", err)
 	}
@@ -381,12 +390,12 @@ func TestRestoreAccount_CreateAndRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stash should exist after restore: %v", err)
 	}
-	if string(stash.Bytes) != string(validBlob("sk-v1")) {
+	if string(stash.Bytes) != string(wantV1) {
 		t.Errorf("stash should hold the restored blob")
 	}
 
 	// Second call: SAME identity, NEW blob → refreshes, returns added=false.
-	added, err = restoreAccount(ctx, s, id, validBlob("sk-v2"))
+	added, err = restoreAccount(ctx, s, id, blobV2)
 	if err != nil {
 		t.Fatalf("restoreAccount refresh: %v", err)
 	}
@@ -397,7 +406,7 @@ func TestRestoreAccount_CreateAndRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stash should still exist after refresh: %v", err)
 	}
-	if string(stash.Bytes) != string(validBlob("sk-v2")) {
+	if string(stash.Bytes) != string(wantV2) {
 		t.Errorf("stash should have been refreshed to the new blob")
 	}
 }
@@ -466,7 +475,7 @@ func TestStoreKeyDefault_MoreKeys(t *testing.T) {
 func TestResolvePassphrase_FromFile(t *testing.T) {
 	_, dbPath := e2eEnv(t)
 	seedAccount(t, dbPath, store.Account{Label: "work", Email: "w@example.com"}, validBlob("sk"))
-	os.Unsetenv("AIMONITOR_PASSPHRASE")
+	_ = os.Unsetenv("AIMONITOR_PASSPHRASE")
 
 	passFile := filepath.Join(t.TempDir(), "pass.txt")
 	if err := os.WriteFile(passFile, []byte("file-secret\n"), 0o600); err != nil {
@@ -485,7 +494,7 @@ func TestResolvePassphrase_FromFile(t *testing.T) {
 func TestResolvePassphrase_EmptyFileErrors(t *testing.T) {
 	_, dbPath := e2eEnv(t)
 	seedAccount(t, dbPath, store.Account{Label: "work"}, validBlob("sk"))
-	os.Unsetenv("AIMONITOR_PASSPHRASE")
+	_ = os.Unsetenv("AIMONITOR_PASSPHRASE")
 	passFile := filepath.Join(t.TempDir(), "empty.txt")
 	if err := os.WriteFile(passFile, []byte("\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
