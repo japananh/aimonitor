@@ -252,41 +252,51 @@ func TestConfigExport_WithTokens_EncryptsAndHidesIdentity(t *testing.T) {
 	}
 }
 
-// TestConfigImport_EncryptedBundle_KnownParseBug is a CHARACTERIZATION test for
-// a genuine production bug: exportBundle embeds *cryptoEnvelope, and
-// cryptoEnvelope is unexported. encoding/json can Marshal through an embedded
-// unexported-type pointer (export works) but CANNOT Unmarshal into one — so
-// `config import` of any --include-tokens bundle fails at json.Unmarshal,
-// before the version check / decrypt / restore. Encrypted credential backups
-// are therefore unrecoverable.
-//
-// This test locks in the CURRENT (buggy) behavior. When the prod bug is fixed
-// (export the type, or add a named field + custom (Un)marshalJSON), flip this
-// to assert a successful round-trip restore.
-func TestConfigImport_EncryptedBundle_KnownParseBug(t *testing.T) {
+// TestConfigImport_EncryptedRoundTrip is the regression test for the
+// embedded-pointer bug that made encrypted backups unrestorable (CryptoEnvelope
+// was unexported, so json.Unmarshal couldn't populate the embedded pointer).
+// Export a credential encrypted, import into a fresh store, and assert the
+// account + its stash come back intact.
+func TestConfigImport_EncryptedRoundTrip(t *testing.T) {
 	_, dbPath := e2eEnv(t)
-	seedAccount(t, dbPath, store.Account{Label: "work", Email: "w@example.com", OrganizationUUID: "org-1"}, validBlob("sk-secret"))
+	ctx := context.Background()
+	blob := validBlob("sk-secret")
+	want := append([]byte(nil), blob...)
+	seedAccount(t, dbPath, store.Account{
+		Label: "work", Email: "w@example.com", OrganizationUUID: "org-1", OrganizationName: "Org One",
+	}, blob)
+
 	bundlePath := filepath.Join(t.TempDir(), "bundle.json")
-	t.Setenv("AIMONITOR_PASSPHRASE", "pw")
-	if _, err := runCLI(t, "", "config", "export", "--include-tokens", "--out", bundlePath); err != nil {
-		t.Fatalf("export: %v", err)
+	t.Setenv("AIMONITOR_PASSPHRASE", "correct horse battery staple")
+	if out, err := runCLI(t, "", "config", "export", "--include-tokens", "--out", bundlePath); err != nil {
+		t.Fatalf("export --include-tokens: %v (output: %q)", err, out)
 	}
 
-	_, _ = e2eEnv(t)
-	t.Setenv("AIMONITOR_PASSPHRASE", "pw")
-	_, err := runCLI(t, "", "config", "import", bundlePath)
-	if err == nil || !strings.Contains(err.Error(), "cannot set embedded pointer") {
-		t.Fatalf("KNOWN BUG regressed: expected the embedded-pointer parse error, got %v", err)
+	// Fresh store + keyring, same passphrase.
+	_, dbPath2 := e2eEnv(t)
+	t.Setenv("AIMONITOR_PASSPHRASE", "correct horse battery staple")
+	out, err := runCLI(t, "", "config", "import", bundlePath)
+	if err != nil {
+		t.Fatalf("config import (encrypted) should succeed, got: %v (output: %q)", err, out)
 	}
-}
+	if !strings.Contains(out, "Restored") {
+		t.Errorf("import output = %q, want 'Restored'", out)
+	}
 
-// TestExportBundle_EncryptedUnmarshalFails pins the root cause directly: the
-// json decoder cannot populate the embedded *cryptoEnvelope. Companion to the
-// command-level characterization test above.
-func TestExportBundle_EncryptedUnmarshalFails(t *testing.T) {
-	err := json.Unmarshal([]byte(`{"version":1,"encrypted":true,"cipher":"aes-256-gcm"}`), &exportBundle{})
-	if err == nil || !strings.Contains(err.Error(), "cannot set embedded pointer") {
-		t.Fatalf("expected embedded-pointer unmarshal error, got %v", err)
+	s := openStoreAt(t, dbPath2)
+	acct, err := s.GetAccountByLabel(ctx, "work")
+	if err != nil {
+		t.Fatalf("account 'work' should be restored: %v", err)
+	}
+	if acct.Email != "w@example.com" || acct.OrganizationUUID != "org-1" {
+		t.Errorf("restored identity = %q/%q, want w@example.com/org-1", acct.Email, acct.OrganizationUUID)
+	}
+	stash, err := claude.RetrieveStash(ctx, acct.KeyringRef)
+	if err != nil {
+		t.Fatalf("restored credential stash should exist: %v", err)
+	}
+	if string(stash.Bytes) != string(want) {
+		t.Errorf("restored credential bytes don't match the exported blob")
 	}
 }
 

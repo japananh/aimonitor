@@ -64,7 +64,7 @@ type exportBundle struct {
 	Accounts []exportAccount `json:"accounts,omitempty"`
 	// Crypto fields flatten to the top level (Bitwarden-style) when Encrypted;
 	// the embedded pointer is nil (and omitted) otherwise.
-	*cryptoEnvelope
+	*CryptoEnvelope
 }
 
 // exportAccount is an account's identity. In the no-credentials bundle these are
@@ -85,10 +85,10 @@ type encAccount struct {
 	Token string `json:"token"` // base64(stash bytes)
 }
 
-// cryptoEnvelope is the self-describing seal: a KDF derives a 32-byte key from
+// CryptoEnvelope is the self-describing seal: a KDF derives a 32-byte key from
 // the passphrase, AES-256-GCM encrypts. Field names spell out the scheme so the
 // file is legible. Embedded into exportBundle so these sit at the top level.
-type cryptoEnvelope struct {
+type CryptoEnvelope struct {
 	Cipher         string `json:"cipher"`          // "aes-256-gcm"
 	KDF            string `json:"kdf"`             // "argon2id"
 	KDFMemoryKiB   uint32 `json:"kdf_memory_kib"`  // Argon2id m
@@ -220,7 +220,7 @@ func runConfigExport(ctx context.Context, cmd *cobra.Command, s *store.Store, in
 			return err
 		}
 		bundle.Encrypted = true
-		bundle.cryptoEnvelope = enc
+		bundle.CryptoEnvelope = enc
 	} else {
 		// No passphrase to encrypt with → identities stay plaintext. This is
 		// the explicitly-shareable, no-secrets bundle.
@@ -290,7 +290,7 @@ func runConfigImport(ctx context.Context, cmd *cobra.Command, s *store.Store, pa
 
 	// 2. Accounts — restored only when the bundle carries credentials, so we
 	// never create a credential-less, unusable row.
-	if !bundle.Encrypted || bundle.cryptoEnvelope == nil {
+	if !bundle.Encrypted || bundle.CryptoEnvelope == nil {
 		if len(bundle.Accounts) > 0 {
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"\nBundle has no credentials — these %d accounts must be re-added with `aimonitor add`:\n", len(bundle.Accounts))
@@ -305,7 +305,7 @@ func runConfigImport(ctx context.Context, cmd *cobra.Command, s *store.Store, pa
 	if err != nil {
 		return err
 	}
-	plain, err := decryptTokens(bundle.cryptoEnvelope, pass)
+	plain, err := decryptTokens(bundle.CryptoEnvelope, pass)
 	if err != nil {
 		return err
 	}
@@ -395,7 +395,7 @@ func resolvePassphrase(passFile string) (string, error) {
 	return "", errors.New("a passphrase is required: set $AIMONITOR_PASSPHRASE or pass --passphrase-file <path>")
 }
 
-func encryptTokens(plain []byte, passphrase string) (*cryptoEnvelope, error) {
+func encryptTokens(plain []byte, passphrase string) (*CryptoEnvelope, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("salt: %w", err)
@@ -410,7 +410,7 @@ func encryptTokens(plain []byte, passphrase string) (*cryptoEnvelope, error) {
 		return nil, fmt.Errorf("nonce: %w", err)
 	}
 	ct := gcm.Seal(nil, nonce, plain, nil)
-	return &cryptoEnvelope{
+	return &CryptoEnvelope{
 		Cipher:         cipherAES256GCM,
 		KDF:            kdfArgon2id,
 		KDFMemoryKiB:   argon2Memory,
@@ -422,7 +422,7 @@ func encryptTokens(plain []byte, passphrase string) (*cryptoEnvelope, error) {
 	}, nil
 }
 
-func decryptTokens(t *cryptoEnvelope, passphrase string) ([]byte, error) {
+func decryptTokens(t *CryptoEnvelope, passphrase string) ([]byte, error) {
 	if t.KDF != kdfArgon2id {
 		return nil, fmt.Errorf("unsupported kdf %q", t.KDF)
 	}
