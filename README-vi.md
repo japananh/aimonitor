@@ -21,7 +21,7 @@
 - 🤖 **Auto-swap** khi chạm ngưỡng 5h *hoặc* 7d (mặc định 80 %) — chọn account còn nhiều headroom nhất (cân cả 2 cửa sổ), bỏ qua account đã cạn/đang bị rate-limit, và đổi ngay nếu account active chạm 100 %. Session `claude` đang chạy tự theo account mới.
 - 🔔 **Thông báo khi gần ngưỡng** (khi auto-swap tắt).
 - 💾 **Export / import** settings, hoặc chuyển account sang máy khác — credential là tùy chọn, mã hóa bằng passphrase (Argon2id + AES-256-GCM).
-- 🔌 **MCP server** — 30 tool Slack + ClickUp cho Claude Code qua stdio, có chế độ read-only theo từng dịch vụ.
+- 🔌 **MCP server** — các tool Slack + ClickUp cho Claude Code qua stdio, có chế độ read-only theo từng dịch vụ.
 - 🔐 **Lưu trong OS keyring** (macOS Keychain, Linux libsecret). SQLite chỉ giữ tham chiếu; token không rời keyring. Không telemetry.
 
 ## Cài đặt
@@ -91,6 +91,7 @@ AIMONITOR_PASSPHRASE=… aimonitor config import full.json                      
 | `auto_swap.grace_sec` | `60` | Trễ giữa thông báo "sắp đổi" và lúc đổi thật (`0` = đổi ngay) |
 | `notify.enabled` | `true` | Cảnh báo khi account active gần ngưỡng (chỉ khi auto-swap tắt) |
 | `notify.warn_pct` / `notify.crit_pct` | `80` / `95` | Mức cảnh báo / nghiêm trọng |
+| `daily_summary.enabled` | `true` | Thông báo mỗi ngày một lần, tổng kết lượng token đã dùng hôm qua trên các account |
 | `auto_update.enabled` | `true` | Kiểm tra release mới trên GitHub khi mở (không tự cài) |
 | `autostart` | `false` | Chạy daemon khi đăng nhập |
 | `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | Bật tool MCP của dịch vụ đó |
@@ -107,7 +108,7 @@ Chi tiết: [`docs/architecture.md`](docs/architecture.md) và [`docs/thresholds
 
 ## MCP server (Slack + ClickUp cho Claude Code)
 
-Một tiến trình stdio phục vụ 30 tool — không cần runtime phụ.
+Một tiến trình stdio phục vụ tool Slack + ClickUp — không cần runtime phụ.
 
 ```sh
 aimonitor mcp connect slack     # lưu Slack user token (xoxp-…)
@@ -116,8 +117,11 @@ aimonitor mcp register          # thêm server vào Claude Code
 ```
 
 - **Slack:** post vào channel/thread (mrkdwn, code block), upload, search, history, permalink.
-- **ClickUp:** cây workspace, task, comment, Docs (đọc & ghi).
+- **ClickUp:** cây workspace, task, comment, tệp đính kèm, Docs (đọc & ghi).
 - **An toàn:** prompt xin-quyền theo từng tool của Claude Code là lớp duyệt; thêm công tắc Enabled / Read-only theo dịch vụ và danh sách ẩn từng tool. Token được verify trực tiếp rồi lưu OS keyring — không vào SQLite hay log.
+
+> **Scope của Slack token.** Slack token là **user** token (`xoxp-…`). Cấp những **User Token Scopes** sau trên Slack app của bạn (api.slack.com → OAuth & Permissions), cài lại, rồi connect — thiếu scope nào sẽ hiện `slack: missing scope "…"` trên tool tương ứng:
+> `search:read`, `users:read`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `files:write`.
 
 ## Quyền riêng tư & bảo mật
 

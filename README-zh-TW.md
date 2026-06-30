@@ -21,7 +21,7 @@
 - 🤖 **自動切換**：當使用中的帳戶達到 5h *或* 7d 閾值（預設 80 %）時觸發 —— 選擇整體餘量最多的帳戶（兼顧兩個視窗），略過已用盡／被限流的帳戶；若使用中的帳戶達到 100 % 會立即切換。執行中的 `claude` 工作階段會自動跟隨。
 - 🔔 **接近上限時通知**（在自動切換關閉時生效）。
 - 💾 **匯出／匯入** 設定，或把帳戶遷移到另一台機器 —— 憑證為選用，並以密碼短語加密（Argon2id + AES-256-GCM）。
-- 🔌 **MCP 伺服器** —— 透過 stdio 向 Claude Code 提供 30 個 Slack + ClickUp 工具，支援各服務的唯讀模式。
+- 🔌 **MCP 伺服器** —— 透過 stdio 向 Claude Code 提供 Slack + ClickUp 工具，支援各服務的唯讀模式。
 - 🔐 **存於系統鑰匙圈**（macOS Keychain、Linux libsecret）。SQLite 僅保存參照；token 不會離開鑰匙圈。無遙測。
 
 ## 安裝
@@ -91,6 +91,7 @@ AIMONITOR_PASSPHRASE=… aimonitor config import full.json                      
 | `auto_swap.grace_sec` | `60` | 「即將切換」通知與實際切換之間的延遲（`0` = 立即） |
 | `notify.enabled` | `true` | 使用中的帳戶接近上限時通知（僅在自動切換關閉時） |
 | `notify.warn_pct` / `notify.crit_pct` | `80` / `95` | 警告 / 嚴重 通知等級 |
+| `daily_summary.enabled` | `true` | 每日一次的通知，彙整昨日各帳戶的 token 用量 |
 | `auto_update.enabled` | `true` | 啟動時檢查 GitHub 新版本（絕不自動安裝） |
 | `autostart` | `false` | 登入時啟動 daemon |
 | `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | 公開該服務的 MCP 工具 |
@@ -107,7 +108,7 @@ daemon 輪詢 `/api/oauth/usage`（約 5 分鐘 ± 抖動，不消耗 token）�
 
 ## MCP 伺服器（為 Claude Code 提供 Slack + ClickUp）
 
-單一 stdio 程序提供 30 個工具 —— 無需額外執行階段。
+單一 stdio 程序提供 Slack + ClickUp 工具 —— 無需額外執行階段。
 
 ```sh
 aimonitor mcp connect slack     # 儲存 Slack 使用者 token（xoxp-…）
@@ -116,8 +117,11 @@ aimonitor mcp register          # 把伺服器加入 Claude Code
 ```
 
 - **Slack：** 發到頻道／討論串（mrkdwn、程式碼區塊）、上傳、搜尋、歷史、permalink。
-- **ClickUp：** 工作區階層、任務、留言、Docs（讀寫）。
+- **ClickUp：** 工作區階層、任務、留言、附件、Docs（讀寫）。
 - **安全：** Claude Code 自身的逐工具授權提示是審批層；再加上各服務的 Enabled / Read-only 開關與逐工具停用清單。token 會先即時驗證，再存入系統鑰匙圈 —— 不進 SQLite 或日誌。
+
+> **Slack token scopes。** Slack token 是 **使用者** token（`xoxp-…`）。請在你的 Slack app（api.slack.com → OAuth & Permissions）授予下列 **User Token Scopes**，重新安裝後再連線 —— 若缺少其中任一個，會在受影響的工具上以 `slack: missing scope "…"` 的形式出現：
+> `search:read`、`users:read`、`channels:history`、`groups:history`、`im:history`、`mpim:history`、`channels:read`、`groups:read`、`im:read`、`mpim:read`、`chat:write`、`files:write`。
 
 ## 隱私與安全
 
