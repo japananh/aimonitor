@@ -38,8 +38,13 @@ import (
 func e2eEnv(t *testing.T) (*secret.MemoryKeyring, string) {
 	t.Helper()
 	ring := secret.NewMemoryKeyring()
-	restore := claude.SetKeyringForTest(ring)
-	t.Cleanup(restore)
+	// Install BOTH keyring seams pointing at the SAME in-memory ring: the claude
+	// package's ops (stash helpers + Provider live slot) and secret.Default
+	// (used by the MCP creds, doctor's keyring check, and import). A test that
+	// set only one would get a fake on one path and the real keychain on the
+	// other.
+	t.Cleanup(claude.SetKeyringForTest(ring))
+	t.Cleanup(secret.SetDefaultForTest(ring))
 
 	dbPath := filepath.Join(t.TempDir(), "store.db")
 	t.Setenv("AIMONITOR_STORE_PATH", dbPath)
