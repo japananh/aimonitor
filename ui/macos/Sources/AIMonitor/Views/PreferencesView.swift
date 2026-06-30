@@ -185,7 +185,7 @@ struct PreferencesView: View {
                     set: { newValue in autoUpdateOn = newValue; setSetting("auto_update.enabled", newValue) }
                 ))
                 .help("On: install new releases automatically. Off: just notify you when one is available.")
-                Text("AIMonitor checks GitHub for new releases (on launch and every few hours). When on, it installs them automatically and relaunches. When off, it sends a notification — click it to review and install.")
+                Text("Checks GitHub on launch and every few hours. Never installs pre-releases.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 AppTextButton("Check for updates", action: checkForUpdates)
@@ -217,17 +217,26 @@ struct PreferencesView: View {
             }
         }
         .formStyle(.grouped)
+        // Trim the grouped form's default top inset so the first section sits
+        // close under the Back bar.
+        .contentMargins(.top, 0, for: .scrollContent)
         // A "Back" bar pinned above the form returns to the main panel — the
         // form scrolls under it. safeAreaInset avoids reindenting the whole
         // body just to wrap it in a VStack.
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack {
-                AppTextButton("‹ Back", action: backToMain)
-                    .help("Return to the main panel")
+                IconActionButton(
+                    systemName: "chevron.backward",
+                    help: "Return to the main panel",
+                    size: 26,
+                    glyphSize: 15,
+                    action: backToMain
+                )
                 Spacer()
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+            .padding(.bottom, 0)
             .background(.bar)
         }
         // Make every label selectable (the modifier propagates to all
@@ -240,7 +249,7 @@ struct PreferencesView: View {
         // type scale (13pt body on macOS 26) so the window matches
         // System Settings exactly. The old 12pt/.small/compact-row pins
         // made everything read smaller than the OS.
-        .frame(width: 460, height: 640)
+        .frame(width: 420, height: 640)
         .onAppear(perform: loadState)
     }
 

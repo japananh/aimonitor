@@ -161,6 +161,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         preferencesWindow?.makeFirstResponder(nil)
         NSApp.activate(ignoringOtherApps: true)
         installPrefsClickMonitor()
+        // Force the form's scroll bar to the thin overlay style — a "Show
+        // scroll bars: Always" system otherwise draws the wide legacy bar flush
+        // against the settings content. Retried across a few ticks because
+        // SwiftUI creates the Form's NSScrollView during layout, not at show.
+        for delay in [0.0, 0.15, 0.4] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let root = self?.preferencesWindow?.contentView else { return }
+                self?.applyOverlayScrollers(in: root)
+            }
+        }
+    }
+
+    // applyOverlayScrollers walks a view tree and switches every NSScrollView to
+    // the thin overlay scroller (floats, reserves no width) — used for the
+    // Preferences window, whose SwiftUI Form would otherwise show the wide
+    // legacy bar on a "Show scroll bars: Always" system.
+    private func applyOverlayScrollers(in view: NSView) {
+        (view as? NSScrollView)?.scrollerStyle = .overlay
+        view.subviews.forEach { applyOverlayScrollers(in: $0) }
     }
 
     // backToMainFromPreferences returns from the Preferences window to the main
