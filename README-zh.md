@@ -21,7 +21,7 @@
 - 🤖 **自动切换**：当活跃账户达到 5h *或* 7d 阈值（默认 80 %）时触发 —— 选择整体余量最多的账户（兼顾两个窗口），跳过已用尽/被限流的账户；若活跃账户达到 100 % 立即切换。正在运行的 `claude` 会话会自动跟随。
 - 🔔 **接近上限时通知**（在自动切换关闭时生效）。
 - 💾 **导出 / 导入** 设置，或把账户迁移到另一台机器 —— 凭据可选，并用口令加密（Argon2id + AES-256-GCM）。
-- 🔌 **MCP 服务器** —— 通过 stdio 向 Claude Code 提供 30 个 Slack + ClickUp 工具，支持按服务的只读模式。
+- 🔌 **MCP 服务器** —— 通过 stdio 向 Claude Code 提供 Slack + ClickUp 工具，支持按服务的只读模式。
 - 🔐 **存于系统钥匙串**（macOS Keychain、Linux libsecret）。SQLite 仅保存引用；token 不离开钥匙串。无遥测。
 
 ## 安装
@@ -91,6 +91,7 @@ AIMONITOR_PASSPHRASE=… aimonitor config import full.json                      
 | `auto_swap.grace_sec` | `60` | “即将切换”通知与实际切换之间的延迟（`0` = 立即） |
 | `notify.enabled` | `true` | 活跃账户接近上限时通知（仅在自动切换关闭时） |
 | `notify.warn_pct` / `notify.crit_pct` | `80` / `95` | 警告 / 严重 通知级别 |
+| `daily_summary.enabled` | `true` | 每日一次的通知，汇总各账户昨日的 token 用量 |
 | `auto_update.enabled` | `true` | 启动时检查 GitHub 新版本（绝不自动安装） |
 | `autostart` | `false` | 登录时启动 daemon |
 | `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | 暴露该服务的 MCP 工具 |
@@ -107,7 +108,7 @@ daemon 轮询 `/api/oauth/usage`（约 5 分钟 ± 抖动，不消耗 token）�
 
 ## MCP 服务器（为 Claude Code 提供 Slack + ClickUp）
 
-单个 stdio 进程提供 30 个工具 —— 无需额外运行时。
+单个 stdio 进程提供 Slack + ClickUp 工具 —— 无需额外运行时。
 
 ```sh
 aimonitor mcp connect slack     # 保存 Slack 用户 token（xoxp-…）
@@ -116,8 +117,11 @@ aimonitor mcp register          # 把服务器加入 Claude Code
 ```
 
 - **Slack：** 发到频道/线程（mrkdwn、代码块）、上传、搜索、历史、permalink。
-- **ClickUp：** 工作区层级、任务、评论、Docs（读写）。
+- **ClickUp：** 工作区层级、任务、评论、附件、Docs（读写）。
 - **安全：** Claude Code 自身的逐工具授权提示是审批层；再加上按服务的 Enabled / Read-only 开关和逐工具禁用列表。token 先实时校验，再存入系统钥匙串 —— 不进 SQLite 或日志。
+
+> **Slack token 权限范围。** Slack token 是一个**用户**token（`xoxp-…`）。请在你的 Slack 应用上授予以下 **User Token Scopes**（api.slack.com → OAuth & Permissions），重新安装，然后连接 —— 若缺少某项，会在受影响的工具上以 `slack: missing scope "…"` 形式出现：
+> `search:read`、`users:read`、`channels:history`、`groups:history`、`im:history`、`mpim:history`、`channels:read`、`groups:read`、`im:read`、`mpim:read`、`chat:write`、`files:write`。
 
 ## 隐私与安全
 
