@@ -122,19 +122,6 @@ struct AccountTableView: View {
                             .foregroundStyle(.primary)
                             .textSelection(.enabled)
                     }
-                    // Organization below the email — the smallest line.
-                    if let org = acct.organizationName, !org.isEmpty {
-                        Text(org)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                    // Legacy rows added before identity capture: prompt a re-add.
-                    if (acct.email?.isEmpty ?? true) && (acct.organizationName?.isEmpty ?? true) {
-                        Text("identity not captured — re-run `aimonitor add`")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Both buttons live in one fixed-height band matching the
@@ -192,6 +179,24 @@ struct AccountTableView: View {
                     }
                 }
                 .frame(height: 22, alignment: .center)
+            }
+            // Organization on its own full-width line below the name/buttons row
+            // — NOT in the column beside the buttons — so the verbatim org name
+            // (a personal account's "<email>'s Organization") fits one line
+            // instead of wrapping in the narrow column.
+            if let org = acct.organizationName, !org.isEmpty {
+                Text(org)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            // Legacy rows added before identity capture: prompt a re-add.
+            if (acct.email?.isEmpty ?? true) && (acct.organizationName?.isEmpty ?? true) {
+                Text("identity not captured — re-run `aimonitor add`")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             // Per-account 5h / 7d utilization. Absent until the daemon has
             // fetched this account at least once (active every tick; inactive
