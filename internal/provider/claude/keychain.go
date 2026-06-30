@@ -73,14 +73,49 @@ var (
 	sharedOpsOnce sync.Once
 	sharedOpsVal  *keychainOps
 	sharedOpsErr  error
+
+	// opsOverride, when non-nil, replaces the process-wide keychain backend
+	// for BOTH the package-level helpers (StashCredential / RetrieveStash /
+	// DeleteStash / ReadActiveFresh) and the Provider (whose ops() also routes
+	// through sharedOps). It is set ONLY by SetKeyringForTest and is nil in the
+	// shipped binary, so production always builds the real backend via
+	// secret.Default(). A package global, so tests that set it must not run in
+	// parallel.
+	opsOverride *keychainOps
 )
 
 func sharedOps() (*keychainOps, error) {
+	if opsOverride != nil {
+		return opsOverride, nil
+	}
 	sharedOpsOnce.Do(func() {
 		sharedOpsVal, sharedOpsErr = newKeychainOps()
 	})
 	return sharedOpsVal, sharedOpsErr
 }
+
+// SetKeyringForTest routes every keychain operation in this package — the
+// package-level stash helpers, the live-slot read/write, and the Provider — at
+// the given in-memory keyring, so tests in any package can exercise the
+// credential flows without touching the real OS Keychain. It returns a restore
+// function (which reinstates the previous backend) that the caller MUST defer.
+//
+// TEST USE ONLY. Production never calls this; the shipped binary leaves
+// opsOverride nil and uses secret.Default(). Not safe for t.Parallel.
+func SetKeyringForTest(ring secret.Keyring) func() {
+	prev := opsOverride
+	opsOverride = &keychainOps{
+		ring:  ring,
+		user:  KeychainUserForTest,
+		cache: newCredCache(credCacheTTL),
+	}
+	return func() { opsOverride = prev }
+}
+
+// KeychainUserForTest is the keychain account name SetKeyringForTest uses, so a
+// test can seed or read the live slot directly, e.g.
+// ring.Set(ClaudeCodeService, KeychainUserForTest, blob). TEST USE ONLY.
+const KeychainUserForTest = "aimonitor-test-user"
 
 // readActive returns the bytes currently stored in Claude Code's slot.
 // Returns provider.Credential with empty bytes (NOT an error) when the
