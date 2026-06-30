@@ -19,24 +19,59 @@ struct AccountTableView: View {
     // (refresh token dead); the app delegate shows re-login instructions.
     var reloginAccount: ((String) -> Void)? = nil
 
+    // Measured height of each account row, keyed by account id; feeds the
+    // 3-row scroll cap below.
+    @State private var rowHeights: [Int64: CGFloat] = [:]
+
+    // Cap for the scrollable list: the first three rows plus the two 8pt gaps
+    // between them. Falls back to a sane estimate until the first measurement
+    // lands (one reflow), so the initial frame isn't broken.
+    private var capHeight: CGFloat {
+        let firstThree = model.accounts.prefix(3).compactMap { rowHeights[$0.id] }
+        guard firstThree.count == 3 else { return 360 }
+        return firstThree.reduce(0, +) + 8 * 2
+    }
+
     var body: some View {
         // Tahoe (Control Center) layout: each account is a rounded
         // "module" card floating on the glass panel — no full-width
         // dividers between rows.
-        VStack(alignment: .leading, spacing: 8) {
+        Group {
             if model.accounts.isEmpty {
                 Text("No accounts. Run `aimonitor add` in a terminal.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
             } else {
-                ForEach(model.accounts) { acct in
-                    rowView(acct)
+                // The 16pt inset lives on the rows, NOT on the scroll view, so
+                // the ScrollView spans the full popover width and its scroll bar
+                // sits flush against the right edge (like Preferences) instead
+                // of 16pt in from it and crowding the cards.
+                let rows = VStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.accounts) { acct in
+                        rowView(acct)
+                            .background(GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: RowHeightKey.self,
+                                    value: [acct.id: proxy.size.height])
+                            })
+                    }
+                }
+                .padding(.horizontal, 16)
+                // Past 3 accounts, cap the list to ~3 rows and scroll the rest
+                // so the panel doesn't grow unbounded with many accounts.
+                if model.accounts.count > 3 {
+                    ScrollView { rows.overlayScroller() }
+                        .frame(maxHeight: capHeight)
+                } else {
+                    rows
                 }
             }
         }
-        .padding(.horizontal, 16)
         .padding(.bottom, 4)
+        .onPreferenceChange(RowHeightKey.self) { rowHeights = $0 }
     }
 
     @ViewBuilder
@@ -87,21 +122,8 @@ struct AccountTableView: View {
                             .foregroundStyle(.primary)
                             .textSelection(.enabled)
                     }
-                    // Organization below the email — the smallest line.
-                    if let org = acct.organizationName, !org.isEmpty {
-                        Text(org)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                    // Legacy rows added before identity capture: prompt a re-add.
-                    if (acct.email?.isEmpty ?? true) && (acct.organizationName?.isEmpty ?? true) {
-                        Text("identity not captured — re-run `aimonitor add`")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
                 }
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
                 // Both buttons live in one fixed-height band matching the
                 // name line: the row is top-aligned (so the band sits beside
                 // the NAME, not the email), and the band centers the buttons
@@ -157,6 +179,24 @@ struct AccountTableView: View {
                     }
                 }
                 .frame(height: 22, alignment: .center)
+            }
+            // Organization on its own full-width line below the name/buttons row
+            // — NOT in the column beside the buttons — so the verbatim org name
+            // (a personal account's "<email>'s Organization") fits one line
+            // instead of wrapping in the narrow column.
+            if let org = acct.organizationName, !org.isEmpty {
+                Text(org)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            // Legacy rows added before identity capture: prompt a re-add.
+            if (acct.email?.isEmpty ?? true) && (acct.organizationName?.isEmpty ?? true) {
+                Text("identity not captured — re-run `aimonitor add`")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             // Per-account 5h / 7d utilization. Absent until the daemon has
             // fetched this account at least once (active every tick; inactive
@@ -351,3 +391,13 @@ private struct ReloginPill: View {
         .help("Session expired, need login")
     }
 }
+
+// Collects each account row's measured height (keyed by account id) so the
+// account list can cap its scroll view at the height of the first three rows.
+private struct RowHeightKey: PreferenceKey {
+    static let defaultValue: [Int64: CGFloat] = [:]
+    static func reduce(value: inout [Int64: CGFloat], nextValue: () -> [Int64: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+

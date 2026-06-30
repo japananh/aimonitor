@@ -92,3 +92,31 @@ func applyDockIconPolicy(_ show: Bool) {
         NSApp.activate(ignoringOtherApps: true)
     }
 }
+
+// MARK: - Overlay scroll bars
+
+/// Placed inside scrollable content, this reaches the enclosing NSScrollView
+/// and forces the thin OVERLAY scroller (floats, reserves no width) instead of
+/// the wide legacy bar a "Show scroll bars: Always" system would otherwise
+/// draw. It re-applies on update so a SwiftUI relayout can't revert it.
+struct ScrollerStyler: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView(frame: .zero)
+        apply(from: v)
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) { apply(from: nsView) }
+    private func apply(from view: NSView) {
+        DispatchQueue.main.async { [weak view] in
+            view?.enclosingScrollView?.scrollerStyle = .overlay
+        }
+    }
+}
+
+extension View {
+    /// Forces the enclosing scroll view's bar to the thin overlay style. Apply
+    /// to content that sits INSIDE the scroll view (so the probe resolves its
+    /// enclosing NSScrollView).
+    func overlayScroller() -> some View { background(ScrollerStyler()) }
+}
+
