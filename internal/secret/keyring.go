@@ -43,5 +43,24 @@ type Keyring interface {
 // The platform-specific implementations live in keychain_darwin.go and
 // libsecret_linux.go (build-tag gated).
 func Default() (Keyring, error) {
+	if defaultOverride != nil {
+		return defaultOverride, nil
+	}
 	return defaultKeyring()
+}
+
+// defaultOverride, when non-nil, is what Default() returns. Set ONLY by
+// SetDefaultForTest; nil in the shipped binary, so production always uses the
+// platform keyring (defaultKeyring).
+var defaultOverride Keyring
+
+// SetDefaultForTest makes Default() return ring (e.g. a *MemoryKeyring) so tests
+// in any package can exercise keyring-backed code without the real OS Keychain.
+// It returns a restore function that reinstates the previous value; the caller
+// MUST defer it. TEST USE ONLY — production never calls this. Not safe for
+// t.Parallel (it mutates a package global).
+func SetDefaultForTest(ring Keyring) func() {
+	prev := defaultOverride
+	defaultOverride = ring
+	return func() { defaultOverride = prev }
 }
