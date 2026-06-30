@@ -227,14 +227,20 @@ func TestBuildServer_RegistrationHonorsConfig(t *testing.T) {
 
 // --- HTTP clients ---------------------------------------------------------
 
-// pointAPIsAt redirects both API bases at a test server for the duration
-// of the test.
+// pointAPIsAt redirects all API bases (Slack, ClickUp v2, ClickUp v3) at a
+// test server for the duration of the test. Redirecting the v3 base too is
+// essential: the Docs handlers go through clickupV3APIBase, and a test that
+// left it pointing at api.clickup.com would make a real call and hang on the
+// 30s client timeout — a silent hermeticity break.
 func pointAPIsAt(t *testing.T, srv *httptest.Server) {
 	t.Helper()
-	oldSlack, oldCU := slackAPIBase, clickupAPIBase
+	oldSlack, oldCU, oldCUV3 := slackAPIBase, clickupAPIBase, clickupV3APIBase
 	slackAPIBase = srv.URL
 	clickupAPIBase = srv.URL
-	t.Cleanup(func() { slackAPIBase, clickupAPIBase = oldSlack, oldCU })
+	clickupV3APIBase = srv.URL
+	t.Cleanup(func() {
+		slackAPIBase, clickupAPIBase, clickupV3APIBase = oldSlack, oldCU, oldCUV3
+	})
 }
 
 func TestSlackPostMessage(t *testing.T) {
