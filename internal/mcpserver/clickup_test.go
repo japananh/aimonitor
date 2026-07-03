@@ -79,6 +79,41 @@ func TestSlimTask_CapturesIDsForRecreate(t *testing.T) {
 	}
 }
 
+// slimAttachment must prefer the signed url_w_query (downloads without a
+// separate auth dance) over the plain url, and coalesce mimetype/mime_type so
+// the shape survives both the v2 (mimetype) and v3 (mime_type) API surfaces.
+func TestSlimAttachment_PrefersSignedURLAndCoalescesMime(t *testing.T) {
+	got := slimAttachment(rawCUAttachment{
+		ID:           "att1.png",
+		Title:        "image.png",
+		Extension:    "png",
+		Mimetype:     "image/png",
+		Date:         "1782891262181",
+		Size:         5881,
+		URL:          "https://cdn.clickup.com/att1.png",
+		URLWithQuery: "https://cdn.clickup.com/att1.png?sig=abc",
+		URLWithHost:  "https://host.clickup.com/att1.png",
+	})
+	if got.URL != "https://cdn.clickup.com/att1.png?sig=abc" {
+		t.Errorf("url = %q, want the signed url_w_query variant", got.URL)
+	}
+	if got.Mimetype != "image/png" || got.Extension != "png" {
+		t.Errorf("mimetype/extension = %q / %q, want image/png / png", got.Mimetype, got.Extension)
+	}
+	if got.ID != "att1.png" || got.Title != "image.png" || got.Date != "1782891262181" || got.Size != 5881 {
+		t.Errorf("attachment = %+v, missing id/title/date/size", got)
+	}
+
+	// v3 shape: only mime_type is set, and only the plain url is present.
+	v3 := slimAttachment(rawCUAttachment{MimeType: "image/jpeg", URL: "https://cdn/x.jpg"})
+	if v3.Mimetype != "image/jpeg" {
+		t.Errorf("mime coalesce = %q, want image/jpeg from mime_type", v3.Mimetype)
+	}
+	if v3.URL != "https://cdn/x.jpg" {
+		t.Errorf("url fallback = %q, want plain url when url_w_query absent", v3.URL)
+	}
+}
+
 // No mentions, no rich array → flat comment_text, exactly as before (fallback).
 func TestCommentBody_FlatWhenNoMentions(t *testing.T) {
 	b := commentBody("hello", nil, nil)
