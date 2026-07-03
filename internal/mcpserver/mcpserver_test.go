@@ -526,6 +526,68 @@ func TestClickUpGetTask_SubtasksOptOut(t *testing.T) {
 	}
 }
 
+// clickup_get_task must surface the task's attachments (#50): each item carries
+// id/title/mimetype/extension/date, and the url is the signed variant that
+// downloads without a separate auth dance.
+func TestClickUpGetTask_Attachments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "T1", "name": "bug with screenshots",
+			"status": map[string]any{"status": "open"},
+			"attachments": []map[string]any{{
+				"id": "a1.png", "title": "actual.png", "extension": "png",
+				"mimetype": "image/png", "date": "1782891262181", "size": 5881,
+				"url":         "https://cdn.clickup.com/a1.png",
+				"url_w_query": "https://cdn.clickup.com/a1.png?sig=abc",
+				"url_w_host":  "https://host.clickup.com/a1.png",
+			}},
+		})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceClickUp, "pk_1_TOK")
+	c := NewClient(creds)
+	res, _, err := c.clickupGetTask(context.Background(), nil, cuTaskIn{TaskID: "T1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := resultJSON(t, res)
+	for _, want := range []string{`"attachments"`, "actual.png", "image/png", `"extension": "png"`, "1782891262181"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("attachments missing %q in %s", want, out)
+		}
+	}
+	if !strings.Contains(out, "a1.png?sig=abc") {
+		t.Errorf("url must be the signed url_w_query variant, got %s", out)
+	}
+	if strings.Contains(out, "host.clickup.com") {
+		t.Errorf("must not surface the url_w_host variant when a signed url exists: %s", out)
+	}
+}
+
+// A task with no attachments returns an empty array (not absent, not null) so
+// the caller can tell "none" from a shape that never carried attachments (#50).
+func TestClickUpGetTask_AttachmentsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "T2", "name": "no files"})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceClickUp, "pk_1_TOK")
+	c := NewClient(creds)
+	res, _, err := c.clickupGetTask(context.Background(), nil, cuTaskIn{TaskID: "T2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := resultJSON(t, res); !strings.Contains(out, `"attachments": []`) {
+		t.Errorf("empty attachments must marshal as [], got %s", out)
+	}
+}
+
 // list_tasks / search_tasks expose subtasks only when asked (ClickUp omits them
 // by default); the flag threads ClickUp's subtasks=true param.
 func TestClickUpListAndSearch_IncludeSubtasksFlag(t *testing.T) {
