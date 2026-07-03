@@ -31,6 +31,18 @@ type cuTask struct {
 	URL            string   `json:"url,omitempty"`
 }
 
+// cuAttachment is the slimmed shape for a task attachment. url is the variant
+// that downloads the bytes without a separate auth dance (see slimAttachment).
+type cuAttachment struct {
+	ID        string `json:"id"`
+	Title     string `json:"title,omitempty"`
+	URL       string `json:"url,omitempty"`
+	Mimetype  string `json:"mimetype,omitempty"`
+	Extension string `json:"extension,omitempty"`
+	Date      string `json:"date,omitempty"`
+	Size      int64  `json:"size,omitempty"`
+}
+
 type rawCUTask struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
@@ -74,6 +86,50 @@ func slimTask(t rawCUTask) cuTask {
 		out.Priority = t.Priority.Priority
 	}
 	return out
+}
+
+// rawCUAttachment is ClickUp's attachment object as embedded in a GET
+// /task/{id} response. It carries three URL variants; mimetype is the v2 field
+// (mime_type appears on the newer v3 attachments endpoint) — we read both and
+// coalesce so the shape is robust across ClickUp API surfaces.
+type rawCUAttachment struct {
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	Extension    string `json:"extension"`
+	Mimetype     string `json:"mimetype"`
+	MimeType     string `json:"mime_type"`
+	Date         string `json:"date"`
+	Size         int64  `json:"size"`
+	URL          string `json:"url"`
+	URLWithQuery string `json:"url_w_query"`
+	URLWithHost  string `json:"url_w_host"`
+}
+
+// slimAttachment picks the directly-downloadable URL and coalesces the mimetype
+// field. url_w_query carries a signed query string that fetches the bytes
+// without auth; plain url can 401 on a private workspace, so prefer the signed
+// variant and fall back only if it's absent.
+func slimAttachment(a rawCUAttachment) cuAttachment {
+	dl := a.URLWithQuery
+	if dl == "" {
+		dl = a.URL
+	}
+	if dl == "" {
+		dl = a.URLWithHost
+	}
+	mime := a.Mimetype
+	if mime == "" {
+		mime = a.MimeType
+	}
+	return cuAttachment{
+		ID:        a.ID,
+		Title:     a.Title,
+		URL:       dl,
+		Mimetype:  mime,
+		Extension: a.Extension,
+		Date:      a.Date,
+		Size:      a.Size,
+	}
 }
 
 // --- hierarchy ----------------------------------------------------------
@@ -291,10 +347,11 @@ func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in 
 	}
 	var out struct {
 		rawCUTask
-		Description string      `json:"description"`
-		DateCreated string      `json:"date_created"`
-		DateUpdated string      `json:"date_updated"`
-		Subtasks    []rawCUTask `json:"subtasks"`
+		Description string            `json:"description"`
+		DateCreated string            `json:"date_created"`
+		DateUpdated string            `json:"date_updated"`
+		Subtasks    []rawCUTask       `json:"subtasks"`
+		Attachments []rawCUAttachment `json:"attachments"`
 		Creator     struct {
 			Username string `json:"username"`
 		} `json:"creator"`
@@ -311,6 +368,14 @@ func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in 
 		"date_updated": out.DateUpdated,
 		"creator":      out.Creator.Username,
 	}
+	// ClickUp returns `attachments` by default (no include flag needed). Always
+	// set the key — an empty slice marshals as [] so callers can tell "none"
+	// from a shape that never carried attachments.
+	attachments := make([]cuAttachment, 0, len(out.Attachments))
+	for _, a := range out.Attachments {
+		attachments = append(attachments, slimAttachment(a))
+	}
+	res["attachments"] = attachments
 	// Slim the descendants with the same shape as list/search; each carries
 	// parent / top_level_parent so the caller can rebuild the nesting. Only set
 	// the key when asked, so callers can tell "none" from "didn't request".
