@@ -16,10 +16,23 @@ linked from the README.
 
 ```bash
 git checkout main && git pull --ff-only     # main green and in sync
-# If packaging/homebrew/aimonitor.rb or Info.plist's CFBundleShortVersionString
-# lag the tag, bump them, commit, push first.
 git tag -a v1.0.0 -m "v1.0.0" && git push origin v1.0.0
 ```
+
+No files to bump first — the version is derived entirely from the git
+tag at build time:
+
+- **CLI:** `internal/version.Version` is set via goreleaser ldflags (`-X
+  ...Version={{.Version}}`).
+- **`.app`:** `scripts/bundle-app.sh` stamps `CFBundleShortVersionString`
+  and `CFBundleVersion` from `git describe`.
+- **Homebrew cask:** goreleaser regenerates `version`/`sha256`/URL into
+  `japananh/homebrew-tap`.
+
+The committed `ui/macos/Resources/Info.plist` and
+`packaging/homebrew/aimonitor.rb` are reference templates; their literal
+version strings intentionally never move (the plist sits at `1.1.0`), so
+don't bump them expecting an effect.
 
 `release.yml` then bundles `build/AIMonitor.app` and runs
 `goreleaser release --clean`: cross-compiles the CLI (darwin + linux, both
