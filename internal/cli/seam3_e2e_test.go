@@ -70,30 +70,32 @@ func TestImport_RefreshStashFails(t *testing.T) {
 	}
 }
 
-// ---- doctor: stale probe branch ---------------------------------------------
+// ---- doctor: populated usage branch -----------------------------------------
 
-// TestDoctor_StaleProbe: an old probe row surfaces ErrProbeStale, exercising
-// runDoctor's stale-probe per-account branch.
-func TestDoctor_StaleProbe(t *testing.T) {
+// TestDoctor_UsageSnapshot: an account with an oauth_usage row exercises
+// runDoctor's populated per-account branch — the utilization is reported and
+// the account stays green even when the snapshot is old. Doctor surfaces
+// staleness as the fetch age (oauth_usage has no TTL); it never fails on it.
+func TestDoctor_UsageSnapshot(t *testing.T) {
 	_, dbPath := e2eEnv(t)
 	ctx := context.Background()
 	acct := seedAccount(t, dbPath, store.Account{Label: "staley"}, validBlob("sk"))
 	s := openStoreAt(t, dbPath)
-	// ProbedAt far in the past → GetProbeResult returns ErrProbeStale.
-	if err := s.PutProbeResult(ctx, acct.ID, provider.RateLimit{
-		ProbedAt:        time.Now().Add(-24 * time.Hour),
-		TokensRemaining: 9,
-		HTTPStatus:      200,
+	// FetchedAt far in the past → doctor still reports it (no TTL), with age.
+	if err := s.PutLimits(ctx, acct.ID, provider.Limits{
+		FiveHourPct: 55,
+		SevenDayPct: 12,
+		FetchedAt:   time.Now().Add(-24 * time.Hour),
 	}); err != nil {
-		t.Fatalf("seed stale probe: %v", err)
+		t.Fatalf("seed oauth_usage: %v", err)
 	}
 
 	out, err := runCLI(t, "", "doctor")
 	if err != nil {
 		t.Fatalf("doctor: %v (output: %q)", err, out)
 	}
-	if !strings.Contains(out, "probe staley") || !strings.Contains(out, "stale") {
-		t.Errorf("doctor should report the stale probe\n%s", out)
+	if !strings.Contains(out, "usage staley") || !strings.Contains(out, "5h=55%") {
+		t.Errorf("doctor should report the usage snapshot\n%s", out)
 	}
 }
 

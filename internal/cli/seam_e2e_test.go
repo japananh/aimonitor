@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/japananh/aimonitor/internal/daemon"
 	"github.com/japananh/aimonitor/internal/provider"
@@ -439,27 +438,25 @@ func TestImport_SkipsAccountWithMissingCredential(t *testing.T) {
 // ---- doctor (keyring round-trip + healthy tail; failing keyring) ------------
 
 // TestDoctor_HealthyRun: full runDoctor with a healthy faked keyring + a seeded
-// account carrying a probe result, so every check (config, sqlite, provider,
-// jsonl, keyring, accounts, per-account probe) is green.
+// account carrying an oauth_usage snapshot, so every check (config, sqlite,
+// provider, jsonl, keyring, accounts, per-account usage) is green.
 func TestDoctor_HealthyRun(t *testing.T) {
 	_, dbPath := e2eEnv(t)
 	ctx := context.Background()
 	acct := seedAccount(t, dbPath, store.Account{Label: "work"}, validBlob("sk-work"))
 	s := openStoreAt(t, dbPath)
-	if err := s.PutProbeResult(ctx, acct.ID, provider.RateLimit{
-		ProbedAt:        time.Now(),
-		TokensRemaining: 42,
-		ResetAt:         time.Now().Add(time.Hour),
-		HTTPStatus:      200,
+	if err := s.PutLimits(ctx, acct.ID, provider.Limits{
+		FiveHourPct: 42,
+		SevenDayPct: 17,
 	}); err != nil {
-		t.Fatalf("seed probe result: %v", err)
+		t.Fatalf("seed oauth_usage: %v", err)
 	}
 
 	out, err := runCLI(t, "", "doctor")
 	if err != nil {
 		t.Fatalf("doctor should pass on a healthy hermetic env: %v (output: %q)", err, out)
 	}
-	for _, want := range []string{"keyring", "round-trip ok", "sqlite open", "claude provider", "probe work"} {
+	for _, want := range []string{"keyring", "round-trip ok", "sqlite open", "claude provider", "usage work"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor output missing %q\n%s", want, out)
 		}

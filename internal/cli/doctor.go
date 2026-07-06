@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/japananh/aimonitor/internal/config"
 	"github.com/japananh/aimonitor/internal/provider"
@@ -30,9 +31,9 @@ func newDoctorCmd() *cobra.Command {
 // healthy; ok=false leaves a non-zero exit code without crashing the
 // rest of the run.
 type doctorCheck struct {
-	name    string
-	ok      bool
-	detail  string
+	name   string
+	ok     bool
+	detail string
 }
 
 func runDoctor(cmd *cobra.Command) error {
@@ -82,20 +83,24 @@ func runDoctor(cmd *cobra.Command) error {
 		checks = append(checks, doctorCheck{"accounts", true, fmt.Sprintf("%d configured", len(accounts))})
 	}
 
-	// Last probe per account.
+	// Last usage snapshot per account. This is the live OAuth data the
+	// daemon fetches from /api/oauth/usage (the oauth_usage table) — the
+	// source that replaced the deprecated server-side probe. A missing row
+	// just means the daemon has not fetched for this account yet; a present
+	// row shows current utilization and how long ago it was fetched, so a
+	// daemon that has stopped fetching shows up here as an ever-growing age.
 	for _, a := range accounts {
-		rl, err := s.GetProbeResult(ctx, a.ID)
+		lim, err := s.GetLimits(ctx, a.ID)
 		switch {
-		case errors.Is(err, store.ErrProbeNotFound):
-			checks = append(checks, doctorCheck{"probe " + a.Label, true, "no probe yet"})
-		case errors.Is(err, store.ErrProbeStale):
-			checks = append(checks, doctorCheck{"probe " + a.Label, true,
-				fmt.Sprintf("stale (remaining=%d)", rl.TokensRemaining)})
+		case errors.Is(err, store.ErrLimitsNotFound):
+			checks = append(checks, doctorCheck{"usage " + a.Label, true, "no usage yet"})
 		case err != nil:
-			checks = append(checks, doctorCheck{"probe " + a.Label, false, err.Error()})
+			checks = append(checks, doctorCheck{"usage " + a.Label, false, err.Error()})
 		default:
-			checks = append(checks, doctorCheck{"probe " + a.Label, true,
-				fmt.Sprintf("fresh, remaining=%d", rl.TokensRemaining)})
+			checks = append(checks, doctorCheck{"usage " + a.Label, true,
+				fmt.Sprintf("5h=%.0f%% 7d=%.0f%%, fetched %s ago",
+					lim.FiveHourPct, lim.SevenDayPct,
+					time.Since(lim.FetchedAt).Truncate(time.Second))})
 		}
 	}
 
