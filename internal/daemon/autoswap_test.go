@@ -197,8 +197,8 @@ func TestAutoSwap_NoCandidateNotifNamesExcludedHeadroom(t *testing.T) {
 	immediateSwap(t, s)
 
 	a, fsw, _ := withAutoSwapStubs(t, s)
-	var notifBody string
-	a.Notify = func(_, body string) { notifBody = body }
+	var notifTitle, notifBody string
+	a.Notify = func(title, body string) { notifTitle, notifBody = title, body }
 
 	swapped, err := a.MaybeSwap(ctx, "active")
 	if err != nil {
@@ -207,8 +207,53 @@ func TestAutoSwap_NoCandidateNotifNamesExcludedHeadroom(t *testing.T) {
 	if swapped || len(fsw.switched) != 0 {
 		t.Fatalf("expected no swap, got swapped=%v switched=%v", swapped, fsw.switched)
 	}
-	if !strings.Contains(notifBody, "be-three") || !strings.Contains(notifBody, "switch") {
-		t.Errorf("notification must name the excluded account and suggest switching to it; got %q", notifBody)
+	if notifTitle != "Switch account manually" {
+		t.Errorf("want the manual-switch title, got %q", notifTitle)
+	}
+	// Body must name the excluded reserve, tell the user to switch by hand, and
+	// convey that the whole auto-switch pool (not just the active account) is out.
+	if !strings.Contains(notifBody, "be-three") ||
+		!strings.Contains(notifBody, "by hand") ||
+		!strings.Contains(notifBody, "auto-switch account has headroom") {
+		t.Errorf("notification must name the excluded reserve, say to switch by hand, and note the pool is out; got %q", notifBody)
+	}
+}
+
+// When the active account is exhausted (>=100%) and the only headroom is on an
+// excluded account, the exhausted bypass re-evaluates the swap decision every
+// tick. The manual-switch notification must be de-duped — fire once per stuck
+// episode, not on every tick — or it spams the user.
+func TestAutoSwap_NoCandidateNotif_DedupedWhileExhausted(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ref-a"})
+	reserve, _ := s.CreateAccount(ctx, store.Account{Label: "reserve", KeyringRef: "ref-r"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 100}) // exhausted → bypass re-evals each tick
+	_ = s.PutLimits(ctx, reserve.ID, provider.Limits{FiveHourPct: 10}) // headroom, but excluded
+	if err := s.PutSetting(ctx, SettingsKeyAutoSwapExcluded, strconv.FormatInt(reserve.ID, 10)); err != nil {
+		t.Fatal(err)
+	}
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	clock := time.Now()
+	a.Now = func() time.Time { return clock }
+	var notes []string
+	a.Notify = func(title, _ string) { notes = append(notes, title) }
+
+	for i := 0; i < 3; i++ {
+		if _, err := a.MaybeSwap(ctx, "active"); err != nil {
+			t.Fatalf("MaybeSwap tick %d: %v", i, err)
+		}
+	}
+	if len(fsw.switched) != 0 {
+		t.Fatalf("must never swap to an excluded account; switched=%v", fsw.switched)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("manual-switch notification must fire once per stuck episode, got %d ticks notified: %v", len(notes), notes)
+	}
+	if notes[0] != "Switch account manually" {
+		t.Errorf("want the manual-switch title, got %q", notes[0])
 	}
 }
 
