@@ -124,6 +124,13 @@ type AutoSwapper struct {
 	mu            sync.Mutex
 	pending       *pendingSwap
 	cooldownUntil time.Time
+	// noCandidateNotifiedAt is when the "no eligible account to switch to"
+	// notification last fired. It de-dupes that notification: when the active
+	// account is exhausted (>=100%), the exhausted bypass above re-evaluates
+	// every tick, and without this the notification would repeat on each one.
+	// Reset to zero once a candidate reappears or the active account drops back
+	// below threshold, so the next stuck episode notifies right away.
+	noCandidateNotifiedAt time.Time
 }
 
 // MaybeSwap is invoked by the UsageScheduler after every successful
@@ -191,6 +198,7 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 	// for days even while its 5-hour window is quiet.
 	if activeLim.FiveHourPct < threshold5h && activeLim.SevenDayPct < threshold7d {
 		a.pending = nil
+		a.noCandidateNotifiedAt = time.Time{}
 		return false, nil
 	}
 	// The binding window is the one driving this decision (the one furthest
@@ -206,15 +214,28 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 			"window", binding, "active", activeLabel, "pct", activePct)
 		a.pending = nil
 		a.cooldownUntil = a.now().Add(cooldownAfterExhausted)
+		title := "No account to switch to"
 		body := fmt.Sprintf("%q hit %.0f%% of its %s limit — no other account has headroom.", activeLabel, activePct, binding)
-		// If the only account with headroom is one the user excluded, suggest
-		// switching to it manually — auto-swap won't, since it's excluded.
+		// When the only account with headroom is one the user excluded from
+		// auto-swap, the whole eligible pool is out of headroom — the exclusion,
+		// not exhaustion, is what blocks the swap. Say so and point the user at
+		// the excluded account to switch to by hand.
 		if exLabel, ok := a.excludedCandidateWithHeadroom(ctx, activeAcct.ID, activeLim, binding); ok {
-			body = fmt.Sprintf("%q hit %.0f%% (%s) — switch to %q (excluded, has headroom).", activeLabel, activePct, binding, exLabel)
+			title = "Switch account manually"
+			body = fmt.Sprintf("No auto-switch account has headroom left (%q hit %.0f%% of its %s limit). Switch to %q by hand — it's excluded from auto-swap but still has headroom.", activeLabel, activePct, binding, exLabel)
 		}
-		a.notify("No account to switch to", body)
+		// De-dupe: when the active account is exhausted (>=100%) the exhausted
+		// bypass re-runs this branch every tick. Fire at most once per
+		// cooldownAfterExhausted while stuck, instead of on every tick.
+		if a.now().Sub(a.noCandidateNotifiedAt) >= cooldownAfterExhausted {
+			a.notify(title, body)
+			a.noCandidateNotifiedAt = a.now()
+		}
 		return false, nil
 	}
+	// A candidate exists — clear the stuck-notification dedup so a later stuck
+	// episode notifies immediately rather than waiting out the reminder window.
+	a.noCandidateNotifiedAt = time.Time{}
 
 	// Swap immediately when grace is disabled (grace_sec=0) OR the active
 	// account is already exhausted (no point waiting out a grace window on an
