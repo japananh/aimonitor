@@ -216,11 +216,12 @@ func TestRestoreAccount_LookupError(t *testing.T) {
 	}
 }
 
-// ---- doctor: account with no probe yet (the "no probe yet" branch) ----------
+// ---- doctor: account with no usage yet (the "no usage yet" branch) ----------
 
-// TestDoctor_AccountNoProbe: a healthy run where the account has NO probe row
-// exercises runDoctor's ErrProbeNotFound per-account branch ("no probe yet").
-func TestDoctor_AccountNoProbe(t *testing.T) {
+// TestDoctor_AccountNoUsage: a healthy run where the account has NO oauth_usage
+// row exercises runDoctor's ErrLimitsNotFound per-account branch ("no usage
+// yet") — the expected state before the daemon's first usage fetch.
+func TestDoctor_AccountNoUsage(t *testing.T) {
 	_, dbPath := e2eEnv(t)
 	seedAccount(t, dbPath, store.Account{Label: "fresh"}, validBlob("sk-fresh"))
 
@@ -228,7 +229,7 @@ func TestDoctor_AccountNoProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doctor: %v (output: %q)", err, out)
 	}
-	if !strings.Contains(out, "probe fresh") || !strings.Contains(out, "no probe yet") {
-		t.Errorf("doctor should report 'no probe yet' for an unprobed account\n%s", out)
+	if !strings.Contains(out, "usage fresh") || !strings.Contains(out, "no usage yet") {
+		t.Errorf("doctor should report 'no usage yet' for an unfetched account\n%s", out)
 	}
 }
