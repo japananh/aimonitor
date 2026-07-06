@@ -122,6 +122,23 @@ type StatusPublisher struct {
 	// UnknownActiveEmail, when set, returns the email of a live account
 	// aimonitor doesn't manage (for the import prompt), or "".
 	UnknownActiveEmail func(ctx context.Context) string
+
+	// OnActiveChange, when set, fires each time the resolved active account's
+	// ID differs from the previous tick's — i.e. the active account actually
+	// switched. It does NOT fire on the first sighting after start (the
+	// UsageScheduler's boot fetch already covers that), on a rename (same ID,
+	// new label), or on a transient resolution failure (unresolved tick).
+	// The daemon wires it to kick the UsageScheduler into an immediate fetch
+	// so a switched-in account's usage refreshes in seconds instead of after
+	// a full scheduler interval. Argless by design: the scheduler re-resolves
+	// the active account itself.
+	OnActiveChange func()
+
+	// active-account change tracking for OnActiveChange. Touched only from
+	// Run's single publish goroutine, so no lock is needed.
+	activeSeen      bool
+	lastActiveID    int64
+	lastActiveLabel string
 }
 
 // Run blocks until ctx is cancelled, publishing a fresh Status row on
@@ -165,6 +182,20 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 			p.ExternalWatch.Observe(ctx, activeAcct.ID, label)
 		}
 		st.LastExternalSwitchAt = p.ExternalWatch.LastExternalAt()
+	}
+	// Detect an actual active-account switch (by rename-stable ID) and kick
+	// the UsageScheduler so the newly-active account's usage refreshes now,
+	// not after a full scheduler interval. Only on a resolved tick, so a
+	// transient resolution failure never registers as a change.
+	if activeFound {
+		if p.OnActiveChange != nil && p.activeSeen && activeAcct.ID != p.lastActiveID {
+			logger.Info("active account changed; refreshing usage",
+				"from", p.lastActiveLabel, "to", label)
+			p.OnActiveChange()
+		}
+		p.activeSeen = true
+		p.lastActiveID = activeAcct.ID
+		p.lastActiveLabel = label
 	}
 	if p.UnknownActiveEmail != nil {
 		st.UnknownActiveEmail = p.UnknownActiveEmail(ctx)

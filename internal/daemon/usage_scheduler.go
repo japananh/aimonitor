@@ -102,6 +102,17 @@ type UsageScheduler struct {
 	// endpoint); tickOnce then reads the live credential directly.
 	RefreshActive func(ctx context.Context, acct store.Account, force bool) (provider.Credential, error)
 
+	// Kick, when non-nil, requests an out-of-band fetch: a receive triggers
+	// an immediate tick instead of waiting out the current interval. The
+	// daemon wires this to the StatusPublisher's active-account-change
+	// signal, so a freshly-switched account — manual `aimonitor switch` or an
+	// external `claude /login` — has its usage refreshed within seconds
+	// rather than after a full baseline interval. Edge-triggered and
+	// coalesced by the sender's buffered channel, so a burst of switches
+	// collapses to a single pending fetch. Nil disables it (tests, and any
+	// provider without the StatusPublisher wired).
+	Kick <-chan struct{}
+
 	// rand is seeded per-scheduler so tests can substitute a deterministic
 	// source. Default uses the package math/rand/v2 global source.
 	rand *rand.Rand
@@ -177,6 +188,19 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-u.Kick:
+			// The active account changed. Fetch now rather than waiting out
+			// the current interval: reset the timer to fire immediately and
+			// let the timer.C case do the fetch and reschedule. Drain any
+			// pending fire first, per the time.Timer reset contract. (A nil
+			// Kick channel never selects, so this case is inert when unwired.)
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(0)
 		case <-timer.C:
 			err := u.tickOnce(ctx)
 			// Every switch case below assigns next (the default via
