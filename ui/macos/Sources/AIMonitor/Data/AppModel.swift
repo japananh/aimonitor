@@ -67,6 +67,32 @@ final class AppModel: ObservableObject {
     private var timer: AnyCancellable?
     private let workQueue = DispatchQueue(label: "dev.aimonitor.dbpoll", qos: .utility)
 
+    // When the app launches — notably the relaunch right after a self-update —
+    // we haven't read the DB yet, so `status` is nil. That is NOT the same as
+    // the daemon being down. `launchedAt` bounds a startup grace window during
+    // which a still-empty status reads as "starting up", not "daemon not
+    // running", so a normal launch doesn't flash the alarm banner before the
+    // first status read lands. Sized above the observed 1–3s first-read latency
+    // (and any brief window where the DB is unreadable while the .app is
+    // swapped mid-upgrade) with margin.
+    private let launchedAt = Date()
+    private let startupGrace: TimeInterval = 10
+
+    /// Whether to surface the "daemon not running" banner. Once a status has
+    /// been published we use staleness (last publish older than ~30s → down).
+    /// Before the first status read (status == nil) we suppress it during the
+    /// startup grace window — distinguishing "still loading / daemon restarting
+    /// after an update" from "daemon genuinely down" (a fresh install with no
+    /// daemon, or a real outage that outlasts the grace). Re-evaluated on every
+    /// poll (status is @Published and reassigned each refresh), so once the
+    /// grace elapses with still-nil status the banner appears on the next tick.
+    var daemonAppearsDown: Bool {
+        if let pub = status?.published_at {
+            return Date().timeIntervalSince(pub) > 30
+        }
+        return Date().timeIntervalSince(launchedAt) > startupGrace
+    }
+
     // What's on screen drives how much each poll fetches and how fast it runs.
     // When nothing is open, only the menu-bar title needs data (status +
     // accounts), so the per-account detail and the heavy token scan are
