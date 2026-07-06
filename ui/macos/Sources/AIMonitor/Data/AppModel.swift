@@ -76,7 +76,18 @@ final class AppModel: ObservableObject {
     // (and any brief window where the DB is unreadable while the .app is
     // swapped mid-upgrade) with margin.
     private let launchedAt = Date()
-    private let startupGrace: TimeInterval = 10
+    private let startupGrace: TimeInterval = AppModel.startupGraceSeconds()
+
+    /// Startup grace in seconds, overridable via AIMONITOR_STARTUP_GRACE_MS
+    /// (debug/QA only, mirrors AIMONITOR_POLL_MS) so a test build can stretch
+    /// the window to visibly confirm the banner stays suppressed. Default 10s.
+    nonisolated static func startupGraceSeconds() -> TimeInterval {
+        if let s = ProcessInfo.processInfo.environment["AIMONITOR_STARTUP_GRACE_MS"],
+           let ms = Double(s), ms > 0 {
+            return ms / 1000.0
+        }
+        return 10
+    }
 
     /// Whether to surface the "daemon not running" banner. Once a status has
     /// been published we use staleness (last publish older than ~30s → down).
