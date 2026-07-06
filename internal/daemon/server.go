@@ -124,6 +124,15 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.watcher = w
 
+	// usageKick lets the StatusPublisher nudge the UsageScheduler into an
+	// immediate usage fetch when the active account changes (manual switch or
+	// external `claude /login`), instead of waiting out the scheduler's
+	// interval. Buffered(1) + non-blocking send coalesces a burst of switches
+	// into at most one pending fetch and never stalls the 2s publisher. Only
+	// the Claude UsageScheduler (below) receives; with any other provider the
+	// sends are harmless no-ops.
+	usageKick := make(chan struct{}, 1)
+
 	pub := &StatusPublisher{
 		Store:       s.store,
 		Auto:        auto,
@@ -135,6 +144,15 @@ func (s *Server) Run(ctx context.Context) error {
 		// Surface a live account aimonitor doesn't manage so the widget can
 		// offer to import it.
 		UnknownActiveEmail: resolveUnknownActiveEmail(s),
+		// On any active-account switch, kick the UsageScheduler to fetch the
+		// new account's usage promptly (non-blocking so the publisher never
+		// stalls).
+		OnActiveChange: func() {
+			select {
+			case usageKick <- struct{}{}:
+			default:
+			}
+		},
 	}
 	go func() { _ = pub.Run(ctx) }()
 
@@ -194,6 +212,10 @@ func (s *Server) Run(ctx context.Context) error {
 			// grace deadline fires within ~one interval, not a full baseline
 			// one (a swap can arm below SpeedupAtPct).
 			SwapPending: autoSwap.HasPending,
+			// Refresh the active account's usage immediately when it changes
+			// (manual switch or external `claude /login`) instead of waiting
+			// out the interval — see usageKick above.
+			Kick: usageKick,
 		}
 		go func() { _ = usage.Run(ctx) }()
 	}

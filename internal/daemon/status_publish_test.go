@@ -150,6 +150,62 @@ func TestPublish_ExternalWatchAndUnknownEmail(t *testing.T) {
 	}
 }
 
+// TestPublish_OnActiveChange: OnActiveChange fires exactly on a real switch —
+// not on the first sighting (the scheduler's boot fetch covers that), not on a
+// repeat of the same account, and not on a transient unresolved tick; it DOES
+// fire when the resolved active account's ID changes. This is the trigger that
+// kicks the UsageScheduler so a switched-in account refreshes promptly (#52).
+func TestPublish_OnActiveChange(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	if _, err := s.CreateAccount(ctx, store.Account{Label: "one", KeyringRef: "ref-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateAccount(ctx, store.Account{Label: "two", KeyringRef: "ref-2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	pub, _ := newPublisher(t, s)
+	kicks := 0
+	pub.OnActiveChange = func() { kicks++ }
+
+	label := "one"
+	pub.ActiveLabel = func(context.Context) string { return label }
+
+	pub.publish(ctx) // first sighting of "one" → baseline, no fire
+	if kicks != 0 {
+		t.Fatalf("first sighting must not fire, got %d", kicks)
+	}
+	pub.publish(ctx) // same account again → no fire
+	if kicks != 0 {
+		t.Fatalf("repeat of same account must not fire, got %d", kicks)
+	}
+
+	label = "two"
+	pub.publish(ctx) // switched one→two → fire
+	if kicks != 1 {
+		t.Fatalf("switch must fire once, got %d", kicks)
+	}
+
+	label = "" // transient unresolved tick → no fire, prior ID retained
+	pub.publish(ctx)
+	if kicks != 1 {
+		t.Fatalf("unresolved tick must not fire, got %d", kicks)
+	}
+
+	label = "two" // same as last RESOLVED account → no fire
+	pub.publish(ctx)
+	if kicks != 1 {
+		t.Fatalf("returning to the same account after an unresolved tick must not fire, got %d", kicks)
+	}
+
+	label = "one"
+	pub.publish(ctx) // switched two→one → fire again
+	if kicks != 2 {
+		t.Fatalf("second switch must fire, got %d", kicks)
+	}
+}
+
 // TestResolveActiveAccount_ByteMatch: the live blob byte-equals an account's
 // stash → that account is authoritative (no claude.json needed).
 func TestResolveActiveAccount_ByteMatch(t *testing.T) {

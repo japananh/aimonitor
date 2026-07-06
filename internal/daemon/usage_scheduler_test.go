@@ -58,6 +58,59 @@ func TestUsageScheduler_TickOnce_HappyPath(t *testing.T) {
 	}
 }
 
+// TestUsageScheduler_Kick_TriggersImmediateFetch: a receive on Kick makes Run
+// fetch the active account's usage out of band, instead of waiting out the
+// interval — the fix for #52 (a switched-in account showed stale usage until
+// the next scheduled tick). Baseline is 1h and the boot fetch is 3s away, so a
+// fetch observed within the sub-3s deadline can only be the kick's doing.
+func TestUsageScheduler_Kick_TriggersImmediateFetch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"five_hour": {"utilization": 33.0, "resets_at": "2026-05-31T23:00:00Z"},
+			"seven_day": {"utilization": 5.0,  "resets_at": "2026-06-07T00:00:00Z"}
+		}`))
+	}))
+	defer srv.Close()
+
+	st := openStore(t)
+	acct, err := st.CreateAccount(context.Background(), store.Account{Label: "p", KeyringRef: "ref"})
+	if err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	fp := &fakeProvider{active: provider.Credential{Bytes: append([]byte(nil), goodCred...)}}
+
+	kick := make(chan struct{}, 1)
+	u := &UsageScheduler{
+		Store:    st,
+		Provider: fp,
+		Fetcher:  &claude.UsageFetcher{BaseURL: srv.URL, HTTP: srv.Client()},
+		Baseline: time.Hour, // only a Kick can fetch within the test window
+		Kick:     kick,
+		ResolveActive: func(context.Context) (store.Account, bool, error) {
+			return acct, true, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = u.Run(ctx) }()
+
+	kick <- struct{}{} // buffered — held until Run's select is ready
+
+	// The boot fetch is 3s out; a fetch landing before then is the kick's.
+	deadline := time.After(2500 * time.Millisecond)
+	for {
+		if lim, err := st.GetLimits(ctx, acct.ID); err == nil && lim.FiveHourPct == 33.0 {
+			return // kick fetched and persisted — pass
+		}
+		select {
+		case <-deadline:
+			t.Fatal("kick did not trigger a fetch before the boot tick")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func TestUsageScheduler_TickOnce_NoActive(t *testing.T) {
 	// When ResolveActive reports no active account, tickOnce returns nil
 	// and never hits HTTP — verifies background daemon does not poll
