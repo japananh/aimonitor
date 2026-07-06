@@ -68,7 +68,10 @@ struct PopoverRootView: View {
             // When the daemon hasn't published recently the rows below are
             // stale; surface that explicitly. (Dropping the old session bar
             // removed the previous "daemon not running" hint — keep one.)
-            if daemonDown {
+            // Suppressed during the startup grace window so a launch — notably
+            // the relaunch right after a self-update — doesn't flash the alarm
+            // before the first status read lands (see AppModel.daemonAppearsDown).
+            if model.daemonAppearsDown {
                 bannerCard {
                     Label(
                         "Daemon not running — usage may be stale.",
@@ -167,14 +170,6 @@ struct PopoverRootView: View {
         )
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
-    }
-
-    // daemonDown is true when no status has been published, or the last
-    // publish is older than ~15 publish intervals (the daemon publishes
-    // every ~2s). A short window avoids false alarms from a single missed tick.
-    private var daemonDown: Bool {
-        guard let pub = model.status?.published_at else { return true }
-        return Date().timeIntervalSince(pub) > 30
     }
 
     // startDaemon registers + starts the daemon LaunchAgent via the CLI
