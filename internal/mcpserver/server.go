@@ -69,17 +69,17 @@ func catalog() []toolDef {
 				return c.slackUploadFile
 			})},
 		{name: "slack_search_messages", svc: ServiceSlack,
-			desc: "Search Slack messages across the workspace (supports in:#channel, from:@user, before:/after: modifiers)",
+			desc: "Search Slack messages across the workspace (supports in:#channel, from:@user, before:/after: modifiers). Each result carries attachment_count/block_count/file_count; set include_attachments to see unfurl/preview cards",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackSearchIn, any] {
 				return c.slackSearchMessages
 			})},
 		{name: "slack_channel_history", svc: ServiceSlack,
-			desc: "Fetch recent messages from a Slack channel",
+			desc: "Fetch recent messages from a Slack channel. Each message carries attachment_count/block_count/file_count; set include_attachments to see unfurl/preview cards (incl. app unfurls like ClickUp's)",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackHistoryIn, any] {
 				return c.slackChannelHistory
 			})},
 		{name: "slack_thread_replies", svc: ServiceSlack,
-			desc: "Fetch the replies in a Slack thread",
+			desc: "Fetch the replies in a Slack thread. Each message carries attachment_count/block_count/file_count; set include_attachments to see unfurl/preview cards",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackRepliesIn, any] {
 				return c.slackThreadReplies
 			})},
