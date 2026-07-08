@@ -23,7 +23,7 @@ func TestSlimMsg_UserFallbackAndChannelPrefix(t *testing.T) {
 	withName.Text = "hello"
 	withName.Channel.ID = "C1"
 	withName.Channel.Name = "dev"
-	got := slimMsg(withName)
+	got := slimMsg(withName, slimOpts{})
 	if got.User != "U123" {
 		t.Errorf("user = %q, want U123", got.User)
 	}
@@ -36,12 +36,48 @@ func TestSlimMsg_UserFallbackAndChannelPrefix(t *testing.T) {
 	botMsg.TS = "2.2"
 	botMsg.Username = "ci-bot"
 	botMsg.Channel.ID = "C9"
-	got = slimMsg(botMsg)
+	got = slimMsg(botMsg, slimOpts{})
 	if got.User != "ci-bot" {
 		t.Errorf("user = %q, want ci-bot fallback", got.User)
 	}
 	if got.Channel != "C9" {
 		t.Errorf("channel = %q, want raw C9", got.Channel)
+	}
+}
+
+// slimMsg must ALWAYS surface counts (the cheap detection signal for #58) but
+// only copy the heavy arrays through when the matching opt is set. The
+// attachment shape mirrors a real app unfurl (is_app_unfurl / app_unfurl_url),
+// the ClickUp link_shared card the issue is about.
+func TestSlimMsg_CountsAlwaysOptInPayload(t *testing.T) {
+	var m rawSlackMsg
+	m.TS = "1.1"
+	m.Attachments = []json.RawMessage{
+		json.RawMessage(`{"is_app_unfurl":true,"app_unfurl_url":"https://app.clickup.com/t/123"}`),
+	}
+	m.Blocks = []json.RawMessage{json.RawMessage(`{"type":"rich_text"}`)}
+	m.Files = nil
+
+	// Default: counts present, no full arrays.
+	def := slimMsg(m, slimOpts{})
+	if def.AttachmentCount != 1 || def.BlockCount != 1 || def.FileCount != 0 {
+		t.Errorf("counts = att %d / block %d / file %d, want 1/1/0", def.AttachmentCount, def.BlockCount, def.FileCount)
+	}
+	if def.Attachments != nil || def.Blocks != nil || def.Files != nil {
+		t.Errorf("default must omit full arrays, got att=%v blocks=%v files=%v", def.Attachments, def.Blocks, def.Files)
+	}
+
+	// Opt into attachments only: the unfurl card is passed through verbatim,
+	// blocks stay omitted (they're the heavy payload).
+	att := slimMsg(m, slimOpts{attachments: true})
+	if len(att.Attachments) != 1 {
+		t.Fatalf("attachments not included: %v", att.Attachments)
+	}
+	if !strings.Contains(string(att.Attachments[0]), "is_app_unfurl") {
+		t.Errorf("attachment not passed through verbatim: %s", att.Attachments[0])
+	}
+	if att.Blocks != nil {
+		t.Errorf("blocks must stay omitted when only attachments requested")
 	}
 }
 
@@ -234,6 +270,55 @@ func TestSlackChannelHistory_ParamsAndSlimming(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("history result missing %q in %s", want, out)
 		}
+	}
+}
+
+// slack_channel_history must expose an unfurl/preview card (#58): by default via
+// attachment_count only (cheap detection), and via the full attachments array
+// when include_attachments is set. blocks stay omitted unless separately asked.
+func TestSlackChannelHistory_AttachmentsCountAndOptIn(t *testing.T) {
+	// A message carrying the ClickUp app's async link_shared unfurl card.
+	unfurlMsg := map[string]any{
+		"ts": "1.1", "user": "U1", "text": "see task",
+		"attachments": []map[string]any{
+			{"is_app_unfurl": true, "app_unfurl_url": "https://app.clickup.com/t/86cwq1wrh"},
+		},
+		"blocks": []map[string]any{{"type": "rich_text"}},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "messages": []map[string]any{unfurlMsg}})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	// Default: count present, full arrays absent (no unfurl body, no blocks).
+	res, _, err := c.slackChannelHistory(context.Background(), nil, slackHistoryIn{Channel: "C1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := resultJSON(t, res)
+	if !strings.Contains(def, `"attachment_count": 1`) {
+		t.Errorf("default must surface attachment_count for cheap detection: %s", def)
+	}
+	if strings.Contains(def, "app_unfurl_url") || strings.Contains(def, "rich_text") {
+		t.Errorf("default must NOT include the heavy attachment/block bodies: %s", def)
+	}
+
+	// Opt in to attachments only: unfurl card passed through, blocks still out.
+	res, _, err = c.slackChannelHistory(context.Background(), nil, slackHistoryIn{Channel: "C1", IncludeAttachments: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	att := resultJSON(t, res)
+	if !strings.Contains(att, "app_unfurl_url") || !strings.Contains(att, "app.clickup.com/t/86cwq1wrh") {
+		t.Errorf("include_attachments must pass the unfurl card through: %s", att)
+	}
+	if strings.Contains(att, "rich_text") {
+		t.Errorf("blocks must stay omitted when only attachments requested: %s", att)
 	}
 }
 

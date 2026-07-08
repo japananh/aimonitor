@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,11 @@ import (
 // slackMsg is the slimmed message shape returned by read tools. Slack's
 // raw payloads carry blocks/attachments/metadata that multiply token cost
 // without helping the model; keep what's needed to read and to thread.
+//
+// The *_count fields are always present (a cheap detection signal — a caller
+// can tell a message carries an unfurl/preview card, blocks, or files without
+// paying for the payload). The full arrays are opt-in per read tool, since
+// they multiply token cost (blocks especially).
 type slackMsg struct {
 	TS         string `json:"ts"`
 	User       string `json:"user,omitempty"`
@@ -23,6 +29,19 @@ type slackMsg struct {
 	ReplyCount int    `json:"reply_count,omitempty"`
 	Channel    string `json:"channel,omitempty"`
 	Permalink  string `json:"permalink,omitempty"`
+	// Detection signals — always set (omitempty drops the common zero case).
+	// A non-zero count means the content is present even when its full array
+	// below is omitted; request it via the tool's include_* flag.
+	AttachmentCount int `json:"attachment_count,omitempty"`
+	BlockCount      int `json:"block_count,omitempty"`
+	FileCount       int `json:"file_count,omitempty"`
+	// Full payloads, verbatim from Slack, included only when the caller opts
+	// in. Unfurl / link-preview cards — including async app unfurls like the
+	// ClickUp app's link_shared card — arrive as entries in Attachments (look
+	// for is_app_unfurl / app_unfurl_url).
+	Attachments []json.RawMessage `json:"attachments,omitempty"`
+	Blocks      []json.RawMessage `json:"blocks,omitempty"`
+	Files       []json.RawMessage `json:"files,omitempty"`
 }
 
 type rawSlackMsg struct {
@@ -37,9 +56,22 @@ type rawSlackMsg struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"channel"`
+	// Kept as raw JSON so we can pass them through verbatim (and count them)
+	// without modelling Slack's sprawling attachment/block/file schemas.
+	Attachments []json.RawMessage `json:"attachments"`
+	Blocks      []json.RawMessage `json:"blocks"`
+	Files       []json.RawMessage `json:"files"`
 }
 
-func slimMsg(m rawSlackMsg) slackMsg {
+// slimOpts gates which heavy payloads slimMsg copies through. Counts are always
+// computed regardless; these only control the full-array inclusion.
+type slimOpts struct {
+	attachments bool
+	blocks      bool
+	files       bool
+}
+
+func slimMsg(m rawSlackMsg, opts slimOpts) slackMsg {
 	user := m.User
 	if user == "" {
 		user = m.Username
@@ -48,10 +80,23 @@ func slimMsg(m rawSlackMsg) slackMsg {
 	if m.Channel.Name != "" {
 		ch = "#" + m.Channel.Name
 	}
-	return slackMsg{
+	out := slackMsg{
 		TS: m.TS, User: user, Text: m.Text, ThreadTS: m.ThreadTS,
 		ReplyCount: m.ReplyCount, Channel: ch, Permalink: m.Permalink,
+		AttachmentCount: len(m.Attachments),
+		BlockCount:      len(m.Blocks),
+		FileCount:       len(m.Files),
 	}
+	if opts.attachments {
+		out.Attachments = m.Attachments
+	}
+	if opts.blocks {
+		out.Blocks = m.Blocks
+	}
+	if opts.files {
+		out.Files = m.Files
+	}
+	return out
 }
 
 // --- post message -----------------------------------------------------
@@ -142,8 +187,11 @@ func (c *Client) slackDeleteMessage(ctx context.Context, _ *mcp.CallToolRequest,
 // --- search -----------------------------------------------------------
 
 type slackSearchIn struct {
-	Query string `json:"query" jsonschema:"search query; supports Slack modifiers like in:#channel from:@user before:YYYY-MM-DD"`
-	Count int    `json:"count,omitempty" jsonschema:"max results (default 20, max 100)"`
+	Query              string `json:"query" jsonschema:"search query; supports Slack modifiers like in:#channel from:@user before:YYYY-MM-DD"`
+	Count              int    `json:"count,omitempty" jsonschema:"max results (default 20, max 100)"`
+	IncludeAttachments bool   `json:"include_attachments,omitempty" jsonschema:"include each message's full attachments array (unfurl/link-preview cards, incl. async app unfurls like ClickUp's — look for is_app_unfurl/app_unfurl_url). Off by default to save tokens; attachment_count is always returned so you can detect cards cheaply"`
+	IncludeBlocks      bool   `json:"include_blocks,omitempty" jsonschema:"include each message's full Block Kit blocks array. Off by default — blocks are the heaviest payload; block_count is always returned"`
+	IncludeFiles       bool   `json:"include_files,omitempty" jsonschema:"include each message's files array (file-share metadata). Off by default; file_count is always returned"`
 }
 
 func (c *Client) slackSearchMessages(ctx context.Context, _ *mcp.CallToolRequest, in slackSearchIn) (*mcp.CallToolResult, any, error) {
@@ -162,9 +210,10 @@ func (c *Client) slackSearchMessages(ctx context.Context, _ *mcp.CallToolRequest
 	if err := c.slackGET(ctx, "search.messages", params, &out); err != nil {
 		return nil, nil, err
 	}
+	opts := slimOpts{attachments: in.IncludeAttachments, blocks: in.IncludeBlocks, files: in.IncludeFiles}
 	msgs := make([]slackMsg, 0, len(out.Messages.Matches))
 	for _, m := range out.Messages.Matches {
-		msgs = append(msgs, slimMsg(m))
+		msgs = append(msgs, slimMsg(m, opts))
 	}
 	return textResult(map[string]any{"total": out.Messages.Total, "matches": msgs})
 }
@@ -172,10 +221,13 @@ func (c *Client) slackSearchMessages(ctx context.Context, _ *mcp.CallToolRequest
 // --- history / replies ------------------------------------------------
 
 type slackHistoryIn struct {
-	Channel string `json:"channel" jsonschema:"channel ID"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"max messages (default 30, max 200)"`
-	Oldest  string `json:"oldest,omitempty" jsonschema:"only messages after this ts"`
-	Latest  string `json:"latest,omitempty" jsonschema:"only messages before this ts"`
+	Channel            string `json:"channel" jsonschema:"channel ID"`
+	Limit              int    `json:"limit,omitempty" jsonschema:"max messages (default 30, max 200)"`
+	Oldest             string `json:"oldest,omitempty" jsonschema:"only messages after this ts"`
+	Latest             string `json:"latest,omitempty" jsonschema:"only messages before this ts"`
+	IncludeAttachments bool   `json:"include_attachments,omitempty" jsonschema:"include each message's full attachments array (unfurl/link-preview cards, incl. async app unfurls like ClickUp's — look for is_app_unfurl/app_unfurl_url). Off by default to save tokens; attachment_count is always returned so you can detect cards cheaply"`
+	IncludeBlocks      bool   `json:"include_blocks,omitempty" jsonschema:"include each message's full Block Kit blocks array. Off by default — blocks are the heaviest payload; block_count is always returned"`
+	IncludeFiles       bool   `json:"include_files,omitempty" jsonschema:"include each message's files array (file-share metadata). Off by default; file_count is always returned"`
 }
 
 func (c *Client) slackChannelHistory(ctx context.Context, _ *mcp.CallToolRequest, in slackHistoryIn) (*mcp.CallToolResult, any, error) {
@@ -198,17 +250,21 @@ func (c *Client) slackChannelHistory(ctx context.Context, _ *mcp.CallToolRequest
 	if err := c.slackGET(ctx, "conversations.history", params, &out); err != nil {
 		return nil, nil, err
 	}
+	opts := slimOpts{attachments: in.IncludeAttachments, blocks: in.IncludeBlocks, files: in.IncludeFiles}
 	msgs := make([]slackMsg, 0, len(out.Messages))
 	for _, m := range out.Messages {
-		msgs = append(msgs, slimMsg(m))
+		msgs = append(msgs, slimMsg(m, opts))
 	}
 	return textResult(map[string]any{"messages": msgs, "has_more": out.HasMore})
 }
 
 type slackRepliesIn struct {
-	Channel string `json:"channel" jsonschema:"channel ID"`
-	TS      string `json:"ts" jsonschema:"the thread parent message's ts"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"max replies (default 50, max 200)"`
+	Channel            string `json:"channel" jsonschema:"channel ID"`
+	TS                 string `json:"ts" jsonschema:"the thread parent message's ts"`
+	Limit              int    `json:"limit,omitempty" jsonschema:"max replies (default 50, max 200)"`
+	IncludeAttachments bool   `json:"include_attachments,omitempty" jsonschema:"include each message's full attachments array (unfurl/link-preview cards, incl. async app unfurls like ClickUp's — look for is_app_unfurl/app_unfurl_url). Off by default to save tokens; attachment_count is always returned so you can detect cards cheaply"`
+	IncludeBlocks      bool   `json:"include_blocks,omitempty" jsonschema:"include each message's full Block Kit blocks array. Off by default — blocks are the heaviest payload; block_count is always returned"`
+	IncludeFiles       bool   `json:"include_files,omitempty" jsonschema:"include each message's files array (file-share metadata). Off by default; file_count is always returned"`
 }
 
 func (c *Client) slackThreadReplies(ctx context.Context, _ *mcp.CallToolRequest, in slackRepliesIn) (*mcp.CallToolResult, any, error) {
@@ -224,9 +280,10 @@ func (c *Client) slackThreadReplies(ctx context.Context, _ *mcp.CallToolRequest,
 	if err := c.slackGET(ctx, "conversations.replies", params, &out); err != nil {
 		return nil, nil, err
 	}
+	opts := slimOpts{attachments: in.IncludeAttachments, blocks: in.IncludeBlocks, files: in.IncludeFiles}
 	msgs := make([]slackMsg, 0, len(out.Messages))
 	for _, m := range out.Messages {
-		msgs = append(msgs, slimMsg(m))
+		msgs = append(msgs, slimMsg(m, opts))
 	}
 	return textResult(map[string]any{"messages": msgs})
 }
