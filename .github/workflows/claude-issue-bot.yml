@@ -25,10 +25,10 @@ jobs:
     # Loosen (or delete this line) to run on every author's issues.
     if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # So the bot can run `go build ./...` / `go test ./...` while fixing.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
