@@ -137,7 +137,7 @@ func TestClickUpHierarchyHandlers(t *testing.T) {
 	})
 
 	t.Run("list_members filters by workspace id", func(t *testing.T) {
-		res, _, err := c.clickupListMembers(context.Background(), nil, cuWorkspaceIn{WorkspaceID: "T1"})
+		res, _, err := c.clickupListMembers(context.Background(), nil, cuListMembersIn{WorkspaceID: "T1"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,12 +174,72 @@ func TestClickUpListMembers_NoMatchingWorkspace(t *testing.T) {
 			}}},
 		})
 	})
-	res, _, err := c.clickupListMembers(context.Background(), nil, cuWorkspaceIn{WorkspaceID: "T1"})
+	res, _, err := c.clickupListMembers(context.Background(), nil, cuListMembersIn{WorkspaceID: "T1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out := resultJSON(t, res); strings.Contains(out, "\"x\"") {
 		t.Errorf("non-matching workspace must yield no members: %s", out)
+	}
+}
+
+// list_members with task_id sources members from GET /task/{id}/member (flat
+// {id,username,email}) — the path that works when /team omits members (#60).
+func TestClickUpListMembers_TaskScope(t *testing.T) {
+	var gotPath string
+	c := cuClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"members": []map[string]any{
+				{"id": 5767502, "username": "Victor", "email": "victor@gempages.help", "color": "#cddc39"},
+			},
+		})
+	})
+	res, _, err := c.clickupListMembers(context.Background(), nil, cuListMembersIn{TaskID: "86d3hk740"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/task/86d3hk740/member" {
+		t.Errorf("path = %s, want /task/86d3hk740/member", gotPath)
+	}
+	out := resultJSON(t, res)
+	for _, want := range []string{"Victor", "victor@gempages.help", "5767502"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("task members missing %q: %s", want, out)
+		}
+	}
+}
+
+// When /team returns the matching team but an EMPTY members array (ClickUp does
+// this for large workspaces), the result must be a stable [] (never null) and
+// carry a note pointing at the task_id path (#60).
+func TestClickUpListMembers_EmptyWorkspaceIsArrayWithNote(t *testing.T) {
+	c := cuClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"teams": []map[string]any{{"id": "T1", "members": []map[string]any{}}},
+		})
+	})
+	res, _, err := c.clickupListMembers(context.Background(), nil, cuListMembersIn{WorkspaceID: "T1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := resultJSON(t, res)
+	if !strings.Contains(out, `"members": []`) {
+		t.Errorf("empty members must marshal as [], not null: %s", out)
+	}
+	if !strings.Contains(out, "task_id") {
+		t.Errorf("empty-workspace result must note the task_id fallback: %s", out)
+	}
+}
+
+// list_members with neither workspace_id nor task_id errors before any HTTP call.
+func TestClickUpListMembers_RequiresWorkspaceOrTask(t *testing.T) {
+	c := cuClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("must not make an HTTP call, hit %s", r.URL.Path)
+	})
+	if _, _, err := c.clickupListMembers(context.Background(), nil, cuListMembersIn{}); err == nil ||
+		!strings.Contains(err.Error(), "workspace_id or task_id") {
+		t.Fatalf("err = %v, want workspace_id or task_id guard", err)
 	}
 }
 
