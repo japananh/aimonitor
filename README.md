@@ -10,7 +10,7 @@
 
 > **English** | [简体中文](README-zh.md) | [繁體中文](README-zh-TW.md) | [Tiếng Việt](README-vi.md)
 
-<img src="docs/popover.png" alt="AIMonitor menu-bar popover: per-account 5h/7d usage bars" width="340">
+<img src="https://raw.githubusercontent.com/japananh/aimonitor/main/docs/popover.png" alt="AIMonitor menu-bar popover: per-account 5h/7d usage bars" width="340">
 
 </div>
 

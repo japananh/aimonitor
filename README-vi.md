@@ -10,7 +10,7 @@
 
 > [English](README.md) | [简体中文](README-zh.md) | [繁體中文](README-zh-TW.md) | **Tiếng Việt**
 
-<img src="docs/popover.png" alt="Popover trên menu bar: thanh usage 5h/7d theo từng account" width="340">
+<img src="https://raw.githubusercontent.com/japananh/aimonitor/main/docs/popover.png" alt="Popover trên menu bar: thanh usage 5h/7d theo từng account" width="340">
 
 </div>
 

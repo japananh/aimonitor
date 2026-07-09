@@ -10,7 +10,7 @@
 
 > [English](README.md) | **简体中文** | [繁體中文](README-zh-TW.md) | [Tiếng Việt](README-vi.md)
 
-<img src="docs/popover.png" alt="菜单栏弹窗：每个账户的 5h/7d 用量条" width="340">
+<img src="https://raw.githubusercontent.com/japananh/aimonitor/main/docs/popover.png" alt="菜单栏弹窗：每个账户的 5h/7d 用量条" width="340">
 
 </div>
 
