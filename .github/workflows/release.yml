@@ -27,7 +27,7 @@ jobs:
     runs-on: macos-26
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           # goreleaser auto-generates a changelog from git history;
           # without a deep fetch it sees only the tagged commit.
@@ -43,7 +43,7 @@ jobs:
         run: swift --version
 
       - name: Set up goreleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           install-only: true
           version: '~> v2'

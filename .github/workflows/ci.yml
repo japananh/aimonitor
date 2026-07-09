@@ -15,7 +15,7 @@ jobs:
         os: [ubuntu-22.04, macos-14]
         go: ["1.25.x"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
@@ -31,12 +31,12 @@ jobs:
     name: golangci-lint
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25.x"
           cache: true
-      - uses: golangci/golangci-lint-action@v9.2.0
+      - uses: golangci/golangci-lint-action@v9.3.0
         with:
           version: v2.12.2
 
@@ -48,7 +48,7 @@ jobs:
     name: swift build (macos-26)
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: swift --version
         run: swift --version
       - name: swift build (release)
