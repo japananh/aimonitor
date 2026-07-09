@@ -214,8 +214,43 @@ func (c *Client) clickupListLists(ctx context.Context, _ *mcp.CallToolRequest, i
 	return textResult(map[string]any{"lists": out.Lists})
 }
 
-func (c *Client) clickupListMembers(ctx context.Context, _ *mcp.CallToolRequest, in cuWorkspaceIn) (*mcp.CallToolResult, any, error) {
-	// v2 has no /team/{id}/member endpoint; members ride on GET /team.
+// cuListMembersIn selects the member source for clickup_list_members. Prefer
+// task_id: ClickUp's GET /team omits the members array for large workspaces (it
+// comes back empty), so the workspace path can't resolve user IDs there —
+// GET /task/{id}/member does, and it's the task you'd be @mentioning on anyway.
+type cuListMembersIn struct {
+	WorkspaceID string `json:"workspace_id,omitempty" jsonschema:"workspace (team) ID — lists workspace members via GET /team. ClickUp omits members from /team for large workspaces (returns an empty list); pass task_id then."`
+	TaskID      string `json:"task_id,omitempty" jsonschema:"a task ID — lists the members with access to this task (GET /task/{id}/member), each as {id, username, email}. Use this to resolve user IDs for @mentions when the workspace member list is empty; pass the task you're commenting on."`
+}
+
+func (c *Client) clickupListMembers(ctx context.Context, _ *mcp.CallToolRequest, in cuListMembersIn) (*mcp.CallToolResult, any, error) {
+	type member struct {
+		ID       int    `json:"id"`
+		Username string `json:"username"`
+		Email    string `json:"email"`
+	}
+	// Stable empty slice, never nil — a nil slice marshals to JSON null, which
+	// is what made an empty result read as {"members": null} (issue #60).
+	members := []member{}
+
+	// Task scope: /task/{id}/member returns members flat ({id,username,email})
+	// and works even when GET /team omits them for a large workspace.
+	if in.TaskID != "" {
+		var out struct {
+			Members []member `json:"members"`
+		}
+		if err := c.clickup(ctx, http.MethodGet, "/task/"+url.PathEscape(in.TaskID)+"/member", nil, nil, &out); err != nil {
+			return nil, nil, err
+		}
+		members = append(members, out.Members...)
+		return textResult(map[string]any{"members": members})
+	}
+
+	if in.WorkspaceID == "" {
+		return nil, nil, fmt.Errorf("provide workspace_id or task_id")
+	}
+
+	// Workspace scope: members ride on GET /team under teams[].members[].user.
 	var out struct {
 		Teams []struct {
 			ID      string `json:"id"`
@@ -231,12 +266,6 @@ func (c *Client) clickupListMembers(ctx context.Context, _ *mcp.CallToolRequest,
 	if err := c.clickup(ctx, http.MethodGet, "/team", nil, nil, &out); err != nil {
 		return nil, nil, err
 	}
-	type member struct {
-		ID       int    `json:"id"`
-		Username string `json:"username"`
-		Email    string `json:"email"`
-	}
-	var members []member
 	for _, t := range out.Teams {
 		if t.ID != in.WorkspaceID {
 			continue
@@ -245,7 +274,13 @@ func (c *Client) clickupListMembers(ctx context.Context, _ *mcp.CallToolRequest,
 			members = append(members, member(m.User))
 		}
 	}
-	return textResult(map[string]any{"members": members})
+	res := map[string]any{"members": members}
+	if len(members) == 0 {
+		// ClickUp omits members from /team for large workspaces. Point the caller
+		// at the task path so they can still resolve a user ID (e.g. for a mention).
+		res["note"] = "ClickUp returned no members for this workspace (GET /team omits members for large workspaces). To resolve a user ID — e.g. for a clickup_add_comment mention — call clickup_list_members again with task_id set to the task you're working with."
+	}
+	return textResult(res)
 }
 
 // --- tasks --------------------------------------------------------------
@@ -506,7 +541,7 @@ func commentBody(text string, mentions []int, rich []map[string]any) map[string]
 type cuAddCommentIn struct {
 	TaskID      string           `json:"task_id" jsonschema:"task to comment on"`
 	Comment     string           `json:"comment,omitempty" jsonschema:"comment text (plain); optional if comment_json or mentions is given"`
-	Mentions    []int            `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members"`
+	Mentions    []int            `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members (for a large workspace whose member list is empty, call it with task_id set to this task)"`
 	CommentJSON []map[string]any `json:"comment_json,omitempty" jsonschema:"optional ClickUp rich-text comment array (segments like {text, attributes} and/or {type:tag, user:{id}}); when set it is sent verbatim and overrides comment/mentions — use for bullet lists, code blocks, bold, etc."`
 }
 
@@ -562,7 +597,7 @@ func (c *Client) clickupDeleteComment(ctx context.Context, _ *mcp.CallToolReques
 type cuUpdateCommentIn struct {
 	CommentID   string           `json:"comment_id" jsonschema:"comment ID (from clickup_list_comments or clickup_add_comment)"`
 	Comment     string           `json:"comment,omitempty" jsonschema:"new comment text (plain); optional if comment_json or mentions is given"`
-	Mentions    []int            `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members"`
+	Mentions    []int            `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members (for a large workspace whose member list is empty, call it with task_id set to this task)"`
 	CommentJSON []map[string]any `json:"comment_json,omitempty" jsonschema:"optional ClickUp rich-text comment array (segments like {text, attributes} and/or {type:tag, user:{id}}); when set it is sent verbatim and overrides comment/mentions. NOTE: an update replaces the whole comment, so include the full rich text to avoid losing existing formatting (list_comments returns plain text only)."`
 }
 
