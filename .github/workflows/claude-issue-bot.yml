@@ -1,10 +1,10 @@
 name: Claude issue bot
 
-# On every new issue: triage it, and when it's a well-scoped Go/MCP/CLI bug or
-# enhancement, attempt a fix and open a DRAFT pull request that closes the issue.
-# Auth uses a Claude subscription token (no API metering): generate once with
-#   claude setup-token
-# and store it as the repo secret CLAUDE_CODE_OAUTH_TOKEN.
+# On every new issue: acknowledge it, triage it, and when it's a well-scoped
+# Go/MCP/CLI bug or enhancement, attempt a fix and open a DRAFT PR that closes
+# the issue. Auth uses a Claude subscription token (no API metering):
+#   claude setup-token   ->  repo secret CLAUDE_CODE_OAUTH_TOKEN
+# plus the Claude GitHub App installed on the repo.
 
 on:
   issues:
@@ -13,16 +13,14 @@ on:
 permissions:
   contents: write        # create a branch + commit the fix
   pull-requests: write   # open the draft PR
-  issues: write          # post the triage comment + apply labels
+  issues: write          # post comments + apply labels
   id-token: write        # required for the Claude GitHub app (OIDC)
 
 jobs:
   triage-and-fix:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # The bot runs code and opens PRs, so only let trusted authors drive it —
-    # an arbitrary external issue should not trigger a code-writing agent.
-    # Loosen (or delete this line) to run on every author's issues.
+    # The bot runs code and opens PRs, so only let trusted authors drive it.
     if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     steps:
       - uses: actions/checkout@v7
@@ -36,9 +34,12 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Bound the run so a single issue can't burn unlimited turns.
-          # Add e.g. --model claude-opus-4-8 here to pin a model.
-          claude_args: "--max-turns 40"
+          # Opus 4.8 for the fix quality; allow the tools a fix bot needs
+          # (edit files, run go build/test + git/gh via Bash); bound the run.
+          claude_args: |
+            --max-turns 40
+            --model claude-opus-4-8
+            --allowed-tools Read,Glob,Grep,Edit,MultiEdit,Write,Bash
           prompt: |
             You are the maintainer's issue bot for the ${{ github.repository }}
             repository: a Go daemon + macOS SwiftUI menu-bar app that manages
@@ -55,10 +56,18 @@ jobs:
             BODY:
             ${{ github.event.issue.body }}
 
-            Do the following:
+            Use the `gh` CLI for every GitHub action (commenting, labels, opening
+            the PR) — it is installed and authenticated on the runner.
 
-            1. TRIAGE — post exactly ONE comment on issue #${{ github.event.issue.number }}:
-               - Classify it: bug / enhancement / question.
+            Do the following, in order:
+
+            0. ACKNOWLEDGE FIRST — before any analysis, immediately post a short
+               comment so the reporter knows you picked it up:
+                 gh issue comment ${{ github.event.issue.number }} --body "🤖 Đã ghi nhận issue này, mình đang phân tích và sẽ cập nhật kết quả ở đây."
+
+            1. TRIAGE — then post ONE more comment on issue
+               #${{ github.event.issue.number }} with:
+               - Classification: bug / enhancement / question.
                - Priority: critical / high / medium / low.
                - The area and the specific files/functions likely involved
                  (search the repo to ground this — don't guess).
@@ -78,10 +87,11 @@ jobs:
                claude/issue-${{ github.event.issue.number }}, make the MINIMAL
                change that resolves the issue, add or adjust Go tests that cover
                it, and run `go build ./...` and `go test ./...` until they pass.
-               Then open a DRAFT pull request whose body starts with
-               "Closes #${{ github.event.issue.number }}" and summarizes the
-               change and how you verified it. Do NOT push to main and do NOT
-               merge — leave it a draft for human review.
+               Commit and push the branch, then open a DRAFT pull request:
+                 gh pr create --draft --base main --head claude/issue-${{ github.event.issue.number }} --title "..." --body "Closes #${{ github.event.issue.number }} ..."
+               summarizing the change and how you verified it. Do NOT push to main
+               and do NOT merge — leave it a draft for human review. Finally,
+               comment the PR link back on the issue.
 
             Conventions:
             - Match the surrounding code's style; keep the change as small as
