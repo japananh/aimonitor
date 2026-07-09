@@ -91,6 +91,9 @@ jobs:
           # OIDC exchange when the issue author lacks repo write access, which
           # is exactly the external-author case this job handles.
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Allow non-write (external) authors to trigger this job. Safe here:
+          # read-only tools + an issues:write-only token, per the action guidance.
+          allowed_non_write_users: "*"
           # READ-ONLY: only gh + repo reads. No file edits, no arbitrary Bash —
           # this issue comes from an untrusted author. The job token can only
           # touch issues (no code write, no PR), so the blast radius is capped.
