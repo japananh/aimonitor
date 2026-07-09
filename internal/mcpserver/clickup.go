@@ -276,9 +276,10 @@ func (c *Client) clickupListMembers(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 	res := map[string]any{"members": members}
 	if len(members) == 0 {
-		// ClickUp omits members from /team for large workspaces. Point the caller
-		// at the task path so they can still resolve a user ID (e.g. for a mention).
-		res["note"] = "ClickUp returned no members for this workspace (GET /team omits members for large workspaces). To resolve a user ID — e.g. for a clickup_add_comment mention — call clickup_list_members again with task_id set to the task you're working with."
+		// Empty can mean a wrong workspace_id (no team matched) OR ClickUp
+		// omitting members from /team for a large workspace — don't assert which.
+		// Point the caller at the task path either way.
+		res["note"] = "No members came back for this workspace_id. If the id is correct, ClickUp likely omitted them (its GET /team drops members for large workspaces, and the endpoint can be flaky) — call clickup_list_members again with task_id set to the task you're working with to resolve a user ID (e.g. for a clickup_add_comment mention)."
 	}
 	return textResult(res)
 }
