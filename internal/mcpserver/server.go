@@ -126,8 +126,8 @@ func catalog() []toolDef {
 				return c.clickupListLists
 			})},
 		{name: "clickup_list_members", svc: ServiceClickUp,
-			desc: "List members of a ClickUp workspace (for assignee user IDs)",
-			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuWorkspaceIn, any] {
+			desc: "List members (id/username/email) of a ClickUp workspace, or — via task_id — of a task. Use task_id to resolve assignee/@mention user IDs when the workspace member list is empty (ClickUp omits members from /team for large workspaces)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuListMembersIn, any] {
 				return c.clickupListMembers
 			})},
 		{name: "clickup_list_tasks", svc: ServiceClickUp,
