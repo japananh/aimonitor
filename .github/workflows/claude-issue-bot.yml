@@ -87,6 +87,10 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Use the workflow token (issues:write) — the Claude App refuses the
+          # OIDC exchange when the issue author lacks repo write access, which
+          # is exactly the external-author case this job handles.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # READ-ONLY: only gh + repo reads. No file edits, no arbitrary Bash —
           # this issue comes from an untrusted author. The job token can only
           # touch issues (no code write, no PR), so the blast radius is capped.
