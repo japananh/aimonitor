@@ -63,6 +63,11 @@ jobs:
                decision, and is verifiable on this Linux runner (Go/MCP/CLI). If
                ambiguous, a question, or a macOS/SwiftUI-only UI change that can't
                be built on Linux → ask clarifying questions in the comment and STOP.
+               `go build`/`go test` passing only proves the Go layer. If the
+               fix's real effect depends on the SwiftUI app, or on the daemon↔app
+               contract (IPC/socket/on-disk format) that `go test` doesn't
+               exercise, treat it as not headlessly verifiable → post the proposed
+               fix + clarifying questions and STOP, don't auto-merge.
 
             3. IF FIXING — create branch claude/issue-${{ github.event.issue.number }},
                make the MINIMAL change, add/adjust Go tests, and run
