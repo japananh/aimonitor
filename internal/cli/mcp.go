@@ -16,21 +16,24 @@ import (
 func newMCPCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mcp",
-		Short: "MCP server: Slack + ClickUp tools for Claude Code",
-		Long: `aimonitor doubles as an MCP server exposing Slack and ClickUp tools to
-Claude Code over stdio.
+		Short: "MCP server: Slack, ClickUp & Sentry tools for Claude Code",
+		Long: `aimonitor doubles as an MCP server exposing Slack, ClickUp, and Sentry
+tools to Claude Code over stdio.
 
 Setup:
   aimonitor mcp connect slack     # migrate claude-bar's token, or paste one
   aimonitor mcp connect clickup
+  aimonitor mcp connect sentry
   aimonitor mcp register          # add the server to Claude Code (~/.claude.json)
 
 Then restart your Claude session; the tools appear as mcp__aimonitor__*.
 
 Per-service config (settings):
-  mcp.slack.enabled / mcp.clickup.enabled       (default true)
-  mcp.slack.read_only / mcp.clickup.read_only   (default false; hides write tools)
-  mcp.disabled_tools                            (comma-separated tool names)`,
+  mcp.<svc>.enabled                             (default true)
+  mcp.<svc>.read_only                           (default false; hides write tools)
+  mcp.disabled_tools                            (comma-separated tool names)
+  mcp.sentry.org                                (Sentry org slug for the tools)
+  mcp.sentry.base_url                           (self-hosted Sentry host; default sentry.io)`,
 	}
 	cmd.AddCommand(
 		newMCPServeCmd(),
@@ -73,7 +76,7 @@ func newMCPServeCmd() *cobra.Command {
 func newMCPConnectCmd() *cobra.Command {
 	var tokenFlag string
 	cmd := &cobra.Command{
-		Use:   "connect <slack|clickup>",
+		Use:   "connect <slack|clickup|sentry>",
 		Short: "Connect an integration (migrates claude-bar's token, or paste one)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -87,6 +90,17 @@ func newMCPConnectCmd() *cobra.Command {
 				return err
 			}
 			verify := mcpserver.Verifier(svc)
+
+			// Sentry's API root is configurable (self-hosted); point verify at
+			// the same host the tools will use (mcp.sentry.base_url).
+			if svc == mcpserver.ServiceSentry {
+				if s, serr := openConfigStore(); serr == nil {
+					if cfg, cerr := mcpserver.LoadConfig(ctx, s); cerr == nil {
+						mcpserver.SetSentryAPIBase(cfg.SentryBaseURL)
+					}
+					_ = s.Close()
+				}
+			}
 
 			// Tell the user up front which Slack scopes the token must carry,
 			// so the user-token they create/paste covers every tool (a missing
@@ -120,8 +134,11 @@ func newMCPConnectCmd() *cobra.Command {
 
 			// 2) Fall back to pasting a token.
 			hint := "xoxp-… user token (Slack → your app or claude-bar's token)"
-			if svc == mcpserver.ServiceClickUp {
+			switch svc {
+			case mcpserver.ServiceClickUp:
 				hint = "pk_… personal token (ClickUp → Settings → Apps)"
+			case mcpserver.ServiceSentry:
+				hint = "Sentry auth token (User Settings → Auth Tokens; scopes org:read, project:read, event:read)"
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "No claude-bar token found for %s.\nPaste your %s and press Enter:\n> ", svc, hint)
 			rd := bufio.NewReader(cmd.InOrStdin())
@@ -150,7 +167,7 @@ func newMCPConnectCmd() *cobra.Command {
 
 func newMCPDisconnectCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "disconnect <slack|clickup>",
+		Use:   "disconnect <slack|clickup|sentry>",
 		Short: "Remove an integration's stored token",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -188,6 +205,8 @@ func newMCPStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Point Sentry verification at the configured host (self-hosted).
+			mcpserver.SetSentryAPIBase(cfg.SentryBaseURL)
 			creds, err := mcpserver.NewCredStore()
 			if err != nil {
 				return err

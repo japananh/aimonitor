@@ -210,6 +210,23 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUploadAttachmentIn, any] {
 				return c.clickupUploadAttachment
 			})},
+
+		// Sentry
+		{name: "sentry_list_projects", svc: ServiceSentry,
+			desc: "List Sentry projects in the organization (use it to resolve a project slug to the numeric id the issues API wants)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryListProjectsIn, any] {
+				return c.sentryListProjects
+			})},
+		{name: "sentry_search_issues", svc: ServiceSentry,
+			desc: "Search Sentry issues for a triage digest — each row has shortId, title, culprit, event count, users affected, first/last seen, level, status, permalink. Supports queries like 'is:unresolved firstSeen:-24h', a project filter (slug or id), statsPeriod, and sort by freq/date/new/user",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentrySearchIssuesIn, any] {
+				return c.sentrySearchIssues
+			})},
+		{name: "sentry_get_issue", svc: ServiceSentry,
+			desc: "Get one Sentry issue's detail by numeric id or shortId (e.g. PRICING-SERVICE-9V)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryGetIssueIn, any] {
+				return c.sentryGetIssue
+			})},
 	}
 }
 
@@ -236,12 +253,14 @@ func connected(creds *CredStore) map[Service]bool {
 func BuildServer(cfg Config, creds *CredStore) (*mcp.Server, []string) {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:       "aimonitor",
-		Title:      "AIMonitor — Slack & ClickUp tools",
+		Title:      "AIMonitor — Slack, ClickUp & Sentry tools",
 		Version:    version.Version,
 		WebsiteURL: "https://github.com/japananh/aimonitor",
 	}, nil)
 
 	client := NewClient(creds)
+	client.SentryOrg = cfg.SentryOrg
+	client.SentryAPIBase = cfg.SentryBaseURL
 	conn := connected(creds)
 	var registered []string
 	for _, t := range catalog() {
