@@ -234,12 +234,13 @@ func TestBuildServer_RegistrationHonorsConfig(t *testing.T) {
 // 30s client timeout — a silent hermeticity break.
 func pointAPIsAt(t *testing.T, srv *httptest.Server) {
 	t.Helper()
-	oldSlack, oldCU, oldCUV3 := slackAPIBase, clickupAPIBase, clickupV3APIBase
+	oldSlack, oldCU, oldCUV3, oldSentry := slackAPIBase, clickupAPIBase, clickupV3APIBase, sentryAPIBase
 	slackAPIBase = srv.URL
 	clickupAPIBase = srv.URL
 	clickupV3APIBase = srv.URL
+	sentryAPIBase = srv.URL
 	t.Cleanup(func() {
-		slackAPIBase, clickupAPIBase, clickupV3APIBase = oldSlack, oldCU, oldCUV3
+		slackAPIBase, clickupAPIBase, clickupV3APIBase, sentryAPIBase = oldSlack, oldCU, oldCUV3, oldSentry
 	})
 }
 
