@@ -1,0 +1,48 @@
+name: Claude mention
+
+# On-demand: comment "@claude <request>" on an issue or PR (or in a PR review)
+# and Claude acts on that request — answer, or fix + open a PR. This is the
+# action's "tag mode" (no fixed prompt; the comment text IS the instruction),
+# complementing claude-issue-bot.yml which auto-triages newly-opened issues.
+#
+# Auth: Claude subscription token (secret CLAUDE_CODE_OAUTH_TOKEN) + the Claude
+# GitHub App. The action only runs for commenters with repo WRITE access.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    # Spin up a runner only when @claude is actually mentioned. (Issue-open is
+    # handled by claude-issue-bot.yml, so this workflow is comments-only.)
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write        # branch + commit + merge if asked
+      pull-requests: write   # open PRs
+      issues: write          # comment / label
+      id-token: write        # Claude GitHub app (OIDC)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Tag mode: NO prompt — Claude uses the @claude comment as the request.
+          # Allow the tools a code change needs (edit + go build/test + git/gh).
+          claude_args: |
+            --max-turns 40
+            --model claude-opus-4-8
+            --allowed-tools Read,Glob,Grep,Edit,MultiEdit,Write,Bash
