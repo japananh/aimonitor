@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -77,51 +75,6 @@ func TestUsageRefreshOne_NoStashErrors(t *testing.T) {
 	_, err := runCLI(t, "", "usage", "refresh", "solo")
 	if err == nil || !strings.Contains(err.Error(), "refresh \"solo\"") {
 		t.Fatalf("expected a per-label refresh error, got %v", err)
-	}
-}
-
-// ---- import: CreateAccount unique-constraint failure ------------------------
-
-// TestImport_CreateAccountFails: a fresh-identity import whose label collides
-// with an EXISTING different-identity account hits CreateAccount's unique
-// constraint, exercising runImport's create-account failure branch (the stash
-// is rolled back).
-func TestImport_CreateAccountFails(t *testing.T) {
-	ring, dbPath := e2eEnv(t)
-	ctx := context.Background()
-	// Existing account "taken" with a DIFFERENT identity.
-	seedAccount(t, dbPath, store.Account{
-		Label: "taken", Email: "other@example.com", OrganizationUUID: "org-o",
-	}, validBlob("sk-other"))
-	// Import a NEW identity whose nickname is "taken" → label collision.
-	reg := cbRegistry{Accounts: map[string]cbAccount{
-		"a": {Number: 1, Email: "fresh@example.com", OrganizationUUID: "org-f", Nickname: "taken"},
-	}}
-	if err := ring.Set(fmt.Sprintf(claudeBarBackupServiceFmt, 1, "fresh@example.com"), osUser(t), validBlob("sk-fresh")); err != nil {
-		t.Fatalf("seed cred: %v", err)
-	}
-	raw, _ := json.Marshal(reg)
-	writeClaudeBarRegistry(t, string(raw))
-
-	out, err := runCLI(t, "", "import")
-	if err != nil {
-		t.Fatalf("import: %v (output: %q)", err, out)
-	}
-	if !strings.Contains(out, "create account") {
-		t.Errorf("the label collision should fail at create account\n%s", out)
-	}
-	if !strings.Contains(out, "0 added, 0 refreshed, 1 failed") {
-		t.Errorf("summary should count the create failure\n%s", out)
-	}
-	// The rolled-back stash must not be left behind. The fresh-identity account
-	// was never created, so the only "taken" account is the original.
-	s := openStoreAt(t, dbPath)
-	acct, err := s.GetAccountByLabel(ctx, "taken")
-	if err != nil {
-		t.Fatalf("the original 'taken' account should survive: %v", err)
-	}
-	if acct.Email != "other@example.com" {
-		t.Errorf("the original 'taken' identity should be intact, got %q", acct.Email)
 	}
 }
 

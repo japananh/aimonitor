@@ -903,33 +903,8 @@ func TestCredStore_DeleteError(t *testing.T) {
 	}
 }
 
-// MigrateFromClaudeBar surfaces a read failure on claude-bar's entry (e.g. the
-// user denied the keychain ACL) rather than treating it as absent.
-func TestMigrateFromClaudeBar_ReadError(t *testing.T) {
-	creds := &CredStore{Ring: errRing{}, User: "tester"}
-	verify := func(context.Context, string) (string, error) { return "x", nil }
-	if _, err := creds.MigrateFromClaudeBar(context.Background(), ServiceSlack, verify); err == nil ||
-		!strings.Contains(err.Error(), "read claude-bar's slack entry") {
-		t.Fatalf("err = %v, want wrapped read error", err)
-	}
-}
-
-// MigrateFromClaudeBar treats a present-but-blank claude-bar entry as absent.
-func TestMigrateFromClaudeBar_BlankEntry(t *testing.T) {
-	creds, ring := testCreds(t)
-	_ = ring.Set(claudeBarService(ServiceSlack), "tester", []byte("   \n"))
-	verify := func(context.Context, string) (string, error) {
-		t.Error("verify must not run for a blank entry")
-		return "", nil
-	}
-	ident, err := creds.MigrateFromClaudeBar(context.Background(), ServiceSlack, verify)
-	if err != nil || ident != "" {
-		t.Fatalf("ident=%q err=%v, want empty/nil for blank entry", ident, err)
-	}
-}
-
 // errRing is a Keyring whose every op fails with a non-ErrNotFound error, to
-// drive the error branches in Token / Delete / MigrateFromClaudeBar.
+// drive the error branches in Token / Delete.
 type errRing struct{}
 
 func (errRing) Get(string, string) ([]byte, error) { return nil, errBoom }

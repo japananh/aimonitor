@@ -66,14 +66,6 @@ func TestRemove_StoreOpenFails(t *testing.T) {
 	}
 }
 
-func TestImport_StoreOpenFails(t *testing.T) {
-	// import goes through withRuntime first, so it fails opening the store
-	// before it even looks for the claude-bar registry.
-	if err := runWithBadStore(t, "import"); err == nil || !strings.Contains(err.Error(), "open store") {
-		t.Fatalf("expected open-store error from import, got %v", err)
-	}
-}
-
 func TestConfigAudit_StoreOpenFails(t *testing.T) {
 	if err := runWithBadStore(t, "config", "audit"); err == nil || !strings.Contains(err.Error(), "open store") {
 		t.Fatalf("expected open-store error from config audit, got %v", err)
