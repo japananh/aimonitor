@@ -125,7 +125,7 @@ func runAdd(ctx context.Context, cmd *cobra.Command, s *store.Store, p provider.
 
 	// Identity-level dedup: if this Claude account (email+org) is already
 	// registered under another label, refresh that entry's credential +
-	// identity instead of creating a duplicate. Mirrors claude-bar.
+	// identity instead of creating a duplicate.
 	if ident.Email != "" {
 		if existing, dErr := s.GetAccountByIdentity(ctx, ident.Email, ident.OrganizationUUID); dErr == nil {
 			if err := claude.StashCredential(ctx, existing.KeyringRef, cred); err != nil {

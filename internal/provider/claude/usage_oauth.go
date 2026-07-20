@@ -15,8 +15,8 @@ import (
 )
 
 // UsageEndpoint is the Anthropic OAuth introspection endpoint that reports
-// per-window utilization. Documented in claude-bar's reference
-// implementation; observed to be stable across the oauth-2025-04-20 beta.
+// per-window utilization. Observed to be stable across the oauth-2025-04-20
+// beta.
 //
 // This endpoint does NOT consume tokens or count against rate limits — it
 // is pure introspection. That's why it is preferred over the legacy
@@ -33,8 +33,7 @@ const UsageBetaHeader = "oauth-2025-04-20"
 // in < 500 ms; 10 s absorbs cold-start latency on the Anthropic edge.
 const usageHTTPTimeout = 10 * time.Second
 
-// usageDTO is the JSON shape returned by /api/oauth/usage. Mirrors the
-// fields claude-bar's reference implementation parses. Fields can be
+// usageDTO is the JSON shape returned by /api/oauth/usage. Fields can be
 // missing on a given response (e.g. an account that has never used the
 // 7-day window may omit seven_day); Go's zero-value semantics make that
 // safe to handle in the caller.

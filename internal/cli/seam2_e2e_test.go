@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,62 +24,6 @@ func TestAdd_AdoptCurrent_EmptySlotErrors(t *testing.T) {
 	_, err := runCLI(t, "", "add", "--adopt-current", "--label", "nope")
 	if err == nil || !strings.Contains(err.Error(), "no credential to adopt") {
 		t.Fatalf("expected 'no credential to adopt' error, got %v", err)
-	}
-}
-
-// ---- runImport: refresh WITHOUT relabel (label already matches nickname) ----
-
-// TestImport_RefreshSameLabel: the existing account's label already equals the
-// claude-bar nickname, so import refreshes without a rename (the else branch).
-func TestImport_RefreshSameLabel(t *testing.T) {
-	ring, dbPath := e2eEnv(t)
-	ctx := context.Background()
-	seedAccount(t, dbPath, store.Account{
-		Label: "same", Email: "s@example.com", OrganizationUUID: "org-s", OrganizationName: "S Org",
-	}, validBlob("sk-old"))
-	seedImportRegistryAndCreds(t, ring, []cbAccount{
-		{Number: 3, Email: "s@example.com", OrganizationUUID: "org-s", OrganizationName: "S Org", Nickname: "same"},
-	})
-
-	out, err := runCLI(t, "", "import")
-	if err != nil {
-		t.Fatalf("import: %v (output: %q)", err, out)
-	}
-	if !strings.Contains(out, `Refreshed s@example.com ("same")`) {
-		t.Errorf("output should refresh without a relabel\n%s", out)
-	}
-	if strings.Contains(out, "relabeled") {
-		t.Errorf("no relabel should occur when the label already matches\n%s", out)
-	}
-	_ = ctx
-}
-
-// TestImport_SkipsAccountWithNoEmail: a registry account with an empty email is
-// silently skipped (continue) — covers import.go's empty-email guard.
-func TestImport_SkipsAccountWithNoEmail(t *testing.T) {
-	ring, dbPath := e2eEnv(t)
-	ctx := context.Background()
-	// One valid account + one with no email.
-	reg := cbRegistry{Accounts: map[string]cbAccount{
-		"a": {Number: 1, Email: "real@example.com", OrganizationUUID: "org-r", Nickname: "real"},
-		"b": {Number: 2, Email: "", Nickname: "ghost"},
-	}}
-	if err := ring.Set(fmt.Sprintf(claudeBarBackupServiceFmt, 1, "real@example.com"), osUser(t), validBlob("sk-real")); err != nil {
-		t.Fatalf("seed cred: %v", err)
-	}
-	raw, _ := json.Marshal(reg)
-	writeClaudeBarRegistry(t, string(raw))
-
-	out, err := runCLI(t, "", "import")
-	if err != nil {
-		t.Fatalf("import: %v (output: %q)", err, out)
-	}
-	if !strings.Contains(out, "1 added, 0 refreshed, 0 failed") {
-		t.Errorf("the empty-email account should be skipped silently\n%s", out)
-	}
-	s := openStoreAt(t, dbPath)
-	if _, err := s.GetAccountByLabel(ctx, "ghost"); err == nil {
-		t.Errorf("the empty-email account must not be created")
 	}
 }
 

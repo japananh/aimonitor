@@ -5,13 +5,10 @@
 // Design notes (docs kept out of the repo deliberately):
 //   - One approval layer: Claude Code's own per-tool permission prompts.
 //     No write-gate, no sockets, no widget IPC.
-//   - Tokens live in the OS keyring under aimonitor's own service names;
-//     `connect` migrates claude-bar's entries when present so replacing
-//     that tool needs no re-setup.
+//   - Tokens live in the OS keyring under aimonitor's own service names.
 package mcpserver
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os/user"
@@ -48,13 +45,6 @@ func ParseService(s string) (Service, error) {
 // Account is the OS username, matching the rest of aimonitor's entries.
 func keyringService(svc Service) string {
 	return "aimonitor-mcp:" + string(svc)
-}
-
-// claudeBarService is where claude-bar keeps the same token
-// ("claude-bar-mcp:shared:<svc>", account = OS username, raw token payload).
-// Read-only: we never write to or delete claude-bar's entries.
-func claudeBarService(svc Service) string {
-	return "claude-bar-mcp:shared:" + string(svc)
 }
 
 // CredStore reads/writes integration tokens in the OS keyring.
@@ -107,32 +97,4 @@ func (c *CredStore) Delete(svc Service) error {
 		return fmt.Errorf("delete %s token: %w", svc, err)
 	}
 	return nil
-}
-
-// MigrateFromClaudeBar copies svc's token from claude-bar's keychain entry
-// into ours, verifying it first. Returns ("", nil) when claude-bar has no
-// entry — callers fall back to prompting for a pasted token. claude-bar's
-// entry is left untouched so both tools keep working during the transition.
-func (c *CredStore) MigrateFromClaudeBar(ctx context.Context, svc Service, verify func(ctx context.Context, token string) (string, error)) (identity string, err error) {
-	b, err := c.Ring.Get(claudeBarService(svc), c.User)
-	if errors.Is(err, secret.ErrNotFound) {
-		return "", nil
-	}
-	if err != nil {
-		// A read failure (e.g. the user denied the keychain ACL prompt) is
-		// reported so the CLI can fall back to paste with an explanation.
-		return "", fmt.Errorf("read claude-bar's %s entry: %w", svc, err)
-	}
-	token := strings.TrimSpace(string(b))
-	if token == "" {
-		return "", nil
-	}
-	ident, err := verify(ctx, token)
-	if err != nil {
-		return "", fmt.Errorf("claude-bar's %s token failed verification: %w", svc, err)
-	}
-	if err := c.Store(svc, token); err != nil {
-		return "", err
-	}
-	return ident, nil
 }

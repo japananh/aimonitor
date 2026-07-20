@@ -21,7 +21,7 @@ type Client struct {
 }
 
 // NewClient builds the production client. 30s timeout: large ClickUp
-// responses (docs, big task lists) need more than claude-bar's 20s.
+// responses (docs, big task lists) can exceed a tighter 20s budget.
 func NewClient(creds *CredStore) *Client {
 	return &Client{
 		HTTP:  &http.Client{Timeout: 30 * time.Second},

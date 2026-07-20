@@ -229,8 +229,8 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 				logger.Warn("auth rejected after refresh", "retry_in", next, "err", err)
 			case claude.IsThrottledError(err):
 				// A 429 is often a transient burst limit (e.g. another tool
-				// — or claude-bar — polling the same /api/oauth/usage
-				// endpoint for this account). If Anthropic told us exactly
+				// polling the same /api/oauth/usage endpoint for this
+				// account). If Anthropic told us exactly
 				// how long to wait via Retry-After, honor it (clamped to our
 				// normal [baseline, cap] so we neither poll faster than the
 				// baseline nor wait past the 1 h cap). Otherwise escalate

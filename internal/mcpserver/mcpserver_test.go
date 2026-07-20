@@ -70,7 +70,7 @@ func openTestStore(t *testing.T) *store.Store {
 	return s
 }
 
-// --- credential store + migration ---------------------------------------
+// --- credential store ----------------------------------------------------
 
 func TestCredStore_RoundTrip(t *testing.T) {
 	creds, _ := testCreds(t)
@@ -90,54 +90,6 @@ func TestCredStore_RoundTrip(t *testing.T) {
 	if err := creds.Delete(ServiceSlack); err != nil {
 		t.Fatalf("double delete must be idempotent, got %v", err)
 	}
-}
-
-func TestMigrateFromClaudeBar(t *testing.T) {
-	ctx := context.Background()
-	okVerify := func(_ context.Context, token string) (string, error) {
-		if token != "xoxp-from-claude-bar" {
-			t.Fatalf("verify got %q", token)
-		}
-		return "violet @ team", nil
-	}
-
-	t.Run("no claude-bar entry → empty, no error", func(t *testing.T) {
-		creds, _ := testCreds(t)
-		ident, err := creds.MigrateFromClaudeBar(ctx, ServiceSlack, okVerify)
-		if err != nil || ident != "" {
-			t.Fatalf("ident=%q err=%v, want empty/nil", ident, err)
-		}
-	})
-
-	t.Run("migrates, verifies, leaves source intact", func(t *testing.T) {
-		creds, ring := testCreds(t)
-		_ = ring.Set("claude-bar-mcp:shared:slack", "tester", []byte("xoxp-from-claude-bar\n"))
-		ident, err := creds.MigrateFromClaudeBar(ctx, ServiceSlack, okVerify)
-		if err != nil || ident != "violet @ team" {
-			t.Fatalf("ident=%q err=%v", ident, err)
-		}
-		tok, _ := creds.Token(ServiceSlack)
-		if tok != "xoxp-from-claude-bar" {
-			t.Fatalf("our copy = %q", tok)
-		}
-		if src, err := ring.Get("claude-bar-mcp:shared:slack", "tester"); err != nil || len(src) == 0 {
-			t.Fatalf("claude-bar's entry must be untouched: %v", err)
-		}
-	})
-
-	t.Run("failed verification does not store", func(t *testing.T) {
-		creds, ring := testCreds(t)
-		_ = ring.Set("claude-bar-mcp:shared:clickup", "tester", []byte("pk_bad"))
-		badVerify := func(context.Context, string) (string, error) {
-			return "", context.DeadlineExceeded
-		}
-		if _, err := creds.MigrateFromClaudeBar(ctx, ServiceClickUp, badVerify); err == nil {
-			t.Fatal("want verification error")
-		}
-		if tok, _ := creds.Token(ServiceClickUp); tok != "" {
-			t.Fatalf("bad token stored: %q", tok)
-		}
-	})
 }
 
 // --- registration honoring config ----------------------------------------

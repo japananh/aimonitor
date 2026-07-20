@@ -21,7 +21,7 @@ func newMCPCmd() *cobra.Command {
 Claude Code over stdio.
 
 Setup:
-  aimonitor mcp connect slack     # migrate claude-bar's token, or paste one
+  aimonitor mcp connect slack     # paste (or --token) a Slack user token
   aimonitor mcp connect clickup
   aimonitor mcp register          # add the server to Claude Code (~/.claude.json)
 
@@ -74,7 +74,7 @@ func newMCPConnectCmd() *cobra.Command {
 	var tokenFlag string
 	cmd := &cobra.Command{
 		Use:   "connect <slack|clickup>",
-		Short: "Connect an integration (migrates claude-bar's token, or paste one)",
+		Short: "Connect an integration (paste a token, or pass --token)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := mcpserver.ParseService(args[0])
@@ -108,22 +108,12 @@ func newMCPConnectCmd() *cobra.Command {
 				return nil
 			}
 
-			// 1) Try migrating claude-bar's entry (read-only; theirs stays).
-			ident, err := creds.MigrateFromClaudeBar(ctx, svc, verify)
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "claude-bar migration unavailable: %v\n", err)
-			}
-			if ident != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Migrated %s token from claude-bar — verified as %s.\n", svc, ident)
-				return nil
-			}
-
-			// 2) Fall back to pasting a token.
-			hint := "xoxp-… user token (Slack → your app or claude-bar's token)"
+			// Interactive path: prompt for a token to paste.
+			hint := "xoxp-… user token (Slack → your app)"
 			if svc == mcpserver.ServiceClickUp {
 				hint = "pk_… personal token (ClickUp → Settings → Apps)"
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "No claude-bar token found for %s.\nPaste your %s and press Enter:\n> ", svc, hint)
+			fmt.Fprintf(cmd.OutOrStdout(), "Paste your %s and press Enter:\n> ", hint)
 			rd := bufio.NewReader(cmd.InOrStdin())
 			line, err := rd.ReadString('\n')
 			if err != nil {
@@ -133,7 +123,7 @@ func newMCPConnectCmd() *cobra.Command {
 			if token == "" {
 				return fmt.Errorf("no token entered")
 			}
-			ident, err = verify(ctx, token)
+			ident, err := verify(ctx, token)
 			if err != nil {
 				return fmt.Errorf("token verification failed: %w", err)
 			}
@@ -144,7 +134,7 @@ func newMCPConnectCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&tokenFlag, "token", "", "connect with this token (skips migration and the stdin prompt)")
+	cmd.Flags().StringVar(&tokenFlag, "token", "", "connect with this token (skips the stdin prompt)")
 	return cmd
 }
 

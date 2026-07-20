@@ -271,9 +271,9 @@ extension CLIBridge {
         return try JSONDecoder().decode(MCPStatus.self, from: data)
     }
 
-    /// Connect via claude-bar migration. Throws when no migratable token
-    /// exists (the CLI's stdin-paste fallback hits EOF) — the UI then asks
-    /// for a pasted token and retries with mcpConnect(service:token:).
+    /// Connect by letting the CLI prompt for a token on stdin. The app has no
+    /// stdin, so the prompt hits EOF and this throws — the UI then asks for a
+    /// pasted token and retries with mcpConnect(service:token:).
     static func mcpConnect(service: String) throws -> String {
         try run(["mcp", "connect", service])
     }

@@ -20,8 +20,8 @@ import (
 // These hermetic e2e tests exercise the code paths that the dual keyring seam
 // (claude.SetKeyringForTest + secret.SetDefaultForTest, installed by e2eEnv)
 // now makes reachable without touching the real OS keychain or the network:
-// the MCP connect/disconnect/status credential plumbing, `import`'s credential
-// read + stash, and doctor's keyring round-trip.
+// the MCP connect/disconnect/status credential plumbing and doctor's keyring
+// round-trip.
 //
 // Slack token verification is hermetic for BOT tokens (xoxp-/xoxe- are user
 // tokens; xoxb- is a bot token rejected by VerifySlack BEFORE any network call),
@@ -30,8 +30,8 @@ import (
 //
 // No t.Parallel: the seams + AIMONITOR_STORE_PATH are process globals.
 
-// osUser is the account field NewCredStore (and import) use when reading/writing
-// our keyring entries.
+// osUser is the account field NewCredStore uses when reading/writing our
+// keyring entries.
 func osUser(t *testing.T) string {
 	t.Helper()
 	u, err := user.Current()
@@ -244,31 +244,30 @@ func TestMCPConnect_TokenFlag_VerifyFails(t *testing.T) {
 	}
 }
 
-// TestMCPConnect_PastedToken_VerifyFails: no claude-bar entry → falls through to
-// the stdin prompt; a pasted bot token fails verification (no network).
+// TestMCPConnect_PastedToken_VerifyFails: the stdin prompt reads a pasted bot
+// token, which fails verification (no network).
 func TestMCPConnect_PastedToken_VerifyFails(t *testing.T) {
 	_, _ = e2eEnv(t)
 	out, err := runCLI(t, "xoxb-pasted\n", "mcp", "connect", "slack")
 	if err == nil || !strings.Contains(err.Error(), "verification failed") {
 		t.Fatalf("expected pasted-token verification failure, got %v (output: %q)", err, out)
 	}
-	// The Slack-scopes preamble and the claude-bar fallback messaging should
-	// have been printed before the prompt.
+	// The Slack-scopes preamble should print before the prompt.
 	if !strings.Contains(out, "scopes required") {
 		t.Errorf("connect should print the required Slack scopes\n%s", out)
 	}
 }
 
-// TestMCPConnect_EmptyStdin_NoTokenEntered: empty stdin → the "no token entered"
-// error, after the claude-bar fallback path (no network, no verify).
+// TestMCPConnect_EmptyStdin_NoTokenEntered: empty stdin at the prompt → the
+// "no token entered" error (no network, no verify).
 func TestMCPConnect_EmptyStdin_NoTokenEntered(t *testing.T) {
 	_, _ = e2eEnv(t)
 	out, err := runCLI(t, "\n", "mcp", "connect", "clickup")
 	if err == nil || !strings.Contains(err.Error(), "no token entered") {
 		t.Fatalf("expected 'no token entered', got %v (output: %q)", err, out)
 	}
-	if !strings.Contains(out, "No claude-bar token found") {
-		t.Errorf("connect should note no claude-bar token was found\n%s", out)
+	if !strings.Contains(out, "Paste your") {
+		t.Errorf("connect should prompt for a pasted token\n%s", out)
 	}
 }
 
@@ -281,157 +280,6 @@ func TestMCPConnect_StdinReadError(t *testing.T) {
 	out, err := runCLI(t, "noeol", "mcp", "connect", "clickup")
 	if err == nil || !strings.Contains(err.Error(), "read token") {
 		t.Fatalf("expected a read-token error on a newline-less stdin, got %v (output: %q)", err, out)
-	}
-}
-
-// TestMCPConnect_MigratesFromClaudeBar: a bot token in claude-bar's slot is read
-// (migration path) and fails verification before any network — covering
-// MigrateFromClaudeBar's read + verify-fail branch through the CLI.
-func TestMCPConnect_MigratesFromClaudeBar_VerifyFails(t *testing.T) {
-	ring, _ := e2eEnv(t)
-	// claude-bar's service name for slack (mcpserver.claudeBarService).
-	if err := ring.Set("claude-bar-mcp:shared:slack", osUser(t), []byte("xoxb-bar")); err != nil {
-		t.Fatalf("seed claude-bar token: %v", err)
-	}
-	out, err := runCLI(t, "\n", "mcp", "connect", "slack")
-	// Migration verify fails (bot token) → printed as "migration unavailable",
-	// then falls to the stdin prompt; empty stdin → no token entered.
-	if err == nil || !strings.Contains(err.Error(), "no token entered") {
-		t.Fatalf("expected fall-through to prompt after failed migration, got %v (output: %q)", err, out)
-	}
-	if !strings.Contains(out, "migration unavailable") {
-		t.Errorf("a failed claude-bar migration should be reported\n%s", out)
-	}
-}
-
-// ---- import (credential read + stash; now hermetic via the seam) ------------
-
-// seedImportRegistryAndCreds writes a claude-bar registry under the temp HOME
-// and seeds each account's backup credential in the faked keyring.
-func seedImportRegistryAndCreds(t *testing.T, ring *secret.MemoryKeyring, accts []cbAccount) {
-	t.Helper()
-	reg := cbRegistry{Accounts: map[string]cbAccount{}}
-	for i, a := range accts {
-		reg.Accounts[fmt.Sprintf("a%d", i)] = a
-		svc := fmt.Sprintf(claudeBarBackupServiceFmt, a.Number, a.Email)
-		if err := ring.Set(svc, osUser(t), validBlob("sk-"+a.Email)); err != nil {
-			t.Fatalf("seed backup cred for %s: %v", a.Email, err)
-		}
-	}
-	raw, err := json.Marshal(reg)
-	if err != nil {
-		t.Fatalf("marshal registry: %v", err)
-	}
-	writeClaudeBarRegistry(t, string(raw))
-}
-
-// TestImport_HappyPath_AddsAndDisablesAutoSwap imports two fresh accounts: each
-// credential is read from the faked keychain, stashed, and a row created; and
-// auto-swap is disabled by default.
-func TestImport_HappyPath_AddsAndDisablesAutoSwap(t *testing.T) {
-	ring, dbPath := e2eEnv(t)
-	ctx := context.Background()
-	seedImportRegistryAndCreds(t, ring, []cbAccount{
-		{Number: 1, Email: "one@example.com", OrganizationUUID: "org-1", OrganizationName: "Org One", Nickname: "first"},
-		{Number: 2, Email: "two@example.com", OrganizationUUID: "org-2", OrganizationName: "Org Two"},
-	})
-
-	out, err := runCLI(t, "", "import")
-	if err != nil {
-		t.Fatalf("import: %v (output: %q)", err, out)
-	}
-	if !strings.Contains(out, "Imported one@example.com as \"first\"") {
-		t.Errorf("output should report the nicknamed account imported\n%s", out)
-	}
-	if !strings.Contains(out, "Imported two@example.com as \"two\"") {
-		t.Errorf("output should fall back to the email local part as label\n%s", out)
-	}
-	if !strings.Contains(out, "2 added, 0 refreshed, 0 failed") {
-		t.Errorf("summary = wrong\n%s", out)
-	}
-	if !strings.Contains(out, "Auto-swap disabled") {
-		t.Errorf("import should disable auto-swap by default\n%s", out)
-	}
-
-	s := openStoreAt(t, dbPath)
-	acct, err := s.GetAccountByLabel(ctx, "first")
-	if err != nil {
-		t.Fatalf("imported account 'first' should exist: %v", err)
-	}
-	if acct.Email != "one@example.com" || acct.OrganizationUUID != "org-1" {
-		t.Errorf("identity = %q/%q, want one@example.com/org-1", acct.Email, acct.OrganizationUUID)
-	}
-	if _, err := claude.RetrieveStash(ctx, acct.KeyringRef); err != nil {
-		t.Errorf("imported account should carry a stash: %v", err)
-	}
-	if v, _ := s.GetSetting(ctx, "auto_swap.enabled"); v != "false" {
-		t.Errorf("auto_swap.enabled = %q, want false", v)
-	}
-}
-
-// TestImport_RefreshesExistingAndRelabels: an account already registered under
-// the same identity is refreshed + relabeled to the claude-bar nickname, and
-// auto-swap is kept when --keep-auto-swap is passed.
-func TestImport_RefreshesExistingAndRelabels(t *testing.T) {
-	ring, dbPath := e2eEnv(t)
-	ctx := context.Background()
-	// Pre-existing account with the same identity but a different label.
-	seedAccount(t, dbPath, store.Account{
-		Label: "oldlabel", Email: "dup@example.com", OrganizationUUID: "org-d", OrganizationName: "Dup Org",
-	}, validBlob("sk-old"))
-	seedImportRegistryAndCreds(t, ring, []cbAccount{
-		{Number: 5, Email: "dup@example.com", OrganizationUUID: "org-d", OrganizationName: "Dup Org", Nickname: "newlabel"},
-	})
-
-	out, err := runCLI(t, "", "import", "--keep-auto-swap")
-	if err != nil {
-		t.Fatalf("import: %v (output: %q)", err, out)
-	}
-	if !strings.Contains(out, "Refreshed dup@example.com") || !strings.Contains(out, "relabeled") {
-		t.Errorf("output should report a refresh + relabel\n%s", out)
-	}
-	if !strings.Contains(out, "0 added, 1 refreshed, 0 failed") {
-		t.Errorf("summary wrong\n%s", out)
-	}
-	if strings.Contains(out, "Auto-swap disabled") {
-		t.Errorf("--keep-auto-swap must NOT disable auto-swap\n%s", out)
-	}
-	s := openStoreAt(t, dbPath)
-	if _, err := s.GetAccountByLabel(ctx, "newlabel"); err != nil {
-		t.Errorf("account should have been relabeled to the nickname: %v", err)
-	}
-}
-
-// TestImport_SkipsAccountWithMissingCredential: an account in the registry whose
-// backup credential is absent from the keychain is reported failed and skipped,
-// while a sibling with a credential still imports.
-func TestImport_SkipsAccountWithMissingCredential(t *testing.T) {
-	ring, dbPath := e2eEnv(t)
-	ctx := context.Background()
-	// Write the registry with two accounts but seed a credential for only one.
-	reg := cbRegistry{Accounts: map[string]cbAccount{
-		"a": {Number: 1, Email: "good@example.com", OrganizationUUID: "org-g", Nickname: "good"},
-		"b": {Number: 2, Email: "missing@example.com", OrganizationUUID: "org-m", Nickname: "missing"},
-	}}
-	if err := ring.Set(fmt.Sprintf(claudeBarBackupServiceFmt, 1, "good@example.com"), osUser(t), validBlob("sk-good")); err != nil {
-		t.Fatalf("seed good cred: %v", err)
-	}
-	raw, _ := json.Marshal(reg)
-	writeClaudeBarRegistry(t, string(raw))
-
-	out, err := runCLI(t, "", "import")
-	if err != nil {
-		t.Fatalf("import: %v (output: %q)", err, out)
-	}
-	if !strings.Contains(out, "skip missing@example.com") {
-		t.Errorf("missing-credential account should be skipped\n%s", out)
-	}
-	if !strings.Contains(out, "1 added, 0 refreshed, 1 failed") {
-		t.Errorf("summary wrong\n%s", out)
-	}
-	s := openStoreAt(t, dbPath)
-	if _, err := s.GetAccountByLabel(ctx, "good"); err != nil {
-		t.Errorf("the account with a credential should still import: %v", err)
 	}
 }
 
