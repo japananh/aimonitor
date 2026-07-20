@@ -405,27 +405,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private func setupPanel() {
         // A borderless panel has no popover arrow. Rounded material + shadow
         // give it the popover look without the caret pointing at the icon.
-        let root = PopoverRootView(
-            model: model,
-            openPreferences: { [weak self] in self?.showPreferences() },
-            quit: { NSApplication.shared.terminate(nil) },
-            renameAccount: { [weak self] label in self?.promptRename(currentLabel: label) },
-            removeAccount: { [weak self] label in self?.promptRemove(label: label) },
-            reloginAccount: { [weak self] label in self?.promptRelogin(label: label) },
-            importAccount: { [weak self] email in self?.promptImportCurrent(email: email) },
-            addAccount: { [weak self] in self?.promptAddAccount() },
-            openTokenUsage: { [weak self] in self?.showTokenUsage() }
-        )
-        // Liquid Glass chrome on Tahoe, solid rounded background before it
-        // (see PanelChrome.swift for why glass stays on the chrome only).
-        .panelChrome()
-
-        let hosting = NSHostingController(rootView: root)
-        // Let the panel resize to the SwiftUI content (rows, banners, error
-        // lines all change the height).
-        hosting.sizingOptions = [.preferredContentSize]
-
-        let p = KeyablePanel(contentViewController: hosting)
+        //
+        // The panel starts with EMPTY content and only builds its SwiftUI tree
+        // when opened (showPanelContent), tearing it down again on close. A
+        // hosting view created here at launch stays alive observing AppModel and
+        // re-evaluates its (offscreen) body on every poll, forever — which
+        // accumulated ~one Observation node per poll for days, the #32
+        // offscreen-graph growth this fix finishes off.
+        let p = KeyablePanel(contentViewController: Self.emptyContentVC())
         p.styleMask = [.borderless, .nonactivatingPanel]
         p.isFloatingPanel = true
         p.level = .popUpMenu
@@ -475,6 +462,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if panel?.isVisible == true { closePanel() }
     }
 
+    /// Empty content controller for the panel while it's closed. Assigning a
+    /// bare NSView (rather than letting NSViewController.loadView hunt for a
+    /// nib, which would crash) both satisfies the window's need for a content
+    /// controller and RELEASES the previous hosting controller — tearing down
+    /// its SwiftUI tree so nothing observes AppModel while the panel is hidden.
+    private static func emptyContentVC() -> NSViewController {
+        let vc = NSViewController()
+        vc.view = NSView(frame: .zero)
+        return vc
+    }
+
+    /// Builds a fresh hosting controller for the panel's SwiftUI content. Made
+    /// per-open (not once at launch) so the tree exists only while the panel is
+    /// on screen; sizingOptions lets the panel track the content's height as
+    /// rows/banners/errors appear.
+    private func makePanelHostingController() -> NSHostingController<AnyView> {
+        let root = PopoverRootView(
+            model: model,
+            openPreferences: { [weak self] in self?.showPreferences() },
+            quit: { NSApplication.shared.terminate(nil) },
+            renameAccount: { [weak self] label in self?.promptRename(currentLabel: label) },
+            removeAccount: { [weak self] label in self?.promptRemove(label: label) },
+            reloginAccount: { [weak self] label in self?.promptRelogin(label: label) },
+            importAccount: { [weak self] email in self?.promptImportCurrent(email: email) },
+            addAccount: { [weak self] in self?.promptAddAccount() },
+            openTokenUsage: { [weak self] in self?.showTokenUsage() }
+        )
+        // Liquid Glass chrome on Tahoe, solid rounded background before it
+        // (see PanelChrome.swift for why glass stays on the chrome only).
+        .panelChrome()
+        let hosting = NSHostingController(rootView: AnyView(root))
+        hosting.sizingOptions = [.preferredContentSize]
+        return hosting
+    }
+
+    /// Installs a fresh SwiftUI tree as the panel's content and sizes the panel
+    /// to it, so positionPanel (called next) anchors against the real
+    /// dimensions. The content is torn down again in closePanel.
+    private func showPanelContent() {
+        let hosting = makePanelHostingController()
+        panel.contentViewController = hosting
+        // Force the SwiftUI layout now so the panel adopts the content size
+        // before it's positioned — preferredContentSize would otherwise apply a
+        // runloop tick later, leaving positionPanel to anchor a stale size.
+        hosting.view.layoutSubtreeIfNeeded()
+        let fit = hosting.view.fittingSize
+        if fit.width > 1, fit.height > 1 {
+            panel.setContentSize(fit)
+        }
+    }
+
     @objc private func togglePopover(_ sender: Any?) {
         if panel.isVisible {
             closePanel()
@@ -504,6 +542,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // Activate so the status item's window geometry is realised before we
         // read it for positioning (same reason the old popover needed it).
         NSApp.activate(ignoringOtherApps: true)
+        // Build the SwiftUI tree fresh for this open (it was torn down on the
+        // last close) and size the panel to it, then position + show.
+        showPanelContent()
         positionPanel()
         panel.makeKeyAndOrderFront(nil)
         // The panel is key (so the first click reaches a control), but we
@@ -562,6 +603,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             clickMonitor = nil
         }
         panel?.orderOut(nil)
+        // Tear down the SwiftUI tree so nothing observes AppModel while the
+        // panel is hidden — the offscreen tree re-evaluating on every poll is
+        // what accumulated the Observation-graph memory (#32 follow-up).
+        panel?.contentViewController = Self.emptyContentVC()
         // Back to the idle cadence + menu-bar-only polling now that nothing in
         // the popover is on screen.
         model.panelDidClose()
