@@ -30,8 +30,7 @@ import (
 // rewrites ~/.claude.json non-atomically (the contents land over 2-3
 // fsyncs). A read landing mid-write sees truncated JSON; the write
 // finishes within a few hundred ms, so a small bounded retry resolves
-// it without surfacing a spurious parse error. Mirrors claude-bar's
-// claude_config_store.go.
+// it without surfacing a spurious parse error.
 const (
 	readRetryAttempts = 3
 	readRetryDelay    = 100 * time.Millisecond
@@ -45,8 +44,8 @@ const (
 // AccountUUID is intentionally NOT written back on a switch: Claude Code
 // repopulates it on next launch from the account it authenticates, and
 // carrying a stale value across a switch would pair the new account's
-// email with the old account's UUID. Mirrors claude-bar, which patches
-// only emailAddress / organizationName / organizationUuid.
+// email with the old account's UUID. Only emailAddress / organizationName
+// / organizationUuid are patched.
 type OAuthAccount struct {
 	EmailAddress     string `json:"emailAddress"`
 	OrganizationName string `json:"organizationName,omitempty"`

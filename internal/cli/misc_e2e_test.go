@@ -6,14 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/japananh/aimonitor/internal/store"
 )
 
 // Hermetic coverage for the parts of commands whose happy paths need an
 // exec/network/keychain seam we are forbidden to add: usage (error paths),
-// import (registry parsing errors), doctor (pure helpers + sqlite-critical),
-// mcp (service-dispatch errors), daemon (stub dispatch). No t.Parallel.
+// doctor (pure helpers + sqlite-critical), mcp (service-dispatch errors),
+// daemon (stub dispatch). No t.Parallel.
 
 // ---- usage refresh (hermetic error paths only) ------------------------------
 // The happy path constructs claude.NewUsageFetcher() (real Anthropic network)
@@ -35,71 +33,6 @@ func TestUsageRefresh_UnknownLabelErrors(t *testing.T) {
 	_, err := runCLI(t, "", "usage", "refresh", "ghost")
 	if err == nil || !strings.Contains(err.Error(), "ghost") {
 		t.Fatalf("expected unknown-label error naming 'ghost', got %v", err)
-	}
-}
-
-// ---- import (registry parsing errors; cred read needs a secret.Default seam)-
-
-// writeClaudeBarRegistry writes a registry.json under the temp HOME at the
-// path import() reads (~/Library/Application Support/claude-swap-widget/).
-func writeClaudeBarRegistry(t *testing.T, body string) {
-	t.Helper()
-	dir := filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "claude-swap-widget")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir registry dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "registry.json"), []byte(body), 0o600); err != nil {
-		t.Fatalf("write registry: %v", err)
-	}
-}
-
-func TestImport_RegistryNotFound(t *testing.T) {
-	_, _ = e2eEnv(t) // temp HOME with no claude-bar registry
-	_, err := runCLI(t, "", "import")
-	if err == nil || !strings.Contains(err.Error(), "claude-bar registry not found") {
-		t.Fatalf("expected registry-not-found error, got %v", err)
-	}
-}
-
-func TestImport_MalformedRegistry(t *testing.T) {
-	_, _ = e2eEnv(t)
-	writeClaudeBarRegistry(t, "{not json")
-	_, err := runCLI(t, "", "import")
-	if err == nil || !strings.Contains(err.Error(), "parse claude-bar registry") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
-}
-
-func TestImport_EmptyRegistry(t *testing.T) {
-	_, _ = e2eEnv(t)
-	writeClaudeBarRegistry(t, `{"accounts":{}}`)
-	_, err := runCLI(t, "", "import")
-	if err == nil || !strings.Contains(err.Error(), "no accounts to import") {
-		t.Fatalf("expected no-accounts error, got %v", err)
-	}
-}
-
-func TestEmailLocalPart(t *testing.T) {
-	cases := map[string]string{
-		"alice@example.com": "alice",
-		"noatsign":          "noatsign",
-		"@host":             "@host", // no local part → returned as-is
-	}
-	for in, want := range cases {
-		if got := emailLocalPart(in); got != want {
-			t.Errorf("emailLocalPart(%q) = %q want %q", in, got, want)
-		}
-	}
-}
-
-func TestClaudeBarRegistryPath(t *testing.T) {
-	_, _ = e2eEnv(t) // sets a temp HOME
-	p, err := claudeBarRegistryPath()
-	if err != nil {
-		t.Fatalf("claudeBarRegistryPath: %v", err)
-	}
-	if !strings.HasSuffix(p, filepath.Join("claude-swap-widget", "registry.json")) {
-		t.Errorf("path = %q, want it under claude-swap-widget", p)
 	}
 }
 
@@ -202,19 +135,6 @@ func TestDaemonStubs_ReturnNotImplemented(t *testing.T) {
 		}
 	}
 }
-
-// Guard: import flag wiring (keep-auto-swap default false) is exercised via the
-// cobra command; ensure the command constructs and the flag is registered.
-func TestImportCmd_HasKeepAutoSwapFlag(t *testing.T) {
-	cmd := newImportCmd()
-	if cmd.Flags().Lookup("keep-auto-swap") == nil {
-		t.Error("import should register --keep-auto-swap")
-	}
-}
-
-// Guard: ensure a seeded store with an account doesn't change the import
-// not-found behavior (registry path is what matters, not the store).
-var _ = store.Account{}
 
 // ---- update (hermetic helpers; check/install need network + brew exec) ------
 

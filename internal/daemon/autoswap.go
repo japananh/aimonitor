@@ -50,7 +50,7 @@ const (
 const (
 	// cooldownAfterSwap suppresses re-arming right after a swap so the
 	// freshly-active account's limits can be re-fetched before we judge
-	// it again. Mirrors claude-bar's 300s post-swap cooldown.
+	// it again.
 	cooldownAfterSwap = 5 * time.Minute
 	// cooldownAfterExhausted backs off when every account is above
 	// threshold — nothing to swap to, so don't recompute every tick.
