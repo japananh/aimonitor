@@ -21,7 +21,7 @@
 - 🤖 **Auto-swap** at the 5h *or* 7d threshold (default 80 %) — picks the account with the most overall headroom, skips exhausted/rate-limited ones, and rescues immediately if the active account hits 100 %. Running `claude` sessions follow automatically.
 - 🔔 **Threshold notifications** as an account nears its limit (when auto-swap is off).
 - 💾 **Export / import** settings, or migrate accounts to another machine — credentials optional and passphrase-encrypted (Argon2id + AES-256-GCM).
-- 🔌 **MCP server** — Slack + ClickUp tools for Claude Code over stdio, with per-service read-only mode.
+- 🔌 **MCP server** — Slack, ClickUp & Sentry tools for Claude Code over stdio, with per-service read-only mode.
 - 🔐 **OS-keyring storage** (macOS Keychain, Linux libsecret). SQLite holds references; tokens never leave the keyring. No telemetry.
 
 ## Install
@@ -94,8 +94,10 @@ AIMONITOR_PASSPHRASE=… aimonitor config import full.json                      
 | `daily_summary.enabled` | `true` | Once-a-day notification recapping yesterday's token usage across accounts |
 | `auto_update.enabled` | `true` | Check GitHub for releases on launch (never auto-installs) |
 | `autostart` | `false` | Start the daemon at login |
-| `mcp.slack.enabled` / `mcp.clickup.enabled` | `true` | Expose that service's MCP tools |
-| `mcp.slack.read_only` / `mcp.clickup.read_only` | `false` | Hide the service's write tools |
+| `mcp.slack.enabled` / `mcp.clickup.enabled` / `mcp.sentry.enabled` | `true` | Expose that service's MCP tools |
+| `mcp.slack.read_only` / `mcp.clickup.read_only` / `mcp.sentry.read_only` | `false` | Hide the service's write tools |
+| `mcp.sentry.org` | (empty) | Sentry organization slug the tools query |
+| `mcp.sentry.base_url` | `https://sentry.io` | Sentry API host (set to your self-hosted host) |
 | `mcp.disabled_tools` | (empty) | Comma-separated tool names to hide |
 
 </details>
@@ -106,22 +108,26 @@ The daemon polls `/api/oauth/usage` (~5 min ± jitter, no tokens consumed). When
 
 See [`docs/architecture.md`](docs/architecture.md) and [`docs/thresholds.md`](docs/thresholds.md) for the full picture.
 
-## MCP server (Slack + ClickUp for Claude Code)
+## MCP server (Slack, ClickUp & Sentry for Claude Code)
 
-One stdio process serving Slack + ClickUp tools — no extra runtimes.
+One stdio process serving Slack, ClickUp & Sentry tools — no extra runtimes.
 
 ```sh
 aimonitor mcp connect slack     # store a Slack user token (xoxp-…)
 aimonitor mcp connect clickup   # store a ClickUp token (pk_…)
+aimonitor mcp connect sentry    # store a Sentry auth token (set mcp.sentry.org first)
 aimonitor mcp register          # add the server to Claude Code
 ```
 
 - **Slack:** post to channels/threads (mrkdwn, code blocks), upload, search, history, permalinks.
 - **ClickUp:** workspace hierarchy, tasks, comments, attachments, Docs (read & write).
+- **Sentry:** triage digests (projects, issue search, detail), root-cause (latest event stacktrace, tag/value distributions), and actions (resolve/ignore/assign, comment). Org-scoped and self-hosted-aware (`mcp.sentry.org`, `mcp.sentry.base_url`).
 - **Safety:** Claude Code's per-tool prompts are the approval layer; per-service Enabled / Read-only switches and a per-tool disable list refine it. Tokens are verified live, then stored in the OS keyring — never in SQLite or logs.
 
 > **Slack token scopes.** The Slack token is a **user** token (`xoxp-…`). Grant these **User Token Scopes** on your Slack app (api.slack.com → OAuth & Permissions), reinstall, then connect — a missing one surfaces as `slack: missing scope "…"` on the affected tool:
 > `search:read`, `users:read`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `files:read`, `files:write`.
+
+> **Sentry token scopes.** A Sentry **auth token** (User Auth Token, or an Internal Integration). Set `mcp.sentry.org` — and `mcp.sentry.base_url` for self-hosted — *before* `connect`. Scopes: `org:read`, `project:read`, `event:read` for the read/triage tools; add `event:write` + `member:read` to resolve/assign/comment; `event:admin` to delete comments.
 
 ## Privacy & security
 

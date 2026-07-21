@@ -545,10 +545,10 @@ struct PreferencesView: View {
             return (
                 "sntry… auth token",
                 "Paste your Sentry auth token below.",
-                "1. In Sentry: User Settings → Auth Tokens (or Settings → Developer Settings → Internal Integration).\n2. Scopes: org:read, project:read, event:read (add event:write + member:read for resolve/assign/comment).\n3. Paste the token below.\n(Self-hosted: create it on your own Sentry host.)",
+                "1. In Sentry: User Settings → Auth Tokens (or Settings → Developer Settings → Internal Integration).\n2. Scopes: org:read, project:read, event:read (add event:write + member:read to resolve/assign/comment; event:admin to delete comments).\n3. Paste the token below.\n(Self-hosted: create it on your own Sentry host.)",
                 "Open Sentry docs",
                 URL(string: "https://docs.sentry.io/account/auth-tokens/")!,
-                "Scopes: org:read, project:read, event:read (add event:write + member:read for write actions)."
+                "Scopes: org:read, project:read, event:read; add event:write + member:read to resolve/assign/comment; event:admin to delete comments."
             )
         }
         return (

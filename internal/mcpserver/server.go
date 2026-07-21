@@ -252,6 +252,11 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryAddCommentIn, any] {
 				return c.sentryAddComment
 			})},
+		{name: "sentry_delete_comment", svc: ServiceSentry, write: true,
+			desc: "Delete a comment from a Sentry issue by its comment_id (from sentry_add_comment). Needs an event:admin-scoped token (Issue & Event = Admin); add/update/resolve only need Write",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryDeleteCommentIn, any] {
+				return c.sentryDeleteComment
+			})},
 	}
 }
 

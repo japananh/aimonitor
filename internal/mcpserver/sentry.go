@@ -285,6 +285,7 @@ type sentryEvent struct {
 	Platform    string            `json:"platform,omitempty"`
 	DateCreated string            `json:"dateCreated,omitempty"`
 	Tags        []sentryEventKV   `json:"tags,omitempty"`
+	Contexts    map[string]any    `json:"contexts,omitempty"`
 	Exceptions  []sentryException `json:"exceptions,omitempty"`
 }
 
@@ -299,6 +300,7 @@ type rawSentryEvent struct {
 	Platform    string          `json:"platform"`
 	DateCreated string          `json:"dateCreated"`
 	Tags        []sentryEventKV `json:"tags"`
+	Contexts    map[string]any  `json:"contexts"`
 	Entries     []struct {
 		Type string          `json:"type"`
 		Data json.RawMessage `json:"data"`
@@ -341,7 +343,8 @@ func (c *Client) sentryGetLatestEvent(ctx context.Context, _ *mcp.CallToolReques
 	}
 	ev := sentryEvent{
 		ID: raw.ID, EventID: raw.EventID, Title: raw.Title, Message: raw.Message,
-		Culprit: raw.Culprit, Platform: raw.Platform, DateCreated: raw.DateCreated, Tags: raw.Tags,
+		Culprit: raw.Culprit, Platform: raw.Platform, DateCreated: raw.DateCreated,
+		Tags: raw.Tags, Contexts: raw.Contexts,
 	}
 	for _, e := range raw.Entries {
 		if e.Type != "exception" {
@@ -487,4 +490,31 @@ func (c *Client) sentryAddComment(ctx context.Context, _ *mcp.CallToolRequest, i
 		return nil, nil, err
 	}
 	return textResult(map[string]any{"issue": id, "comment_id": note.ID, "posted": true})
+}
+
+// --- sentry_delete_comment (write) ---------------------------------------
+
+type sentryDeleteCommentIn struct {
+	OrganizationSlug string `json:"organization_slug,omitempty" jsonschema:"Sentry org slug; defaults to the configured mcp.sentry.org"`
+	Issue            string `json:"issue" jsonschema:"Issue numeric id or shortId"`
+	CommentID        string `json:"comment_id" jsonschema:"The comment id to delete (returned by sentry_add_comment)"`
+}
+
+func (c *Client) sentryDeleteComment(ctx context.Context, _ *mcp.CallToolRequest, in sentryDeleteCommentIn) (*mcp.CallToolResult, any, error) {
+	org, err := c.sentryOrg(in.OrganizationSlug)
+	if err != nil {
+		return nil, nil, err
+	}
+	cid := strings.TrimSpace(in.CommentID)
+	if cid == "" {
+		return nil, nil, fmt.Errorf("comment_id is required")
+	}
+	id, err := c.resolveIssueID(ctx, org, in.Issue)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := c.sentry(ctx, http.MethodDelete, "/organizations/"+url.PathEscape(org)+"/issues/"+url.PathEscape(id)+"/comments/"+url.PathEscape(cid)+"/", nil, nil, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]any{"issue": id, "comment_id": cid, "deleted": true})
 }

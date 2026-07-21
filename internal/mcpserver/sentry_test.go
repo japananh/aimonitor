@@ -429,3 +429,26 @@ func TestSentryAddComment(t *testing.T) {
 		t.Errorf("blank text must error")
 	}
 }
+
+func TestSentryDeleteComment(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	c := sentryClient(t, srv)
+	res, _, err := c.sentryDeleteComment(context.Background(), nil, sentryDeleteCommentIn{Issue: "123", CommentID: "note9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/organizations/test-org/issues/123/comments/note9/" {
+		t.Errorf("method=%s path=%s", gotMethod, gotPath)
+	}
+	if body := resultJSON(t, res); !strings.Contains(body, `"deleted": true`) {
+		t.Errorf("missing deleted flag: %s", body)
+	}
+	if _, _, err := c.sentryDeleteComment(context.Background(), nil, sentryDeleteCommentIn{Issue: "123"}); err == nil {
+		t.Errorf("blank comment_id must error")
+	}
+}
