@@ -18,6 +18,13 @@ import (
 type Client struct {
 	HTTP  *http.Client
 	Creds *CredStore
+
+	// SentryOrg and SentryAPIBase come from config (mcp.sentry.org /
+	// mcp.sentry.base_url). SentryOrg is the default org slug for the Sentry
+	// tools; SentryAPIBase overrides the sentry.io API root for self-hosted
+	// instances (empty → the sentryAPIBase package default).
+	SentryOrg     string
+	SentryAPIBase string
 }
 
 // NewClient builds the production client. 30s timeout: large ClickUp
@@ -205,6 +212,42 @@ func (c *Client) clickupBase(ctx context.Context, base, method, path string, que
 		return err
 	}
 	req.Header.Set("Authorization", tok)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return c.do(req, out)
+}
+
+// sentry runs one Sentry API call. Sentry takes the token as a Bearer
+// credential and is org-scoped, so callers embed the org slug in path. The
+// base URL is configurable for self-hosted instances (SentryAPIBase),
+// defaulting to sentry.io via the sentryAPIBase package var.
+func (c *Client) sentry(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	tok, err := c.token(ServiceSentry)
+	if err != nil {
+		return err
+	}
+	base := c.SentryAPIBase
+	if base == "" {
+		base = sentryAPIBase
+	}
+	u := base + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	var rdr io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, rdr)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

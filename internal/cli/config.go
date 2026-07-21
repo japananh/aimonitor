@@ -64,8 +64,12 @@ var configKeys = []string{
 	SettingsKeyUpdateSkippedVersion,
 	mcpserver.SettingsKeySlackEnabled,
 	mcpserver.SettingsKeyClickUpEnabled,
+	mcpserver.SettingsKeySentryEnabled,
 	mcpserver.SettingsKeySlackReadOnly,
 	mcpserver.SettingsKeyClickUpReadOnly,
+	mcpserver.SettingsKeySentryReadOnly,
+	mcpserver.SettingsKeySentryOrg,
+	mcpserver.SettingsKeySentryBaseURL,
 	mcpserver.SettingsKeyDisabledTools,
 }
 
@@ -96,8 +100,12 @@ func isStoreKey(key string) bool {
 		SettingsKeyUpdateSkippedVersion,
 		mcpserver.SettingsKeySlackEnabled,
 		mcpserver.SettingsKeyClickUpEnabled,
+		mcpserver.SettingsKeySentryEnabled,
 		mcpserver.SettingsKeySlackReadOnly,
 		mcpserver.SettingsKeyClickUpReadOnly,
+		mcpserver.SettingsKeySentryReadOnly,
+		mcpserver.SettingsKeySentryOrg,
+		mcpserver.SettingsKeySentryBaseURL,
 		mcpserver.SettingsKeyDisabledTools:
 		return true
 	}
@@ -370,13 +378,19 @@ func validateStoreValue(key, value string) (string, error) {
 		SettingsKeyAutoUpdateEnabled,
 		mcpserver.SettingsKeySlackEnabled,
 		mcpserver.SettingsKeyClickUpEnabled,
+		mcpserver.SettingsKeySentryEnabled,
 		mcpserver.SettingsKeySlackReadOnly,
-		mcpserver.SettingsKeyClickUpReadOnly:
+		mcpserver.SettingsKeyClickUpReadOnly,
+		mcpserver.SettingsKeySentryReadOnly:
 		b, err := parseBool(value)
 		if err != nil {
 			return "", err
 		}
 		return strconv.FormatBool(b), nil
+	case mcpserver.SettingsKeySentryOrg, mcpserver.SettingsKeySentryBaseURL:
+		// Free-form: an org slug and an optional self-hosted host. Trim only;
+		// empty clears the setting (→ the sentry.io / no-org defaults).
+		return strings.TrimSpace(value), nil
 	case mcpserver.SettingsKeyDisabledTools:
 		// Free-form comma-separated tool names; normalise whitespace.
 		parts := []string{}
@@ -417,11 +431,13 @@ func storeKeyDefault(key string) string {
 		return strconv.FormatBool(daemon.DefaultDailySummaryEnabled)
 	case SettingsKeyAutoUpdateEnabled:
 		return strconv.FormatBool(defaultAutoUpdateEnabled)
-	case mcpserver.SettingsKeySlackEnabled, mcpserver.SettingsKeyClickUpEnabled:
+	case mcpserver.SettingsKeySlackEnabled, mcpserver.SettingsKeyClickUpEnabled, mcpserver.SettingsKeySentryEnabled:
 		return "true"
-	case mcpserver.SettingsKeySlackReadOnly, mcpserver.SettingsKeyClickUpReadOnly:
+	case mcpserver.SettingsKeySlackReadOnly, mcpserver.SettingsKeyClickUpReadOnly, mcpserver.SettingsKeySentryReadOnly:
 		return "false"
-	case mcpserver.SettingsKeyDisabledTools:
+	case mcpserver.SettingsKeyDisabledTools,
+		mcpserver.SettingsKeySentryOrg,
+		mcpserver.SettingsKeySentryBaseURL:
 		return ""
 	case SettingsKeyUpdateSkippedVersion:
 		return ""
