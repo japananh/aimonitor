@@ -538,7 +538,17 @@ struct PreferencesView: View {
                 "1. Open api.slack.com/apps and create an app (or open an existing one).\n2. OAuth & Permissions → add the User Token Scopes (see Setup guide), then “Install to Workspace”.\n3. Copy the User OAuth Token and paste it below.",
                 "Open Slack API",
                 URL(string: "https://api.slack.com/apps")!,
-                "Required User Token Scopes: search:read, users:read, channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, chat:write, files:read, files:write"
+                "Required User Token Scopes: search:read, users:read, channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, chat:write, files:write"
+            )
+        }
+        if service == "sentry" {
+            return (
+                "sntry… auth token",
+                "Paste your Sentry auth token below.",
+                "1. In Sentry: User Settings → Auth Tokens (or Settings → Developer Settings → Internal Integration).\n2. Scopes: org:read, project:read, event:read (add event:write + member:read for resolve/assign/comment).\n3. Paste the token below.\n(Self-hosted: create it on your own Sentry host.)",
+                "Open Sentry docs",
+                URL(string: "https://docs.sentry.io/account/auth-tokens/")!,
+                "Scopes: org:read, project:read, event:read (add event:write + member:read for write actions)."
             )
         }
         return (
@@ -551,8 +561,18 @@ struct PreferencesView: View {
         )
     }
 
+    // serviceLabel maps an MCP service id to its display name.
+    private func serviceLabel(_ s: String) -> String {
+        switch s {
+        case "slack": return "Slack"
+        case "clickup": return "ClickUp"
+        case "sentry": return "Sentry"
+        default: return s.capitalized
+        }
+    }
+
     // integrationRow renders one service: status line, Connect/Disconnect,
-    // Enabled + Read-only toggles, inline token paste when migration fails.
+    // Enabled + Read-only toggles, inline token paste when not connected.
     // integrationRow emits SIBLING form rows (no wrapping VStack: a nested
     // container loses the grouped Form's compact-switch row treatment).
     // Inside the single "MCP" section, each service gets a bold sub-header
@@ -560,7 +580,7 @@ struct PreferencesView: View {
     @ViewBuilder
     private func integrationRow(_ svc: MCPServiceStatus) -> some View {
         HStack {
-            Text(svc.service == "slack" ? "Slack" : "ClickUp").bold()
+            Text(serviceLabel(svc.service)).bold()
             Spacer()
             if svc.connected, let ident = svc.identity {
                 Text(ident).font(.caption).foregroundStyle(.secondary)
@@ -619,7 +639,7 @@ struct PreferencesView: View {
                     AppTextButton(mcpBusy == svc.service ? "Connecting…" : "Connect") { mcpConnectWithToken(svc.service) }
                         .disabled((mcpTokenInput[svc.service] ?? "").trimmingCharacters(in: .whitespaces).isEmpty || mcpBusy != nil)
                         .frame(height: 24)
-                        .help("Verifies the token with \(svc.service == "slack" ? "Slack" : "ClickUp"), then saves it")
+                        .help("Verifies the token with \(serviceLabel(svc.service)), then saves it")
                     // Cancel closes THIS service's form and clears its field +
                     // error. Other services' open forms are untouched.
                     AppTextButton("Cancel") {
