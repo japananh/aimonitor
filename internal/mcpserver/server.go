@@ -206,9 +206,14 @@ func catalog() []toolDef {
 				return c.clickupUpdateComment
 			})},
 		{name: "clickup_list_comments", svc: ServiceClickUp,
-			desc: "List the comments on a ClickUp task",
+			desc: "List the top-level comments on a ClickUp task. Each carries reply_count; when >0, fetch the thread with clickup_list_comment_replies",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuTaskIn, any] {
 				return c.clickupListComments
+			})},
+		{name: "clickup_list_comment_replies", svc: ServiceClickUp,
+			desc: "List the threaded replies to a ClickUp comment (comment_id from clickup_list_comments; use when a comment's reply_count > 0)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuCommentRepliesIn, any] {
+				return c.clickupListCommentReplies
 			})},
 		{name: "clickup_upload_attachment", svc: ServiceClickUp, write: true,
 			desc: "Attach a file (given as text content) to a ClickUp task",
