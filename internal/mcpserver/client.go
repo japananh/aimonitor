@@ -144,6 +144,34 @@ func (c *Client) slackPOST(ctx context.Context, method string, body any, out int
 	return out.check()
 }
 
+// slackDownload GETs a Slack file URL (url_private / url_private_download)
+// with the workspace token and returns the raw bytes, capped at maxBytes+1 so
+// the caller can detect (and flag) truncation. These URLs are NOT Web API
+// methods — they serve the file bytes directly and require the same Bearer
+// token, which only the server holds; that's the whole reason a client can't
+// fetch them itself.
+func (c *Client) slackDownload(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
+	tok, err := c.token(ServiceSlack)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("User-Agent", userAgent())
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download file: %w", err)
+	}
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("download file: HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+}
+
 // clickup runs one ClickUp v2 API call. ClickUp wants the raw personal
 // token in Authorization (no Bearer prefix).
 func (c *Client) clickup(ctx context.Context, method, path string, query url.Values, body, out any) error {

@@ -16,13 +16,14 @@ import "strings"
 //	list_channels                         conversations.list     channels:read groups:read im:read mpim:read
 //	post_message / update / delete        chat.*                 chat:write
 //	upload_file                           files.*                files:write
+//	get_file                              files.info + download  files:read
 var SlackUserTokenScopes = []string{
 	"search:read",
 	"users:read",
 	"channels:history", "groups:history", "im:history", "mpim:history",
 	"channels:read", "groups:read", "im:read", "mpim:read",
 	"chat:write",
-	"files:write",
+	"files:read", "files:write",
 }
 
 // SlackScopesCSV is the scope list as a comma-separated string for display.

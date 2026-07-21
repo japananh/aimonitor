@@ -121,7 +121,7 @@ aimonitor mcp register          # thêm server vào Claude Code
 - **An toàn:** prompt xin-quyền theo từng tool của Claude Code là lớp duyệt; thêm công tắc Enabled / Read-only theo dịch vụ và danh sách ẩn từng tool. Token được verify trực tiếp rồi lưu OS keyring — không vào SQLite hay log.
 
 > **Scope của Slack token.** Slack token là **user** token (`xoxp-…`). Cấp những **User Token Scopes** sau trên Slack app của bạn (api.slack.com → OAuth & Permissions), cài lại, rồi connect — thiếu scope nào sẽ hiện `slack: missing scope "…"` trên tool tương ứng:
-> `search:read`, `users:read`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `files:write`.
+> `search:read`, `users:read`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `files:read`, `files:write`.
 
 ## Quyền riêng tư & bảo mật
 
