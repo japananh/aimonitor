@@ -5,13 +5,6 @@
 import AppKit
 import SwiftUI
 
-/// sevenDayAtLimitPct is the 7-day utilization at which the menu bar stops
-/// showing the 5h window and surfaces the 7d one instead. The 5h window is the
-/// default (it moves fast within a session); the weekly window only takes over
-/// the single menu-bar line once it's effectively maxed, so a 7d-exhausted
-/// account can't hide behind a recovered 5h number.
-let sevenDayAtLimitPct: Double = 95
-
 /// severityNSColor maps utilization (0..100) to the bar/trend tint, one set of
 /// thresholds everywhere: green <60, amber <85, red ≥85. Softer than the
 /// full-saturation .systemGreen/.systemYellow/.systemRed (which read as garish),
