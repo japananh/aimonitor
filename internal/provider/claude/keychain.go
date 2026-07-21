@@ -230,6 +230,23 @@ func ReadActiveFresh(ctx context.Context) (provider.Credential, error) {
 	return k.readActive(ctx)
 }
 
+// InvalidateActiveCache drops any in-memory copy of Claude Code's live
+// credential slot so the next read re-shells to the OS keyring. The daemon
+// calls this before resolving the active account for its status snapshot: an
+// `aimonitor switch` runs in a SEPARATE process and rewrites the live slot
+// without touching THIS process's cache, so without the drop the daemon would
+// keep serving the pre-switch account for up to credCacheTTL (~5s). That lag is
+// what the menu-bar widget waits on before it clears "Switching…", so dropping
+// the cache each tick lets a cross-process switch surface on the next 2s poll
+// instead of after the full TTL.
+func InvalidateActiveCache() {
+	k, err := sharedOps()
+	if err != nil {
+		return
+	}
+	k.cache.invalidate(cacheKey(ClaudeCodeService, k.user))
+}
+
 // RetrieveStash reads the credential previously written under ref.
 // Returns secret.ErrNotFound when missing.
 func RetrieveStash(ctx context.Context, ref string) (provider.Credential, error) {

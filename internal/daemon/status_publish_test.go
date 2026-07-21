@@ -229,6 +229,63 @@ func TestResolveActiveAccount_ByteMatch(t *testing.T) {
 	}
 }
 
+// TestResolveActiveAccount_LiveSlotCacheInvalidation proves the switch-latency
+// fix for #92: `aimonitor switch` runs in a SEPARATE process and rewrites the
+// live keychain slot without invalidating the long-running daemon's in-memory
+// cache, so the daemon keeps resolving the pre-switch account until the cache
+// TTL (~5s) expires — the lag the widget shows as a slow "Switching…". Dropping
+// the live-slot cache (as resolveActiveLabel now does each tick) makes the new
+// active account surface immediately instead of after the TTL.
+func TestResolveActiveAccount_LiveSlotCacheInvalidation(t *testing.T) {
+	ring := secret.NewMemoryKeyring()
+	restore := claude.SetKeyringForTest(ring)
+	defer restore()
+
+	ctx := context.Background()
+	s := openStore(t)
+
+	// Two managed accounts, each stash byte-equal to its own live blob.
+	blobA := stashBlob("sk-a", "rt-a", time.Now().Add(time.Hour))
+	blobB := stashBlob("sk-b", "rt-b", time.Now().Add(time.Hour))
+	if _, err := s.CreateAccount(ctx, store.Account{Label: "aaa", KeyringRef: "ref-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateAccount(ctx, store.Account{Label: "bbb", KeyringRef: "ref-b"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = claude.StashCredential(ctx, "ref-a", provider.Credential{Bytes: blobA})
+	_ = claude.StashCredential(ctx, "ref-b", provider.Credential{Bytes: blobB})
+
+	p := claude.New()
+
+	// Live slot starts on A; the first resolve reads it through the keychain
+	// and caches the live blob.
+	if err := ring.Set(claude.ClaudeCodeService, claude.KeychainUserForTest, blobA); err != nil {
+		t.Fatal(err)
+	}
+	if got, found, err := ResolveActiveAccount(ctx, s, p, nil); err != nil || !found || got.Label != "aaa" {
+		t.Fatalf("initial resolve: got=%q found=%v err=%v, want aaa", got.Label, found, err)
+	}
+
+	// Simulate a switch by ANOTHER process: rewrite the live slot directly on
+	// the keyring, bypassing this process's write path (and its cache drop).
+	if err := ring.Set(claude.ClaudeCodeService, claude.KeychainUserForTest, blobB); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stale cache still serves A — this is the pre-fix behaviour the daemon saw.
+	if got, _, _ := ResolveActiveAccount(ctx, s, p, nil); got.Label != "aaa" {
+		t.Fatalf("expected stale cache to still resolve aaa, got %q", got.Label)
+	}
+
+	// resolveActiveLabel now drops the live-slot cache before resolving; do the
+	// same and the switched-in account surfaces at once, no TTL wait.
+	claude.InvalidateActiveCache()
+	if got, found, err := ResolveActiveAccount(ctx, s, p, nil); err != nil || !found || got.Label != "bbb" {
+		t.Fatalf("after invalidate: got=%q found=%v err=%v, want bbb", got.Label, found, err)
+	}
+}
+
 // TestResolveActiveAccount_IdentityFallback_NonEmptyLiveSlot: a NON-EMPTY live
 // blob byte-matches no stash (a rotated live token) — the byte-match phase
 // runs and misses, then claude.json's email matches an account by identity.
