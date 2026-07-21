@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -286,6 +287,136 @@ func (c *Client) slackThreadReplies(ctx context.Context, _ *mcp.CallToolRequest,
 		msgs = append(msgs, slimMsg(m, opts))
 	}
 	return textResult(map[string]any{"messages": msgs})
+}
+
+// --- get file content ---------------------------------------------------
+
+// slackFileMaxBytes caps how many bytes slack_get_file will pull down before
+// flagging truncation. 1 MiB is generous for the shared logs/snippets/configs
+// this tool targets while keeping a single response from blowing up.
+const slackFileMaxBytes = 1 << 20
+
+// slackFileInfo is the slice of Slack's files.info payload we surface.
+type slackFileInfo struct {
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Title              string `json:"title"`
+	Mimetype           string `json:"mimetype"`
+	Filetype           string `json:"filetype"`
+	Size               int    `json:"size"`
+	Lines              int    `json:"lines"`
+	URLPrivate         string `json:"url_private"`
+	URLPrivateDownload string `json:"url_private_download"`
+}
+
+// isTextMimetype reports whether a Slack file's mimetype is text-like enough to
+// return inline. Slack snippets and shared .txt/.log/.json/.yaml files arrive as
+// text/* or a handful of text-bearing application/* types; anything else is
+// treated as binary and gets metadata + a note instead of raw bytes.
+func isTextMimetype(m string) bool {
+	if strings.HasPrefix(m, "text/") {
+		return true
+	}
+	switch m {
+	case "application/json", "application/xml", "application/javascript",
+		"application/x-sh", "application/x-yaml", "application/yaml",
+		"application/toml", "application/x-ndjson", "application/x-httpd-php":
+		return true
+	}
+	return false
+}
+
+// sliceLines returns the 1-based [offset, offset+limit) line window of s. A
+// non-positive offset means "from the start"; a non-positive limit means "to
+// the end". ranged reports whether a window was actually applied. total is the
+// line count of s (a trailing newline does not count as an extra empty line).
+func sliceLines(s string, offset, limit int) (out string, total int, ranged bool) {
+	lines := strings.Split(s, "\n")
+	// A file ending in "\n" splits to a trailing "" — don't count it as a line.
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	total = len(lines)
+	if offset <= 0 && limit <= 0 {
+		return s, total, false
+	}
+	start := offset - 1
+	if start < 0 {
+		start = 0
+	}
+	if start > len(lines) {
+		start = len(lines)
+	}
+	end := len(lines)
+	if limit > 0 && start+limit < end {
+		end = start + limit
+	}
+	return strings.Join(lines[start:end], "\n"), total, true
+}
+
+type slackGetFileIn struct {
+	File   string `json:"file" jsonschema:"file ID (F…), taken from a message's files[].id (returned when a read tool is called with include_files)"`
+	Offset int    `json:"offset,omitempty" jsonschema:"1-based line to start returning from (default 1); pair with limit to page through a large file"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"max lines to return starting at offset (default: all, up to the ~1 MiB byte cap)"`
+}
+
+// slackGetFile resolves a file id server-side: files.info for metadata, then —
+// for text-like mimetypes — downloads url_private with the held token and
+// returns the full text (optionally a line window). Binary/non-text files get
+// metadata + a note, never raw bytes.
+func (c *Client) slackGetFile(ctx context.Context, _ *mcp.CallToolRequest, in slackGetFileIn) (*mcp.CallToolResult, any, error) {
+	if in.File == "" {
+		return nil, nil, fmt.Errorf("file is required")
+	}
+	var info struct {
+		slackEnvelope
+		File slackFileInfo `json:"file"`
+	}
+	if err := c.slackGET(ctx, "files.info", url.Values{"file": {in.File}}, &info); err != nil {
+		return nil, nil, err
+	}
+	f := info.File
+	out := map[string]any{
+		"id": f.ID, "name": f.Name, "title": f.Title,
+		"mimetype": f.Mimetype, "filetype": f.Filetype,
+		"size": f.Size, "lines": f.Lines,
+	}
+
+	// Non-text mimetype → metadata + a note, no bytes.
+	if !isTextMimetype(f.Mimetype) {
+		out["note"] = fmt.Sprintf("non-text file (mimetype %q); content not returned", f.Mimetype)
+		return textResult(out)
+	}
+
+	dl := f.URLPrivateDownload
+	if dl == "" {
+		dl = f.URLPrivate
+	}
+	if dl == "" {
+		out["note"] = "no download URL available for this file"
+		return textResult(out)
+	}
+
+	data, err := c.slackDownload(ctx, dl, slackFileMaxBytes+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(data) > slackFileMaxBytes {
+		data = data[:slackFileMaxBytes]
+		out["truncated"] = true // byte cap hit; content is cut short
+	}
+
+	content, total, ranged := sliceLines(string(data), in.Offset, in.Limit)
+	out["content"] = content
+	if ranged {
+		start := in.Offset
+		if start < 1 {
+			start = 1
+		}
+		out["offset"] = start
+		out["content_lines"] = total
+	}
+	return textResult(out)
 }
 
 // --- channels / users -------------------------------------------------

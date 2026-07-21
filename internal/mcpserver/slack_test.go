@@ -597,6 +597,185 @@ func TestSlackUploadFile_RequiresFilenameAndContent(t *testing.T) {
 	}
 }
 
+// slack_get_file resolves a file id: files.info for metadata, then downloads
+// url_private (with the workspace Bearer token) and returns the FULL text for a
+// text-like mimetype — not just Slack's short preview — plus name/mimetype/size.
+func TestSlackGetFile_TextFullContent(t *testing.T) {
+	const content = "line1\nline2\nline3\nline4\nline5\n"
+	var (
+		infoQuery    url.Values
+		downloadAuth string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/files.info":
+			infoQuery = r.URL.Query()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"file": map[string]any{
+					"id": "F1", "name": "app.log", "title": "App log",
+					"mimetype": "text/plain", "filetype": "text",
+					"size": len(content), "lines": 5,
+					"url_private_download": "http://" + r.Host + "/download",
+					"url_private":          "http://" + r.Host + "/private",
+				},
+			})
+		case "/download":
+			downloadAuth = r.Header.Get("Authorization")
+			_, _ = io.WriteString(w, content)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	res, _, err := c.slackGetFile(context.Background(), nil, slackGetFileIn{File: "F1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if infoQuery.Get("file") != "F1" {
+		t.Errorf("files.info file = %q, want F1", infoQuery.Get("file"))
+	}
+	if downloadAuth != "Bearer xoxp-tok" {
+		t.Errorf("download auth = %q, want the workspace bearer token", downloadAuth)
+	}
+	out := resultJSON(t, res)
+	for _, want := range []string{"app.log", "text/plain", "line1", "line5", `"lines": 5`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("get_file result missing %q in %s", want, out)
+		}
+	}
+}
+
+// slack_get_file honours offset/limit as a 1-based line window and reports the
+// window (offset + total content_lines) alongside the sliced content.
+func TestSlackGetFile_LineRange(t *testing.T) {
+	const content = "a\nb\nc\nd\ne\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/files.info":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"file": map[string]any{
+					"id": "F2", "name": "n.txt", "mimetype": "text/plain",
+					"url_private_download": "http://" + r.Host + "/download",
+				},
+			})
+		case "/download":
+			_, _ = io.WriteString(w, content)
+		}
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	res, _, err := c.slackGetFile(context.Background(), nil, slackGetFileIn{File: "F2", Offset: 2, Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := resultJSON(t, res)
+	if !strings.Contains(out, `"content": "b\nc"`) {
+		t.Errorf("expected lines 2-3 (b,c) in %s", out)
+	}
+	if !strings.Contains(out, `"offset": 2`) || !strings.Contains(out, `"content_lines": 5`) {
+		t.Errorf("expected offset/content_lines window metadata in %s", out)
+	}
+	if strings.Contains(out, `"d"`) || strings.Contains(out, `"e"`) {
+		t.Errorf("range must exclude lines past the limit: %s", out)
+	}
+}
+
+// slack_get_file returns metadata + a note (and NEVER downloads bytes) for a
+// binary / non-text mimetype.
+func TestSlackGetFile_BinaryReturnsNote(t *testing.T) {
+	var downloaded bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/files.info":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"file": map[string]any{
+					"id": "F3", "name": "photo.png", "mimetype": "image/png",
+					"size": 40000, "url_private_download": "http://" + r.Host + "/download",
+				},
+			})
+		case "/download":
+			downloaded = true
+		}
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	res, _, err := c.slackGetFile(context.Background(), nil, slackGetFileIn{File: "F3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if downloaded {
+		t.Error("must NOT download bytes for a non-text mimetype")
+	}
+	out := resultJSON(t, res)
+	if !strings.Contains(out, "photo.png") || !strings.Contains(out, "note") || !strings.Contains(out, "image/png") {
+		t.Errorf("binary result must carry metadata + a note: %s", out)
+	}
+	if strings.Contains(out, `"content"`) {
+		t.Errorf("binary result must not carry a content field: %s", out)
+	}
+}
+
+// slack_get_file requires a file id before any network call.
+func TestSlackGetFile_RequiresFileID(t *testing.T) {
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+	if _, _, err := c.slackGetFile(context.Background(), nil, slackGetFileIn{}); err == nil {
+		t.Error("missing file id must error")
+	}
+}
+
+// sliceLines is 1-based, treats a trailing newline as not-a-line, and clamps an
+// out-of-range offset instead of panicking.
+func TestSliceLines(t *testing.T) {
+	// No range → whole string, correct total (trailing "\n" not counted).
+	if out, total, ranged := sliceLines("a\nb\nc\n", 0, 0); out != "a\nb\nc\n" || total != 3 || ranged {
+		t.Errorf("no-range = (%q,%d,%v), want (whole,3,false)", out, total, ranged)
+	}
+	// Window in the middle.
+	if out, _, ranged := sliceLines("a\nb\nc\nd", 2, 2); out != "b\nc" || !ranged {
+		t.Errorf("window = (%q,%v), want (\"b\\nc\",true)", out, ranged)
+	}
+	// Offset past the end → empty window, no panic.
+	if out, _, ranged := sliceLines("a\nb", 99, 5); out != "" || !ranged {
+		t.Errorf("past-end = (%q,%v), want (\"\",true)", out, ranged)
+	}
+}
+
+// isTextMimetype accepts text/* and a handful of text-bearing application/*
+// types, and rejects binary ones.
+func TestIsTextMimetype(t *testing.T) {
+	for _, m := range []string{"text/plain", "text/csv", "application/json", "application/x-yaml"} {
+		if !isTextMimetype(m) {
+			t.Errorf("%q should be text-like", m)
+		}
+	}
+	for _, m := range []string{"image/png", "application/pdf", "application/octet-stream", ""} {
+		if isTextMimetype(m) {
+			t.Errorf("%q should NOT be text-like", m)
+		}
+	}
+}
+
 // A Slack missing_scope error on a read tool surfaces the actionable scope
 // message (the envelope check path, exercised through a real tool call).
 func TestSlackMissingScope_SurfacedThroughTool(t *testing.T) {

@@ -538,7 +538,7 @@ struct PreferencesView: View {
                 "1. Open api.slack.com/apps and create an app (or open an existing one).\n2. OAuth & Permissions → add the User Token Scopes (see Setup guide), then “Install to Workspace”.\n3. Copy the User OAuth Token and paste it below.",
                 "Open Slack API",
                 URL(string: "https://api.slack.com/apps")!,
-                "Required User Token Scopes: search:read, users:read, channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, chat:write, files:write"
+                "Required User Token Scopes: search:read, users:read, channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, chat:write, files:read, files:write"
             )
         }
         return (
