@@ -148,8 +148,8 @@ func TestMCPStatus_NotConnected_JSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("status --json is not valid JSON: %v\n%s", err, out)
 	}
-	if len(doc.Services) != 2 {
-		t.Errorf("expected slack + clickup in services, got %+v", doc.Services)
+	if len(doc.Services) != 3 {
+		t.Errorf("expected slack + clickup + sentry in services, got %+v", doc.Services)
 	}
 	for _, s := range doc.Services {
 		if s.Connected {

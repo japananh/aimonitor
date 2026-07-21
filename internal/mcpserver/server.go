@@ -215,6 +215,48 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUploadAttachmentIn, any] {
 				return c.clickupUploadAttachment
 			})},
+
+		// Sentry
+		{name: "sentry_list_projects", svc: ServiceSentry,
+			desc: "List Sentry projects in the organization (use it to resolve a project slug to the numeric id the issues API wants)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryListProjectsIn, any] {
+				return c.sentryListProjects
+			})},
+		{name: "sentry_search_issues", svc: ServiceSentry,
+			desc: "Search Sentry issues for a triage digest — each row has shortId, title, culprit, event count, users affected, first/last seen, level, status, permalink. Supports queries like 'is:unresolved firstSeen:-24h', a project filter (slug or id), statsPeriod, and sort by freq/date/new/user",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentrySearchIssuesIn, any] {
+				return c.sentrySearchIssues
+			})},
+		{name: "sentry_get_issue", svc: ServiceSentry,
+			desc: "Get one Sentry issue's detail by numeric id or shortId (e.g. PRICING-SERVICE-9V)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryGetIssueIn, any] {
+				return c.sentryGetIssue
+			})},
+		{name: "sentry_get_latest_event", svc: ServiceSentry,
+			desc: "Get a Sentry issue's latest event for root-causing — exception type/value + stacktrace frames (filename/function/line) and event tags. By numeric id or shortId",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryGetLatestEventIn, any] {
+				return c.sentryGetLatestEvent
+			})},
+		{name: "sentry_issue_tags", svc: ServiceSentry,
+			desc: "Tag value distribution for a Sentry issue — pass key (e.g. shop.id, environment, user) for per-value counts ('how many X affected / confirm scope'), or omit to list all tag keys",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryIssueTagsIn, any] {
+				return c.sentryIssueTags
+			})},
+		{name: "sentry_update_issue", svc: ServiceSentry, write: true,
+			desc: "Update a Sentry issue: set status (resolved/unresolved/ignored) and/or assign it (assigned_to = email, user:<id>, or team:<id>)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryUpdateIssueIn, any] {
+				return c.sentryUpdateIssue
+			})},
+		{name: "sentry_add_comment", svc: ServiceSentry, write: true,
+			desc: "Add a comment to a Sentry issue",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryAddCommentIn, any] {
+				return c.sentryAddComment
+			})},
+		{name: "sentry_delete_comment", svc: ServiceSentry, write: true,
+			desc: "Delete a comment from a Sentry issue by its comment_id (from sentry_add_comment). Needs an event:admin-scoped token (Issue & Event = Admin); add/update/resolve only need Write",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[sentryDeleteCommentIn, any] {
+				return c.sentryDeleteComment
+			})},
 	}
 }
 
@@ -241,12 +283,14 @@ func connected(creds *CredStore) map[Service]bool {
 func BuildServer(cfg Config, creds *CredStore) (*mcp.Server, []string) {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:       "aimonitor",
-		Title:      "AIMonitor — Slack & ClickUp tools",
+		Title:      "AIMonitor — Slack, ClickUp & Sentry tools",
 		Version:    version.Version,
 		WebsiteURL: "https://github.com/japananh/aimonitor",
 	}, nil)
 
 	client := NewClient(creds)
+	client.SentryOrg = cfg.SentryOrg
+	client.SentryAPIBase = cfg.SentryBaseURL
 	conn := connected(creds)
 	var registered []string
 	for _, t := range catalog() {

@@ -24,10 +24,11 @@ type Service string
 const (
 	ServiceSlack   Service = "slack"
 	ServiceClickUp Service = "clickup"
+	ServiceSentry  Service = "sentry"
 )
 
 // Services lists every supported integration, in display order.
-var Services = []Service{ServiceSlack, ServiceClickUp}
+var Services = []Service{ServiceSlack, ServiceClickUp, ServiceSentry}
 
 // ParseService validates a user-supplied service name.
 func ParseService(s string) (Service, error) {
@@ -36,8 +37,10 @@ func ParseService(s string) (Service, error) {
 		return ServiceSlack, nil
 	case "clickup":
 		return ServiceClickUp, nil
+	case "sentry":
+		return ServiceSentry, nil
 	default:
-		return "", fmt.Errorf("unknown service %q (want slack or clickup)", s)
+		return "", fmt.Errorf("unknown service %q (want slack, clickup, or sentry)", s)
 	}
 }
 
