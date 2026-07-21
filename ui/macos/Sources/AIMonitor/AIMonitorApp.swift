@@ -316,18 +316,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // "0%", while a never-fetched account shows "–". (The daemon
         // publishes five_hour_pct without omitempty so 0 survives the JSON.)
         //
-        // Default to the 5h window — the fast-moving one you watch during a
-        // session. Switch to 7d ONLY once the weekly window has hit its limit
-        // (≥ sevenDayAtLimitPct): otherwise a 7d-maxed account whose 5h has
-        // since reset would read as a healthy "5h | 15%" and hide that it's
-        // out of tokens. The shown number is tinted by the shared severity
-        // scale (amber ≥60, red ≥85), so a maxed window is unmistakable.
+        // Show whichever window is CLOSER to its limit — the binding
+        // constraint, and the one that actually drives the auto-swap warning
+        // (auto-swap arms when either window crosses its threshold). A fixed 5h
+        // until 7d hit 95% meant the 80–95% 7d band fired a switch warning while
+        // the menu bar still showed a low, unchanged 5h number (#91). The shown
+        // number is tinted by the shared severity scale (amber ≥60, red ≥85),
+        // so a maxed window is unmistakable; the tooltip always lists both.
         let bottom: String
         var bottomColor = NSColor.labelColor
         if model.status?.limits_fetched_at != nil,
            let pct5 = model.status?.five_hour_pct,
            let pct7 = model.status?.seven_day_pct {
-            if pct7 >= sevenDayAtLimitPct {
+            if pct7 >= pct5 {
                 bottom = "7d | " + String(format: "%.0f%%", pct7)
                 bottomColor = severityNSColor(for: pct7)
             } else {
