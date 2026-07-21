@@ -557,31 +557,62 @@ func (c *Client) clickupAddComment(ctx context.Context, _ *mcp.CallToolRequest, 
 	return textResult(map[string]any{"comment_id": out.ID, "status": "posted"})
 }
 
+// cuComment is the slimmed comment/reply shape. reply_count > 0 means the
+// comment has threaded replies — fetch them with clickup_list_comment_replies
+// (ClickUp's /task/{id}/comment returns only top-level comments, not replies).
+type cuComment struct {
+	ID         string `json:"id"`
+	Text       string `json:"text"`
+	By         string `json:"by"`
+	Date       string `json:"date"`
+	ReplyCount int    `json:"reply_count,omitempty"`
+}
+
+type rawCUComment struct {
+	ID          string `json:"id"`
+	CommentText string `json:"comment_text"`
+	User        struct {
+		Username string `json:"username"`
+	} `json:"user"`
+	Date       string `json:"date"`
+	ReplyCount int    `json:"reply_count"`
+}
+
+func slimComment(cm rawCUComment) cuComment {
+	return cuComment{ID: cm.ID, Text: cm.CommentText, By: cm.User.Username, Date: cm.Date, ReplyCount: cm.ReplyCount}
+}
+
 func (c *Client) clickupListComments(ctx context.Context, _ *mcp.CallToolRequest, in cuTaskIn) (*mcp.CallToolResult, any, error) {
 	var out struct {
-		Comments []struct {
-			ID          string `json:"id"`
-			CommentText string `json:"comment_text"`
-			User        struct {
-				Username string `json:"username"`
-			} `json:"user"`
-			Date string `json:"date"`
-		} `json:"comments"`
+		Comments []rawCUComment `json:"comments"`
 	}
 	if err := c.clickup(ctx, http.MethodGet, "/task/"+url.PathEscape(in.TaskID)+"/comment", nil, nil, &out); err != nil {
 		return nil, nil, err
 	}
-	type comment struct {
-		ID   string `json:"id"`
-		Text string `json:"text"`
-		By   string `json:"by"`
-		Date string `json:"date"`
-	}
-	comments := make([]comment, 0, len(out.Comments))
+	comments := make([]cuComment, 0, len(out.Comments))
 	for _, cm := range out.Comments {
-		comments = append(comments, comment{ID: cm.ID, Text: cm.CommentText, By: cm.User.Username, Date: cm.Date})
+		comments = append(comments, slimComment(cm))
 	}
 	return textResult(map[string]any{"comments": comments})
+}
+
+// cuCommentRepliesIn identifies a parent comment whose threaded replies to list.
+type cuCommentRepliesIn struct {
+	CommentID string `json:"comment_id" jsonschema:"parent comment ID (from clickup_list_comments; fetch when its reply_count > 0)"`
+}
+
+func (c *Client) clickupListCommentReplies(ctx context.Context, _ *mcp.CallToolRequest, in cuCommentRepliesIn) (*mcp.CallToolResult, any, error) {
+	var out struct {
+		Comments []rawCUComment `json:"comments"`
+	}
+	if err := c.clickup(ctx, http.MethodGet, "/comment/"+url.PathEscape(in.CommentID)+"/reply", nil, nil, &out); err != nil {
+		return nil, nil, err
+	}
+	replies := make([]cuComment, 0, len(out.Comments))
+	for _, cm := range out.Comments {
+		replies = append(replies, slimComment(cm))
+	}
+	return textResult(map[string]any{"comment_id": in.CommentID, "replies": replies})
 }
 
 type cuDeleteCommentIn struct {
