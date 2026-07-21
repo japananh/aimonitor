@@ -83,6 +83,11 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackRepliesIn, any] {
 				return c.slackThreadReplies
 			})},
+		{name: "slack_get_file", svc: ServiceSlack,
+			desc: "Read the full content of a Slack file attachment by its files[].id (the read tools only expose Slack's short, truncated preview). Fetches server-side with the workspace token; returns full text + metadata (name, mimetype, size, lines) for text-like files, with optional offset/limit line paging and a ~1 MiB cap. Binary/non-text files return metadata + a note",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackGetFileIn, any] {
+				return c.slackGetFile
+			})},
 		{name: "slack_list_channels", svc: ServiceSlack,
 			desc: "List Slack channels (public + private by default)",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackListChannelsIn, any] {

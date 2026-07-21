@@ -121,7 +121,7 @@ aimonitor mcp register          # 把伺服器加入 Claude Code
 - **安全：** Claude Code 自身的逐工具授權提示是審批層；再加上各服務的 Enabled / Read-only 開關與逐工具停用清單。token 會先即時驗證，再存入系統鑰匙圈 —— 不進 SQLite 或日誌。
 
 > **Slack token scopes。** Slack token 是 **使用者** token（`xoxp-…`）。請在你的 Slack app（api.slack.com → OAuth & Permissions）授予下列 **User Token Scopes**，重新安裝後再連線 —— 若缺少其中任一個，會在受影響的工具上以 `slack: missing scope "…"` 的形式出現：
-> `search:read`、`users:read`、`channels:history`、`groups:history`、`im:history`、`mpim:history`、`channels:read`、`groups:read`、`im:read`、`mpim:read`、`chat:write`、`files:write`。
+> `search:read`、`users:read`、`channels:history`、`groups:history`、`im:history`、`mpim:history`、`channels:read`、`groups:read`、`im:read`、`mpim:read`、`chat:write`、`files:read`、`files:write`。
 
 ## 隱私與安全
 
