@@ -232,6 +232,14 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 func resolveActiveLabel(s *Server) func(ctx context.Context) string {
 	cc, _ := claudeconfig.New() // nil when home is unresolvable → byte-match only
 	return func(ctx context.Context) string {
+		// Drop the cached live-slot blob before resolving. A `switch` performed
+		// by a separate `aimonitor` process rewrites the live slot without
+		// invalidating THIS daemon's cache, so a cached read would keep
+		// resolving the pre-switch account for up to the cache TTL (~5s) — the
+		// lag the widget shows as a slow "Switching…". Invalidating here makes
+		// a cross-process switch visible on the next 2s publish tick. Only the
+		// live slot is dropped; the multi-account stash sweep keeps its cache. (#92)
+		claude.InvalidateActiveCache()
 		acct, found, err := ResolveActiveAccount(ctx, s.store, s.provider, cc)
 		if err != nil || !found {
 			return ""
