@@ -557,6 +557,41 @@ func (c *Client) clickupUpdateTask(ctx context.Context, _ *mcp.CallToolRequest, 
 	return textResult(map[string]any{"updated": slimTask(out)})
 }
 
+type cuDeleteTaskIn struct {
+	TaskIDs []string `json:"task_ids" jsonschema:"task IDs to delete (each moved to the Trash, recoverable); pass a single-element list to delete one task"`
+}
+
+// cuDeleteFailure records one task that couldn't be deleted, so the caller can
+// retry just the failures rather than resend the whole batch.
+type cuDeleteFailure struct {
+	TaskID string `json:"task_id"`
+	Error  string `json:"error"`
+}
+
+// clickupDeleteTask deletes each task via DELETE /task/{id}. ClickUp has no bulk
+// endpoint, so it loops; one failed delete is recorded and the rest continue,
+// and the result reports deleted vs failed ids. Deleted tasks go to the Trash
+// (recoverable), not a hard delete.
+func (c *Client) clickupDeleteTask(ctx context.Context, _ *mcp.CallToolRequest, in cuDeleteTaskIn) (*mcp.CallToolResult, any, error) {
+	if len(in.TaskIDs) == 0 {
+		return nil, nil, fmt.Errorf("task_ids is required (at least one task ID)")
+	}
+	deleted := make([]string, 0, len(in.TaskIDs))
+	failed := make([]cuDeleteFailure, 0)
+	for _, id := range in.TaskIDs {
+		if id == "" {
+			failed = append(failed, cuDeleteFailure{TaskID: id, Error: "empty task_id"})
+			continue
+		}
+		if err := c.clickup(ctx, http.MethodDelete, "/task/"+url.PathEscape(id), nil, nil, nil); err != nil {
+			failed = append(failed, cuDeleteFailure{TaskID: id, Error: err.Error()})
+			continue
+		}
+		deleted = append(deleted, id)
+	}
+	return textResult(map[string]any{"deleted": deleted, "failed": failed})
+}
+
 type cuTagIn struct {
 	TaskID string `json:"task_id" jsonschema:"task to tag"`
 	Tag    string `json:"tag" jsonschema:"tag name (must already exist in the Space; create it in the ClickUp UI first)"`

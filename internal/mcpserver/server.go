@@ -160,6 +160,11 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUpdateTaskIn, any] {
 				return c.clickupUpdateTask
 			})},
+		{name: "clickup_delete_task", svc: ServiceClickUp, write: true,
+			desc: "Delete one or more ClickUp tasks by ID (task_ids); each is moved to the Trash (recoverable). Returns which ids were deleted and which failed (with the error), so failures can be retried",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuDeleteTaskIn, any] {
+				return c.clickupDeleteTask
+			})},
 		{name: "clickup_add_tag", svc: ServiceClickUp, write: true,
 			desc: "Add an existing Space tag to a ClickUp task (the tag must already exist). Use this to (re)tag a task after creation, since clickup_update_task can't change tags",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuTagIn, any] {
