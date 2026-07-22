@@ -438,13 +438,27 @@ type cuCreateTaskIn struct {
 	CustomItemID *int     `json:"custom_item_id,omitempty" jsonschema:"work-item type ID (e.g. ClickUp's Bug type); resolve names to IDs with clickup_list_custom_item_types. Omit for the default Task type"`
 }
 
+// setMarkdownDescription writes a markdown description onto a create/update body
+// under both markdown fields. ClickUp's older markdown_description does not emit
+// link marks — it drops [label](url) (keeping only the label) and leaves bare
+// URLs as plain text (#102). Its newer markdown_content parses markdown into real
+// rich-text link marks (and auto-linkifies bare URLs). We send both: where
+// ClickUp honours markdown_content it renders clickable links, and
+// markdown_description stays as a no-regression fallback if it doesn't. Verified
+// only at the request-body level here; the rendering itself is ClickUp's
+// documented markdown_content behaviour, not checked against a live workspace.
+func setMarkdownDescription(body map[string]any, desc string) {
+	body["markdown_content"] = desc
+	body["markdown_description"] = desc
+}
+
 // createTaskBody maps the create-task input onto ClickUp's POST /list/{id}/task
 // body. custom_item_id is sent whenever provided (including 0, a valid type ID),
 // which is why it's a pointer rather than guarded on != 0.
 func createTaskBody(in cuCreateTaskIn) map[string]any {
 	body := map[string]any{"name": in.Name}
 	if in.Description != "" {
-		body["markdown_description"] = in.Description
+		setMarkdownDescription(body, in.Description)
 	}
 	if in.Status != "" {
 		body["status"] = in.Status
@@ -501,7 +515,7 @@ func updateTaskBody(in cuUpdateTaskIn) (map[string]any, error) {
 		body["name"] = in.Name
 	}
 	if in.Description != "" {
-		body["markdown_description"] = in.Description
+		setMarkdownDescription(body, in.Description)
 	}
 	if in.Status != "" {
 		body["status"] = in.Status
