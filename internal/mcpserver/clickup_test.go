@@ -178,3 +178,93 @@ func TestCommentBody_RichTextWinsAndIsVerbatim(t *testing.T) {
 		}
 	}
 }
+
+// createTaskBody must map custom_item_id onto the ClickUp body, and send it even
+// when the type ID is 0 (a valid work-item type id) — the field is a pointer so
+// "set to 0" is distinct from "omitted".
+func TestCreateTaskBody_CustomItemID(t *testing.T) {
+	zero := 0
+	bug := 1300
+	cases := []struct {
+		name string
+		in   cuCreateTaskIn
+		want any // nil means the key must be absent
+	}{
+		{"omitted", cuCreateTaskIn{Name: "T"}, nil},
+		{"zero is sent", cuCreateTaskIn{Name: "T", CustomItemID: &zero}, 0},
+		{"bug type", cuCreateTaskIn{Name: "T", CustomItemID: &bug}, 1300},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := createTaskBody(tc.in)
+			got, ok := b["custom_item_id"]
+			if tc.want == nil {
+				if ok {
+					t.Errorf("custom_item_id must be absent, got %v", got)
+				}
+				return
+			}
+			if !ok || got != tc.want {
+				t.Errorf("custom_item_id = %v (present=%v), want %v", got, ok, tc.want)
+			}
+		})
+	}
+}
+
+// updateTaskBody must map add/remove assignees onto ClickUp's
+// {"assignees":{"add":[…],"rem":[…]}} shape, include only the side that's set,
+// and carry custom_item_id through.
+func TestUpdateTaskBody_AssigneesAndType(t *testing.T) {
+	bug := 1300
+	in := cuUpdateTaskIn{
+		TaskID:          "abc",
+		AddAssignees:    []int{11, 22},
+		RemoveAssignees: []int{33},
+		CustomItemID:    &bug,
+	}
+	b, err := updateTaskBody(in)
+	if err != nil {
+		t.Fatalf("updateTaskBody: %v", err)
+	}
+	a, ok := b["assignees"].(map[string]any)
+	if !ok {
+		t.Fatalf("assignees must be a map, got %T", b["assignees"])
+	}
+	add, _ := a["add"].([]int)
+	rem, _ := a["rem"].([]int)
+	if len(add) != 2 || add[0] != 11 || add[1] != 22 {
+		t.Errorf("assignees.add = %v, want [11 22]", add)
+	}
+	if len(rem) != 1 || rem[0] != 33 {
+		t.Errorf("assignees.rem = %v, want [33]", rem)
+	}
+	if b["custom_item_id"] != 1300 {
+		t.Errorf("custom_item_id = %v, want 1300", b["custom_item_id"])
+	}
+}
+
+// Only the assignee side that's provided is sent; the missing side is absent
+// (not an empty array, which ClickUp would read as "remove all").
+func TestUpdateTaskBody_AssigneesOneSided(t *testing.T) {
+	b, err := updateTaskBody(cuUpdateTaskIn{TaskID: "abc", AddAssignees: []int{7}})
+	if err != nil {
+		t.Fatalf("updateTaskBody: %v", err)
+	}
+	a, ok := b["assignees"].(map[string]any)
+	if !ok {
+		t.Fatalf("assignees must be a map, got %T", b["assignees"])
+	}
+	if _, ok := a["rem"]; ok {
+		t.Errorf("assignees.rem must be absent when no removals given, got %v", a["rem"])
+	}
+	if add, _ := a["add"].([]int); len(add) != 1 || add[0] != 7 {
+		t.Errorf("assignees.add = %v, want [7]", a["add"])
+	}
+}
+
+// With no fields set, updateTaskBody must refuse rather than send an empty PUT.
+func TestUpdateTaskBody_RejectsEmpty(t *testing.T) {
+	if _, err := updateTaskBody(cuUpdateTaskIn{TaskID: "abc"}); err == nil {
+		t.Errorf("expected an error for an update with no fields")
+	}
+}
