@@ -426,18 +426,22 @@ func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in 
 }
 
 type cuCreateTaskIn struct {
-	ListID      string   `json:"list_id" jsonschema:"list to create the task in"`
-	Name        string   `json:"name" jsonschema:"task name"`
-	Description string   `json:"description,omitempty" jsonschema:"task description (markdown)"`
-	Status      string   `json:"status,omitempty" jsonschema:"initial status"`
-	Priority    int      `json:"priority,omitempty" jsonschema:"priority level: 1 urgent, 2 high, 3 normal, 4 low"`
-	Assignees   []int    `json:"assignees,omitempty" jsonschema:"assignee user IDs"`
-	DueDate     int64    `json:"due_date,omitempty" jsonschema:"due date as unix ms timestamp"`
-	Tags        []string `json:"tags,omitempty" jsonschema:"tag names"`
-	Parent      string   `json:"parent,omitempty" jsonschema:"parent task ID (creates a subtask)"`
+	ListID       string   `json:"list_id" jsonschema:"list to create the task in"`
+	Name         string   `json:"name" jsonschema:"task name"`
+	Description  string   `json:"description,omitempty" jsonschema:"task description (markdown)"`
+	Status       string   `json:"status,omitempty" jsonschema:"initial status"`
+	Priority     int      `json:"priority,omitempty" jsonschema:"priority level: 1 urgent, 2 high, 3 normal, 4 low"`
+	Assignees    []int    `json:"assignees,omitempty" jsonschema:"assignee user IDs"`
+	DueDate      int64    `json:"due_date,omitempty" jsonschema:"due date as unix ms timestamp"`
+	Tags         []string `json:"tags,omitempty" jsonschema:"tag names"`
+	Parent       string   `json:"parent,omitempty" jsonschema:"parent task ID (creates a subtask)"`
+	CustomItemID *int     `json:"custom_item_id,omitempty" jsonschema:"work-item type ID (e.g. ClickUp's Bug type); resolve names to IDs with clickup_list_custom_item_types. Omit for the default Task type"`
 }
 
-func (c *Client) clickupCreateTask(ctx context.Context, _ *mcp.CallToolRequest, in cuCreateTaskIn) (*mcp.CallToolResult, any, error) {
+// createTaskBody maps the create-task input onto ClickUp's POST /list/{id}/task
+// body. custom_item_id is sent whenever provided (including 0, a valid type ID),
+// which is why it's a pointer rather than guarded on != 0.
+func createTaskBody(in cuCreateTaskIn) map[string]any {
 	body := map[string]any{"name": in.Name}
 	if in.Description != "" {
 		body["markdown_description"] = in.Description
@@ -460,6 +464,14 @@ func (c *Client) clickupCreateTask(ctx context.Context, _ *mcp.CallToolRequest, 
 	if in.Parent != "" {
 		body["parent"] = in.Parent
 	}
+	if in.CustomItemID != nil {
+		body["custom_item_id"] = *in.CustomItemID
+	}
+	return body
+}
+
+func (c *Client) clickupCreateTask(ctx context.Context, _ *mcp.CallToolRequest, in cuCreateTaskIn) (*mcp.CallToolResult, any, error) {
+	body := createTaskBody(in)
 	var out rawCUTask
 	if err := c.clickup(ctx, http.MethodPost, "/list/"+url.PathEscape(in.ListID)+"/task", nil, body, &out); err != nil {
 		return nil, nil, err
@@ -468,15 +480,22 @@ func (c *Client) clickupCreateTask(ctx context.Context, _ *mcp.CallToolRequest, 
 }
 
 type cuUpdateTaskIn struct {
-	TaskID      string `json:"task_id" jsonschema:"task to update"`
-	Name        string `json:"name,omitempty" jsonschema:"new name"`
-	Description string `json:"description,omitempty" jsonschema:"new description (markdown)"`
-	Status      string `json:"status,omitempty" jsonschema:"new status"`
-	Priority    int    `json:"priority,omitempty" jsonschema:"priority level: 1 urgent, 2 high, 3 normal, 4 low"`
-	DueDate     int64  `json:"due_date,omitempty" jsonschema:"new due date as unix ms timestamp"`
+	TaskID          string `json:"task_id" jsonschema:"task to update"`
+	Name            string `json:"name,omitempty" jsonschema:"new name"`
+	Description     string `json:"description,omitempty" jsonschema:"new description (markdown)"`
+	Status          string `json:"status,omitempty" jsonschema:"new status"`
+	Priority        int    `json:"priority,omitempty" jsonschema:"priority level: 1 urgent, 2 high, 3 normal, 4 low"`
+	DueDate         int64  `json:"due_date,omitempty" jsonschema:"new due date as unix ms timestamp"`
+	AddAssignees    []int  `json:"add_assignees,omitempty" jsonschema:"user IDs to assign to the task (resolve with clickup_list_members)"`
+	RemoveAssignees []int  `json:"remove_assignees,omitempty" jsonschema:"user IDs to unassign from the task"`
+	CustomItemID    *int   `json:"custom_item_id,omitempty" jsonschema:"work-item type ID (e.g. ClickUp's Bug type); resolve names to IDs with clickup_list_custom_item_types"`
 }
 
-func (c *Client) clickupUpdateTask(ctx context.Context, _ *mcp.CallToolRequest, in cuUpdateTaskIn) (*mcp.CallToolResult, any, error) {
+// updateTaskBody maps the update-task input onto ClickUp's PUT /task/{id} body.
+// Assignees ride on the ClickUp add/remove shape ({"assignees":{"add":[…],
+// "rem":[…]}}), unlike create-task's plain array. custom_item_id is a pointer so
+// 0 (a valid type ID) can be sent explicitly and an absent field stays omitted.
+func updateTaskBody(in cuUpdateTaskIn) (map[string]any, error) {
 	body := map[string]any{}
 	if in.Name != "" {
 		body["name"] = in.Name
@@ -493,14 +512,56 @@ func (c *Client) clickupUpdateTask(ctx context.Context, _ *mcp.CallToolRequest, 
 	if in.DueDate != 0 {
 		body["due_date"] = in.DueDate
 	}
+	if in.CustomItemID != nil {
+		body["custom_item_id"] = *in.CustomItemID
+	}
+	if len(in.AddAssignees) > 0 || len(in.RemoveAssignees) > 0 {
+		a := map[string]any{}
+		if len(in.AddAssignees) > 0 {
+			a["add"] = in.AddAssignees
+		}
+		if len(in.RemoveAssignees) > 0 {
+			a["rem"] = in.RemoveAssignees
+		}
+		body["assignees"] = a
+	}
 	if len(body) == 0 {
-		return nil, nil, fmt.Errorf("nothing to update — provide at least one field")
+		return nil, fmt.Errorf("nothing to update — provide at least one field")
+	}
+	return body, nil
+}
+
+func (c *Client) clickupUpdateTask(ctx context.Context, _ *mcp.CallToolRequest, in cuUpdateTaskIn) (*mcp.CallToolResult, any, error) {
+	body, err := updateTaskBody(in)
+	if err != nil {
+		return nil, nil, err
 	}
 	var out rawCUTask
 	if err := c.clickup(ctx, http.MethodPut, "/task/"+url.PathEscape(in.TaskID), nil, body, &out); err != nil {
 		return nil, nil, err
 	}
 	return textResult(map[string]any{"updated": slimTask(out)})
+}
+
+// cuCustomItemType is the slimmed work-item type shape. id is what
+// clickup_create_task / clickup_update_task want for custom_item_id; the default
+// Task type (custom_item_id null/omitted) is not returned by this endpoint.
+type cuCustomItemType struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+func (c *Client) clickupListCustomItemTypes(ctx context.Context, _ *mcp.CallToolRequest, in cuWorkspaceIn) (*mcp.CallToolResult, any, error) {
+	var out struct {
+		CustomItems []cuCustomItemType `json:"custom_items"`
+	}
+	if err := c.clickup(ctx, http.MethodGet, "/team/"+url.PathEscape(in.WorkspaceID)+"/custom_item", nil, nil, &out); err != nil {
+		return nil, nil, err
+	}
+	// Stable empty slice, never nil — a nil slice marshals to JSON null.
+	types := make([]cuCustomItemType, 0, len(out.CustomItems))
+	types = append(types, out.CustomItems...)
+	return textResult(map[string]any{"custom_item_types": types})
 }
 
 // --- comments -----------------------------------------------------------

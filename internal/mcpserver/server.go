@@ -151,14 +151,19 @@ func catalog() []toolDef {
 				return c.clickupGetTask
 			})},
 		{name: "clickup_create_task", svc: ServiceClickUp, write: true,
-			desc: "Create a ClickUp task (or subtask via parent)",
+			desc: "Create a ClickUp task (or subtask via parent); set custom_item_id for a work-item type like Bug",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuCreateTaskIn, any] {
 				return c.clickupCreateTask
 			})},
 		{name: "clickup_update_task", svc: ServiceClickUp, write: true,
-			desc: "Update a ClickUp task's name, description, status, priority, or due date",
+			desc: "Update a ClickUp task's name, description, status, priority, due date, assignees (add/remove), or work-item type (custom_item_id)",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUpdateTaskIn, any] {
 				return c.clickupUpdateTask
+			})},
+		{name: "clickup_list_custom_item_types", svc: ServiceClickUp,
+			desc: "List a ClickUp workspace's custom work-item types (id + name, e.g. Bug) to resolve a name to the custom_item_id used by clickup_create_task / clickup_update_task",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuWorkspaceIn, any] {
+				return c.clickupListCustomItemTypes
 			})},
 		{name: "clickup_add_comment", svc: ServiceClickUp, write: true,
 			desc: "Add a comment to a ClickUp task",
