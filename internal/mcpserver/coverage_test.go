@@ -490,6 +490,72 @@ func TestClickUpDeleteComment(t *testing.T) {
 	}
 }
 
+// delete_task DELETEs /task/{id} for a single-element batch and reports it deleted.
+func TestClickUpDeleteTask(t *testing.T) {
+	var gotMethod, gotPath string
+	c := cuClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	})
+	res, _, err := c.clickupDeleteTask(context.Background(), nil, cuDeleteTaskIn{TaskIDs: []string{"T1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/task/T1" {
+		t.Errorf("method/path = %s %s, want DELETE /task/T1", gotMethod, gotPath)
+	}
+	if out := resultJSON(t, res); !strings.Contains(out, `"deleted"`) || !strings.Contains(out, "T1") {
+		t.Errorf("result missing deleted/T1: %s", out)
+	}
+}
+
+// delete_task rejects an empty task_ids list before hitting the network.
+func TestClickUpDeleteTaskRequiresID(t *testing.T) {
+	c := cuClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("server must not be called when task_ids is empty")
+	})
+	if _, _, err := c.clickupDeleteTask(context.Background(), nil, cuDeleteTaskIn{}); err == nil {
+		t.Error("want error for empty task_ids, got nil")
+	}
+}
+
+// delete_task deletes a batch, continues past a mid-batch failure, and reports
+// deleted vs failed ids so the caller can retry just the failures.
+func TestClickUpDeleteTaskBatchPartialFailure(t *testing.T) {
+	var attempted []string
+	c := cuClient(t, func(w http.ResponseWriter, r *http.Request) {
+		attempted = append(attempted, r.URL.Path)
+		if r.URL.Path == "/task/B" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	res, _, err := c.clickupDeleteTask(context.Background(), nil, cuDeleteTaskIn{TaskIDs: []string{"A", "B", "C"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempted) != 3 {
+		t.Errorf("attempted %d deletes, want all 3: %v", len(attempted), attempted)
+	}
+	var got struct {
+		Deleted []string `json:"deleted"`
+		Failed  []struct {
+			TaskID string `json:"task_id"`
+			Error  string `json:"error"`
+		} `json:"failed"`
+	}
+	if err := json.Unmarshal([]byte(resultJSON(t, res)), &got); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if len(got.Deleted) != 2 || got.Deleted[0] != "A" || got.Deleted[1] != "C" {
+		t.Errorf("deleted = %v, want [A C]", got.Deleted)
+	}
+	if len(got.Failed) != 1 || got.Failed[0].TaskID != "B" || got.Failed[0].Error == "" {
+		t.Errorf("failed = %+v, want one entry for B with a non-empty error", got.Failed)
+	}
+}
+
 // --- ClickUp attachments -------------------------------------------------
 
 // upload_attachment POSTs multipart to /task/{id}/attachment with the raw
