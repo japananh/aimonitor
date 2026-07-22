@@ -543,6 +543,37 @@ func (c *Client) clickupUpdateTask(ctx context.Context, _ *mcp.CallToolRequest, 
 	return textResult(map[string]any{"updated": slimTask(out)})
 }
 
+type cuTagIn struct {
+	TaskID string `json:"task_id" jsonschema:"task to tag"`
+	Tag    string `json:"tag" jsonschema:"tag name (must already exist in the Space; create it in the ClickUp UI first)"`
+}
+
+// clickupAddTag adds an existing Space tag to a task via
+// POST /task/{id}/tag/{tag_name}. ClickUp's PUT /task can't mutate tags, so this
+// (and clickupRemoveTag) is the only way to (re)tag an existing task.
+func (c *Client) clickupAddTag(ctx context.Context, _ *mcp.CallToolRequest, in cuTagIn) (*mcp.CallToolResult, any, error) {
+	if in.TaskID == "" || in.Tag == "" {
+		return nil, nil, fmt.Errorf("task_id and tag are required")
+	}
+	path := "/task/" + url.PathEscape(in.TaskID) + "/tag/" + url.PathEscape(in.Tag)
+	if err := c.clickup(ctx, http.MethodPost, path, nil, nil, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"task_id": in.TaskID, "tag": in.Tag, "status": "added"})
+}
+
+// clickupRemoveTag removes a tag from a task via DELETE /task/{id}/tag/{tag_name}.
+func (c *Client) clickupRemoveTag(ctx context.Context, _ *mcp.CallToolRequest, in cuTagIn) (*mcp.CallToolResult, any, error) {
+	if in.TaskID == "" || in.Tag == "" {
+		return nil, nil, fmt.Errorf("task_id and tag are required")
+	}
+	path := "/task/" + url.PathEscape(in.TaskID) + "/tag/" + url.PathEscape(in.Tag)
+	if err := c.clickup(ctx, http.MethodDelete, path, nil, nil, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"task_id": in.TaskID, "tag": in.Tag, "status": "removed"})
+}
+
 // cuCustomItemType is the slimmed work-item type shape. id is what
 // clickup_create_task / clickup_update_task want for custom_item_id; the default
 // Task type (custom_item_id null/omitted) is not returned by this endpoint.
