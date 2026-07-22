@@ -293,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     // updateStatusTitle renders the status item as a compact two-line text:
     //   <account name>
-    //   5h | <usage>%          (or "7d | …" once the weekly window is maxed)
+    //   5h | <usage>%
     // replacing the chart icon whenever an active account is known. The
     // icon returns as the fallback when there's no active account / no
     // daemon data yet. A tooltip carries the full picture (name, email,
@@ -316,25 +316,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // "0%", while a never-fetched account shows "–". (The daemon
         // publishes five_hour_pct without omitempty so 0 survives the JSON.)
         //
-        // Show whichever window is CLOSER to its limit — the binding
-        // constraint, and the one that actually drives the auto-swap warning
-        // (auto-swap arms when either window crosses its threshold). A fixed 5h
-        // until 7d hit 95% meant the 80–95% 7d band fired a switch warning while
-        // the menu bar still showed a low, unchanged 5h number (#91). The shown
-        // number is tinted by the shared severity scale (amber ≥60, red ≥85),
-        // so a maxed window is unmistakable; the tooltip always lists both.
+        // Always show the 5h window in the compact number (the tooltip lists
+        // both windows with reset times). #91 showed whichever window was closer
+        // to its limit, but users expect the bar to track 5h (#105). Accepted
+        // trade-off: a 7d-driven auto-swap warning can now sit next to a low 5h
+        // number — the case #91 removed. Tinted by the shared severity scale
+        // (amber ≥60, red ≥85) so a maxed 5h is unmistakable.
         let bottom: String
         var bottomColor = NSColor.labelColor
         if model.status?.limits_fetched_at != nil,
-           let pct5 = model.status?.five_hour_pct,
-           let pct7 = model.status?.seven_day_pct {
-            if pct7 >= pct5 {
-                bottom = "7d | " + String(format: "%.0f%%", pct7)
-                bottomColor = severityNSColor(for: pct7)
-            } else {
-                bottom = "5h | " + String(format: "%.0f%%", pct5)
-                bottomColor = severityNSColor(for: pct5)
-            }
+           let pct5 = model.status?.five_hour_pct {
+            bottom = "5h | " + String(format: "%.0f%%", pct5)
+            bottomColor = severityNSColor(for: pct5)
         } else {
             bottom = "5h | –"
         }
