@@ -211,6 +211,59 @@ func TestCreateTaskBody_CustomItemID(t *testing.T) {
 	}
 }
 
+// A description must be sent under markdown_content (which renders [label](url)
+// and bare URLs as clickable link marks) as well as the legacy
+// markdown_description fallback — both carrying the verbatim markdown (#102).
+func TestCreateTaskBody_DescriptionUsesMarkdownContent(t *testing.T) {
+	const md = "See [X](https://example.com) and https://example.com"
+
+	b := createTaskBody(cuCreateTaskIn{Name: "T", Description: md})
+	if b["markdown_content"] != md {
+		t.Errorf("markdown_content = %v, want %q", b["markdown_content"], md)
+	}
+	if b["markdown_description"] != md {
+		t.Errorf("markdown_description = %v, want %q (no-regression fallback)", b["markdown_description"], md)
+	}
+
+	// No description → neither markdown key is sent.
+	empty := createTaskBody(cuCreateTaskIn{Name: "T"})
+	if _, ok := empty["markdown_content"]; ok {
+		t.Errorf("markdown_content must be absent when no description given")
+	}
+	if _, ok := empty["markdown_description"]; ok {
+		t.Errorf("markdown_description must be absent when no description given")
+	}
+}
+
+// Same link-rendering fix on the update path: a new description goes out under
+// both markdown_content and markdown_description, and neither when unset (#102).
+func TestUpdateTaskBody_DescriptionUsesMarkdownContent(t *testing.T) {
+	const md = "Ref [PR](https://example.com/pr/1)"
+
+	b, err := updateTaskBody(cuUpdateTaskIn{TaskID: "abc", Description: md})
+	if err != nil {
+		t.Fatalf("updateTaskBody: %v", err)
+	}
+	if b["markdown_content"] != md {
+		t.Errorf("markdown_content = %v, want %q", b["markdown_content"], md)
+	}
+	if b["markdown_description"] != md {
+		t.Errorf("markdown_description = %v, want %q (no-regression fallback)", b["markdown_description"], md)
+	}
+
+	// Updating another field without a description must not send either key.
+	other, err := updateTaskBody(cuUpdateTaskIn{TaskID: "abc", Status: "open"})
+	if err != nil {
+		t.Fatalf("updateTaskBody: %v", err)
+	}
+	if _, ok := other["markdown_content"]; ok {
+		t.Errorf("markdown_content must be absent when no description given")
+	}
+	if _, ok := other["markdown_description"]; ok {
+		t.Errorf("markdown_description must be absent when no description given")
+	}
+}
+
 // updateTaskBody must map add/remove assignees onto ClickUp's
 // {"assignees":{"add":[…],"rem":[…]}} shape, include only the side that's set,
 // and carry custom_item_id through.
