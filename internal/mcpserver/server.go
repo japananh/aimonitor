@@ -160,6 +160,16 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUpdateTaskIn, any] {
 				return c.clickupUpdateTask
 			})},
+		{name: "clickup_add_tag", svc: ServiceClickUp, write: true,
+			desc: "Add an existing Space tag to a ClickUp task (the tag must already exist). Use this to (re)tag a task after creation, since clickup_update_task can't change tags",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuTagIn, any] {
+				return c.clickupAddTag
+			})},
+		{name: "clickup_remove_tag", svc: ServiceClickUp, write: true,
+			desc: "Remove a tag from a ClickUp task",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuTagIn, any] {
+				return c.clickupRemoveTag
+			})},
 		{name: "clickup_list_custom_item_types", svc: ServiceClickUp,
 			desc: "List a ClickUp workspace's custom work-item types (id + name, e.g. Bug) to resolve a name to the custom_item_id used by clickup_create_task / clickup_update_task",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuWorkspaceIn, any] {
