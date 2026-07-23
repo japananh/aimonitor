@@ -13,17 +13,6 @@ body:
     id: what-happened
     attributes:
       label: What happened?
-      description: What you saw, what you expected, and how to reproduce it.
+      description: What you saw, what you expected, and how to reproduce it. Include version + OS and any relevant logs (`aimonitor doctor`).
     validations:
       required: true
-  - type: input
-    id: env
-    attributes:
-      label: Version + OS (optional)
-      placeholder: "aimonitor 1.1.27 · macOS Apple Silicon"
-  - type: textarea
-    id: logs
-    attributes:
-      label: Logs / doctor (optional)
-      description: "`aimonitor doctor`, or the daemon log at ~/Library/Logs/aimonitor/ — check for secrets first."
-      render: text
