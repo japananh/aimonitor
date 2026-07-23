@@ -161,7 +161,7 @@ func catalog() []toolDef {
 				return c.clickupUpdateTask
 			})},
 		{name: "clickup_delete_task", svc: ServiceClickUp, write: true,
-			desc: "Delete one or more ClickUp tasks by ID (task_ids); each is moved to the Trash (recoverable). Returns which ids were deleted and which failed (with the error), so failures can be retried",
+			desc: "Delete one or more ClickUp tasks by ID (task_ids); each is moved to the Trash (recoverable). Subtasks are tasks — delete them the same way. Returns which ids were deleted and which failed (with the error), so failures can be retried",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuDeleteTaskIn, any] {
 				return c.clickupDeleteTask
 			})},
@@ -239,6 +239,61 @@ func catalog() []toolDef {
 			desc: "Attach a file (given as text content) to a ClickUp task",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUploadAttachmentIn, any] {
 				return c.clickupUploadAttachment
+			})},
+		{name: "clickup_list_custom_fields", svc: ServiceClickUp,
+			desc: "List the custom fields accessible on a ClickUp list (id + name + type, with option UUIDs in type_config for drop_down/labels) to resolve a field name to the field_id used by clickup_set_custom_field / clickup_remove_custom_field",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuListFieldsIn, any] {
+				return c.clickupListCustomFields
+			})},
+		{name: "clickup_set_custom_field", svc: ServiceClickUp, write: true,
+			desc: "Set a custom field value on a ClickUp task (value shaped for the field type: string/number, an option UUID for drop_down, an array for labels, unix ms for date)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuSetCustomFieldIn, any] {
+				return c.clickupSetCustomField
+			})},
+		{name: "clickup_remove_custom_field", svc: ServiceClickUp, write: true,
+			desc: "Clear a task's value for one ClickUp custom field",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuRemoveCustomFieldIn, any] {
+				return c.clickupRemoveCustomField
+			})},
+		{name: "clickup_add_dependency", svc: ServiceClickUp, write: true,
+			desc: "Link a ClickUp task dependency: set depends_on (task_id waits on it) OR dependency_of (task_id blocks it). ClickUp has no update endpoint — re-point a dependency by deleting and re-adding",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuDependencyIn, any] {
+				return c.clickupAddDependency
+			})},
+		{name: "clickup_delete_dependency", svc: ServiceClickUp, write: true,
+			desc: "Remove a ClickUp task dependency (pass the same depends_on or dependency_of used to add it)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuDependencyIn, any] {
+				return c.clickupDeleteDependency
+			})},
+		{name: "clickup_create_checklist", svc: ServiceClickUp, write: true,
+			desc: "Add a checklist to a ClickUp task",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuCreateChecklistIn, any] {
+				return c.clickupCreateChecklist
+			})},
+		{name: "clickup_update_checklist", svc: ServiceClickUp, write: true,
+			desc: "Rename or reposition a ClickUp checklist",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUpdateChecklistIn, any] {
+				return c.clickupUpdateChecklist
+			})},
+		{name: "clickup_delete_checklist", svc: ServiceClickUp, write: true,
+			desc: "Delete a ClickUp checklist and all its items",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuDeleteChecklistIn, any] {
+				return c.clickupDeleteChecklist
+			})},
+		{name: "clickup_create_checklist_item", svc: ServiceClickUp, write: true,
+			desc: "Add an item to a ClickUp checklist (optionally assigned); returns the checklist with each item's id for follow-up edits",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuCreateChecklistItemIn, any] {
+				return c.clickupCreateChecklistItem
+			})},
+		{name: "clickup_update_checklist_item", svc: ServiceClickUp, write: true,
+			desc: "Edit a ClickUp checklist item: rename, mark resolved/unresolved, (re)assign, or nest it under another item (parent)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUpdateChecklistItemIn, any] {
+				return c.clickupUpdateChecklistItem
+			})},
+		{name: "clickup_delete_checklist_item", svc: ServiceClickUp, write: true,
+			desc: "Delete one item from a ClickUp checklist",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuDeleteChecklistItemIn, any] {
+				return c.clickupDeleteChecklistItem
 			})},
 
 		// Sentry
