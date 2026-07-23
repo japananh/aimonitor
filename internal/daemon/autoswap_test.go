@@ -994,3 +994,86 @@ func TestAutoSwap_HasPendingWhileArmed(t *testing.T) {
 		t.Error("HasPending should be true while a swap is armed")
 	}
 }
+
+// The 2026-07-23 live incident: the active account's 5h is nearly exhausted
+// (99%) but not yet 100%, so the exhaustion bypass doesn't apply; every
+// non-excluded target is under threshold on 5h yet OVER the 7d threshold
+// (weekly-warm), so tier 2 rejects them all; and the one account with real
+// headroom is excluded. Without a last-resort tier the user is stranded on a
+// dying account (had to switch by hand). tier 3 switches to the least-capped
+// usable target (lowest max(5h,7d)).
+func TestAutoSwap_Tier3_SwapsWhenAllTargetsWeeklyWarm(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	be3, _ := s.CreateAccount(ctx, store.Account{Label: "be3", KeyringRef: "r3"})
+	be2, _ := s.CreateAccount(ctx, store.Account{Label: "be2", KeyringRef: "r2"})
+	be1, _ := s.CreateAccount(ctx, store.Account{Label: "be1", KeyringRef: "r1"})
+	bo, _ := s.CreateAccount(ctx, store.Account{Label: "bo", KeyringRef: "r0"})
+	_ = s.PutLimits(ctx, be3.ID, provider.Limits{FiveHourPct: 99, SevenDayPct: 57}) // active, 5h near-exhausted
+	_ = s.PutLimits(ctx, be2.ID, provider.Limits{FiveHourPct: 9, SevenDayPct: 88})  // usable, max 88
+	_ = s.PutLimits(ctx, be1.ID, provider.Limits{FiveHourPct: 3, SevenDayPct: 92})  // usable, max 92
+	_ = s.PutLimits(ctx, bo.ID, provider.Limits{FiveHourPct: 0, SevenDayPct: 64})   // most headroom…
+	// …but excluded from auto-swap, mirroring the incident config.
+	if err := s.PutSetting(ctx, SettingsKeyAutoSwapExcluded, strconv.FormatInt(bo.ID, 10)); err != nil {
+		t.Fatal(err)
+	}
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "be3")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if !swapped || len(fsw.switched) != 1 || fsw.switched[0] != "be2" {
+		t.Errorf("want tier-3 swap to be2 (lowest max among weekly-warm targets); got %v", fsw.switched)
+	}
+}
+
+// Anti–ping-pong: once tier 3 has moved onto the weekly-warm account, the
+// reverse decision must NOT switch back. With be2 active (5h=9, 7d=88), every
+// other account has a HIGHER max(5h,7d) (be3=99, be1=92), so none is strictly
+// less capped — tier 3 finds nothing and we stay put. Strictly-lower-max is a
+// total order, so no cycle is possible.
+func TestAutoSwap_Tier3_NoSwapBack(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	be2, _ := s.CreateAccount(ctx, store.Account{Label: "be2", KeyringRef: "r2"})
+	be3, _ := s.CreateAccount(ctx, store.Account{Label: "be3", KeyringRef: "r3"})
+	be1, _ := s.CreateAccount(ctx, store.Account{Label: "be1", KeyringRef: "r1"})
+	_ = s.PutLimits(ctx, be2.ID, provider.Limits{FiveHourPct: 9, SevenDayPct: 88}) // active (just switched to)
+	_ = s.PutLimits(ctx, be3.ID, provider.Limits{FiveHourPct: 99, SevenDayPct: 57})
+	_ = s.PutLimits(ctx, be1.ID, provider.Limits{FiveHourPct: 3, SevenDayPct: 92})
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "be2")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if swapped || len(fsw.switched) != 0 {
+		t.Errorf("must not swap back — no account has a strictly lower max(5h,7d) than be2's 88; got %v", fsw.switched)
+	}
+}
+
+// Tier 3 requires FAST-window headroom: escaping a 5h cap, a candidate that is
+// 5h-hot (over the 5h threshold) is NOT a tier-3 target even if it's lower than
+// the active — you'd rather wait for a fast-window recovery than land somewhere
+// still 5h-hot. Here the only alt is 5h=85 (hot) with a warm 7d, so stay put.
+func TestAutoSwap_Tier3_SkipsFastWindowHotCandidate(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	active, _ := s.CreateAccount(ctx, store.Account{Label: "active", KeyringRef: "ra"})
+	other, _ := s.CreateAccount(ctx, store.Account{Label: "other", KeyringRef: "ro"})
+	_ = s.PutLimits(ctx, active.ID, provider.Limits{FiveHourPct: 99, SevenDayPct: 10}) // escaping 5h cap
+	_ = s.PutLimits(ctx, other.ID, provider.Limits{FiveHourPct: 85, SevenDayPct: 88})  // 5h-hot AND 7d-warm
+	immediateSwap(t, s)
+
+	a, fsw, _ := withAutoSwapStubs(t, s)
+	swapped, err := a.MaybeSwap(ctx, "active")
+	if err != nil {
+		t.Fatalf("MaybeSwap: %v", err)
+	}
+	if swapped || len(fsw.switched) != 0 {
+		t.Errorf("only alternative is 5h-hot (85%%) — must wait, not land there; got %v", fsw.switched)
+	}
+}

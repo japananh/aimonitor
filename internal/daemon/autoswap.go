@@ -425,6 +425,17 @@ func (c candidate) pct(w windowKind) float64 {
 //	         exception: when the active account is exhausted (>=100%) on the
 //	         binding window it can't serve at all, so any non-exhausted candidate
 //	         beats staying. Ranked by most overall headroom (lowest max(5h, 7d)).
+//	tier 3 — escaping a 5h cap with no clean target: lower than the active on the
+//	         binding window and with real headroom on the FAST (5h) window
+//	         (5h < threshold), but over its 7d threshold (so tier 2 rejected it).
+//	         5h self-heals within hours, so landing on a 5h-healthy account is
+//	         safe even when its weekly window is warm — better than stranding on
+//	         a 5h-capped active (the live 2026-07-23 report). Adds candidates only
+//	         when escaping a 5h cap: for a 7d cap a 5h-healthy candidate is already
+//	         tier 2, and a 5h-hot one is made to wait for its fast window to
+//	         recover (see TestAutoSwap_WeeklyCapped_StaysWhenAllCandidates5hHot).
+//	         No ping-pong: a swap-back target must itself be 5h-healthy, which the
+//	         5h-capped account just left is not. Ranked by lowest max(5h, 7d).
 //
 // An account EXHAUSTED (>= 100%) on either window is never a candidate:
 // it cannot serve requests, so "lower on the binding window" is meaningless.
@@ -468,7 +479,7 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 	// rules it out as a swap-back target.)
 	activeBindingExhausted := activeBindingPct >= exhaustedPct
 	now := a.now()
-	var tier1, tier2, uncertain []candidate
+	var tier1, tier2, tier3, uncertain []candidate
 	for _, acct := range accounts {
 		if acct.ID == activeID {
 			continue
@@ -513,14 +524,23 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 			tier1 = append(tier1, c)
 		case c.pct(binding) < activeBindingPct && (activeBindingExhausted || c.pct(nonBinding) < nonBindingThreshold):
 			tier2 = append(tier2, c)
+		case c.pct(binding) < activeBindingPct && c.FiveHourPct < threshold5h:
+			// tier 3 (last resort): lower on the binding window AND with real
+			// headroom on the FAST (5h) window, but over its 7d threshold (so
+			// tier 2 rejected it). Only adds candidates when escaping a 5h cap —
+			// for a 7d cap a 5h-healthy candidate is already tier 2. The 5h window
+			// self-heals in hours, so landing on a 5h-healthy account is safe even
+			// when its weekly window is warm, and beats stranding on a 5h-capped
+			// active. No ping-pong: a swap-back target must itself be 5h-healthy,
+			// which the 5h-capped account we just left is not.
+			tier3 = append(tier3, c)
 		}
 		// Not a candidate when: not lower on the binding window (switching gains
 		// nothing on the constraint that fired), or — for tier 2 — over its
 		// threshold on the OTHER window (it'd trip that one immediately and bounce
 		// back, unless the active account is already exhausted on the binding one).
 	}
-	switch {
-	case len(tier1) > 0:
+	if len(tier1) > 0 {
 		sort.Slice(tier1, func(i, j int) bool {
 			mi := max(tier1[i].FiveHourPct, tier1[i].SevenDayPct)
 			mj := max(tier1[j].FiveHourPct, tier1[j].SevenDayPct)
@@ -530,7 +550,8 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 			return tier1[i].LastUsedMs < tier1[j].LastUsedMs
 		})
 		return tier1[0], true, nil
-	case len(tier2) > 0:
+	}
+	if len(tier2) > 0 {
 		// Candidates here already have headroom on the non-binding window (the
 		// acceptance check above), so rank by MOST overall headroom — lowest
 		// max(5h, 7d) — to pick the most balanced, longest-usable target rather
@@ -544,14 +565,26 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 			return tier2[i].LastUsedMs < tier2[j].LastUsedMs
 		})
 		return tier2[0], true, nil
-	case len(uncertain) > 0:
+	}
+	if len(tier3) > 0 {
+		// Rank by lowest max(5h, 7d) — the most balanced, longest-usable target.
+		sort.Slice(tier3, func(i, j int) bool {
+			mi := max(tier3[i].FiveHourPct, tier3[i].SevenDayPct)
+			mj := max(tier3[j].FiveHourPct, tier3[j].SevenDayPct)
+			if mi != mj {
+				return mi < mj
+			}
+			return tier3[i].LastUsedMs < tier3[j].LastUsedMs
+		})
+		return tier3[0], true, nil
+	}
+	if len(uncertain) > 0 {
 		sort.Slice(uncertain, func(i, j int) bool {
 			return uncertain[i].LastUsedMs < uncertain[j].LastUsedMs
 		})
 		return uncertain[0], true, nil
-	default:
-		return candidate{}, false, nil
 	}
+	return candidate{}, false, nil
 }
 
 func (a *AutoSwapper) config(ctx context.Context) (enabled bool, threshold5h, threshold7d float64, graceSec int, err error) {
