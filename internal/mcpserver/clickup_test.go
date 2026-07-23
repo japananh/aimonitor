@@ -321,3 +321,145 @@ func TestUpdateTaskBody_RejectsEmpty(t *testing.T) {
 		t.Errorf("expected an error for an update with no fields")
 	}
 }
+
+// setCustomFieldBody must always carry the value verbatim (any shape) and only
+// include value_options when provided.
+func TestSetCustomFieldBody(t *testing.T) {
+	// value_options omitted when empty.
+	b := setCustomFieldBody(cuSetCustomFieldIn{Value: "hello"})
+	if b["value"] != "hello" {
+		t.Errorf("value = %v, want hello", b["value"])
+	}
+	if _, ok := b["value_options"]; ok {
+		t.Errorf("value_options must be absent when not provided")
+	}
+
+	// A zero-ish value (0, false) must still be forwarded — it's a real value,
+	// not "unset" (the handler guards nil separately).
+	if got := setCustomFieldBody(cuSetCustomFieldIn{Value: 0})["value"]; got != 0 {
+		t.Errorf("value = %v, want 0 forwarded verbatim", got)
+	}
+
+	// value_options forwarded when present.
+	withOpts := setCustomFieldBody(cuSetCustomFieldIn{Value: 1700000000000, ValueOptions: map[string]any{"time": true}})
+	opts, ok := withOpts["value_options"].(map[string]any)
+	if !ok || opts["time"] != true {
+		t.Errorf("value_options = %v, want {time:true}", withOpts["value_options"])
+	}
+}
+
+// dependencySide must require EXACTLY ONE direction, returning the ClickUp field
+// name and value shared by the add-body and delete-query paths.
+func TestDependencySide(t *testing.T) {
+	t.Run("depends_on", func(t *testing.T) {
+		key, val, err := dependencySide(cuDependencyIn{TaskID: "t", DependsOn: "up"})
+		if err != nil || key != "depends_on" || val != "up" {
+			t.Errorf("got (%q,%q,%v), want (depends_on,up,nil)", key, val, err)
+		}
+	})
+	t.Run("dependency_of", func(t *testing.T) {
+		key, val, err := dependencySide(cuDependencyIn{TaskID: "t", DependencyOf: "down"})
+		if err != nil || key != "dependency_of" || val != "down" {
+			t.Errorf("got (%q,%q,%v), want (dependency_of,down,nil)", key, val, err)
+		}
+	})
+	t.Run("neither errors", func(t *testing.T) {
+		if _, _, err := dependencySide(cuDependencyIn{TaskID: "t"}); err == nil {
+			t.Errorf("expected an error when neither side is set")
+		}
+	})
+	t.Run("both errors", func(t *testing.T) {
+		if _, _, err := dependencySide(cuDependencyIn{TaskID: "t", DependsOn: "a", DependencyOf: "b"}); err == nil {
+			t.Errorf("expected an error when both sides are set")
+		}
+	})
+}
+
+// updateChecklistBody must map name/position, keep position=0 (a valid first
+// slot) distinct from omitted, and refuse an empty update.
+func TestUpdateChecklistBody(t *testing.T) {
+	zero := 0
+	b, err := updateChecklistBody(cuUpdateChecklistIn{ChecklistID: "c", Name: "QA", Position: &zero})
+	if err != nil {
+		t.Fatalf("updateChecklistBody: %v", err)
+	}
+	if b["name"] != "QA" {
+		t.Errorf("name = %v, want QA", b["name"])
+	}
+	if b["position"] != 0 {
+		t.Errorf("position = %v, want 0 sent explicitly", b["position"])
+	}
+
+	// name only → no position key.
+	nameOnly, _ := updateChecklistBody(cuUpdateChecklistIn{ChecklistID: "c", Name: "QA"})
+	if _, ok := nameOnly["position"]; ok {
+		t.Errorf("position must be absent when not provided")
+	}
+
+	if _, err := updateChecklistBody(cuUpdateChecklistIn{ChecklistID: "c"}); err == nil {
+		t.Errorf("expected an error for an empty checklist update")
+	}
+}
+
+// updateChecklistItemBody must map each optional field, keep resolved=false /
+// assignee=0 distinct from omitted (pointers), and refuse an empty update.
+func TestUpdateChecklistItemBody(t *testing.T) {
+	notDone := false
+	who := 0
+	b, err := updateChecklistItemBody(cuUpdateChecklistItemIn{
+		ChecklistID: "c", ChecklistItemID: "i",
+		Name: "step", Resolved: &notDone, Assignee: &who, Parent: "p",
+	})
+	if err != nil {
+		t.Fatalf("updateChecklistItemBody: %v", err)
+	}
+	if b["name"] != "step" || b["parent"] != "p" {
+		t.Errorf("name/parent = %v/%v, want step/p", b["name"], b["parent"])
+	}
+	if b["resolved"] != false {
+		t.Errorf("resolved = %v, want false sent explicitly", b["resolved"])
+	}
+	if b["assignee"] != 0 {
+		t.Errorf("assignee = %v, want 0 sent explicitly", b["assignee"])
+	}
+
+	// resolved only → no name/assignee/parent keys.
+	done := true
+	only, _ := updateChecklistItemBody(cuUpdateChecklistItemIn{ChecklistID: "c", ChecklistItemID: "i", Resolved: &done})
+	for _, k := range []string{"name", "assignee", "parent"} {
+		if _, ok := only[k]; ok {
+			t.Errorf("%s must be absent when not provided", k)
+		}
+	}
+	if only["resolved"] != true {
+		t.Errorf("resolved = %v, want true", only["resolved"])
+	}
+
+	if _, err := updateChecklistItemBody(cuUpdateChecklistItemIn{ChecklistID: "c", ChecklistItemID: "i"}); err == nil {
+		t.Errorf("expected an error for an empty checklist-item update")
+	}
+}
+
+// slimChecklist must surface the checklist id, name, and each item's id/name/
+// resolved (never a nil items slice, so the JSON carries [] not null).
+func TestSlimChecklist(t *testing.T) {
+	raw := rawCUChecklist{ID: "c1", Name: "QA"}
+	raw.Items = []struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		Resolved bool   `json:"resolved"`
+	}{{ID: "i1", Name: "build", Resolved: true}, {ID: "i2", Name: "ship", Resolved: false}}
+
+	got := slimChecklist(raw)
+	if got.ID != "c1" || got.Name != "QA" {
+		t.Errorf("checklist = %q/%q, want c1/QA", got.ID, got.Name)
+	}
+	if len(got.Items) != 2 || got.Items[0].ID != "i1" || !got.Items[0].Resolved || got.Items[1].ID != "i2" || got.Items[1].Resolved {
+		t.Errorf("items = %+v, want [{i1 build true} {i2 ship false}]", got.Items)
+	}
+
+	// Empty checklist → non-nil empty slice.
+	if empty := slimChecklist(rawCUChecklist{ID: "c2"}); empty.Items == nil {
+		t.Errorf("items must be a non-nil empty slice, got nil")
+	}
+}
