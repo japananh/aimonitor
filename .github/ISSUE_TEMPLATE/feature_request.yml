@@ -15,8 +15,3 @@ body:
       label: What would you like to happen?
     validations:
       required: true
-  - type: textarea
-    id: context
-    attributes:
-      label: Anything else? (optional)
-      description: Alternatives, mockups, links, or how often this bites you.
