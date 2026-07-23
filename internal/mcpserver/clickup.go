@@ -644,6 +644,358 @@ func (c *Client) clickupListCustomItemTypes(ctx context.Context, _ *mcp.CallTool
 	return textResult(map[string]any{"custom_item_types": types})
 }
 
+// --- custom fields ------------------------------------------------------
+
+// cuCustomField is the slimmed accessible-custom-field shape. id is the UUID
+// clickup_set_custom_field / clickup_remove_custom_field want; type names the
+// field kind (text, number, drop_down, labels, date, …) so the caller can shape
+// the value it sends, and type_config carries the option UUIDs for
+// drop_down/labels fields.
+type cuCustomField struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	TypeConfig any    `json:"type_config,omitempty"`
+}
+
+type cuListFieldsIn struct {
+	ListID string `json:"list_id" jsonschema:"list ID whose accessible custom fields to list"`
+}
+
+// clickupListCustomFields lists the custom fields available on a list via
+// GET /list/{id}/field, so the caller can resolve a field name to the UUID that
+// clickup_set_custom_field / clickup_remove_custom_field want (and read the
+// option UUIDs for drop_down/labels fields from type_config).
+func (c *Client) clickupListCustomFields(ctx context.Context, _ *mcp.CallToolRequest, in cuListFieldsIn) (*mcp.CallToolResult, any, error) {
+	if in.ListID == "" {
+		return nil, nil, fmt.Errorf("list_id is required")
+	}
+	var out struct {
+		Fields []cuCustomField `json:"fields"`
+	}
+	if err := c.clickup(ctx, http.MethodGet, "/list/"+url.PathEscape(in.ListID)+"/field", nil, nil, &out); err != nil {
+		return nil, nil, err
+	}
+	// Stable empty slice, never nil — a nil slice marshals to JSON null.
+	fields := make([]cuCustomField, 0, len(out.Fields))
+	fields = append(fields, out.Fields...)
+	return textResult(map[string]any{"custom_fields": fields})
+}
+
+type cuSetCustomFieldIn struct {
+	TaskID       string         `json:"task_id" jsonschema:"task to set the custom field value on"`
+	FieldID      string         `json:"field_id" jsonschema:"custom field UUID (from clickup_list_custom_fields)"`
+	Value        any            `json:"value" jsonschema:"the value, shaped for the field type: a string for text, a number for number, an option UUID for drop_down, an array of option UUIDs for labels, a unix ms timestamp for date, etc."`
+	ValueOptions map[string]any `json:"value_options,omitempty" jsonschema:"optional ClickUp value_options (e.g. {\"time\": true} to include a time component on a date field)"`
+}
+
+// setCustomFieldBody maps the input onto ClickUp's POST /task/{id}/field/{id}
+// body ({value, value_options?}). value is polymorphic by field type, so it's
+// forwarded verbatim.
+func setCustomFieldBody(in cuSetCustomFieldIn) map[string]any {
+	body := map[string]any{"value": in.Value}
+	if len(in.ValueOptions) > 0 {
+		body["value_options"] = in.ValueOptions
+	}
+	return body
+}
+
+func (c *Client) clickupSetCustomField(ctx context.Context, _ *mcp.CallToolRequest, in cuSetCustomFieldIn) (*mcp.CallToolResult, any, error) {
+	if in.TaskID == "" || in.FieldID == "" {
+		return nil, nil, fmt.Errorf("task_id and field_id are required")
+	}
+	if in.Value == nil {
+		return nil, nil, fmt.Errorf("value is required (to clear a field, use clickup_remove_custom_field)")
+	}
+	body := setCustomFieldBody(in)
+	if err := c.clickup(ctx, http.MethodPost, "/task/"+url.PathEscape(in.TaskID)+"/field/"+url.PathEscape(in.FieldID), nil, body, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"task_id": in.TaskID, "field_id": in.FieldID, "status": "set"})
+}
+
+type cuRemoveCustomFieldIn struct {
+	TaskID  string `json:"task_id" jsonschema:"task to clear the custom field value on"`
+	FieldID string `json:"field_id" jsonschema:"custom field UUID (from clickup_list_custom_fields)"`
+}
+
+// clickupRemoveCustomField clears a task's value for one custom field via
+// DELETE /task/{id}/field/{field_id}.
+func (c *Client) clickupRemoveCustomField(ctx context.Context, _ *mcp.CallToolRequest, in cuRemoveCustomFieldIn) (*mcp.CallToolResult, any, error) {
+	if in.TaskID == "" || in.FieldID == "" {
+		return nil, nil, fmt.Errorf("task_id and field_id are required")
+	}
+	if err := c.clickup(ctx, http.MethodDelete, "/task/"+url.PathEscape(in.TaskID)+"/field/"+url.PathEscape(in.FieldID), nil, nil, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"task_id": in.TaskID, "field_id": in.FieldID, "status": "removed"})
+}
+
+// --- dependencies -------------------------------------------------------
+
+// cuDependencyIn identifies a directed dependency link on task_id. Exactly one
+// of depends_on / dependency_of must be set — they encode opposite directions
+// (task_id waits on depends_on; task_id blocks dependency_of), and ClickUp
+// rejects a request carrying both or neither. ClickUp has no update endpoint for
+// dependencies; re-point a link by deleting and re-adding.
+type cuDependencyIn struct {
+	TaskID       string `json:"task_id" jsonschema:"the task the dependency is on"`
+	DependsOn    string `json:"depends_on,omitempty" jsonschema:"task ID that task_id waits on (is blocked by); provide this OR dependency_of, not both"`
+	DependencyOf string `json:"dependency_of,omitempty" jsonschema:"task ID that task_id blocks (is a dependency of); provide this OR depends_on, not both"`
+}
+
+// dependencySide validates that exactly one direction is set and returns the
+// ClickUp field name + value, shared by the add (body) and delete (query) paths.
+func dependencySide(in cuDependencyIn) (key, val string, err error) {
+	switch {
+	case in.DependsOn != "" && in.DependencyOf != "":
+		return "", "", fmt.Errorf("provide only one of depends_on or dependency_of, not both")
+	case in.DependsOn != "":
+		return "depends_on", in.DependsOn, nil
+	case in.DependencyOf != "":
+		return "dependency_of", in.DependencyOf, nil
+	default:
+		return "", "", fmt.Errorf("provide depends_on or dependency_of")
+	}
+}
+
+// clickupAddDependency links a dependency via POST /task/{id}/dependency with a
+// {depends_on|dependency_of} body.
+func (c *Client) clickupAddDependency(ctx context.Context, _ *mcp.CallToolRequest, in cuDependencyIn) (*mcp.CallToolResult, any, error) {
+	if in.TaskID == "" {
+		return nil, nil, fmt.Errorf("task_id is required")
+	}
+	key, val, err := dependencySide(in)
+	if err != nil {
+		return nil, nil, err
+	}
+	body := map[string]any{key: val}
+	if err := c.clickup(ctx, http.MethodPost, "/task/"+url.PathEscape(in.TaskID)+"/dependency", nil, body, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"task_id": in.TaskID, key: val, "status": "linked"})
+}
+
+// clickupDeleteDependency removes a dependency via DELETE /task/{id}/dependency,
+// which takes the linked task on the QUERY string (depends_on / dependency_of),
+// not in a body.
+func (c *Client) clickupDeleteDependency(ctx context.Context, _ *mcp.CallToolRequest, in cuDependencyIn) (*mcp.CallToolResult, any, error) {
+	if in.TaskID == "" {
+		return nil, nil, fmt.Errorf("task_id is required")
+	}
+	key, val, err := dependencySide(in)
+	if err != nil {
+		return nil, nil, err
+	}
+	q := url.Values{key: {val}}
+	if err := c.clickup(ctx, http.MethodDelete, "/task/"+url.PathEscape(in.TaskID)+"/dependency", q, nil, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"task_id": in.TaskID, key: val, "status": "unlinked"})
+}
+
+// --- checklists ---------------------------------------------------------
+
+// cuChecklistItem is the slimmed checklist-item shape. id is what
+// clickup_update_checklist_item / clickup_delete_checklist_item want.
+type cuChecklistItem struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Resolved bool   `json:"resolved"`
+}
+
+// cuChecklist is the slimmed checklist shape returned after a create — id is
+// what clickup_update_checklist / clickup_delete_checklist and the item tools
+// want; items carry their own ids for follow-up edits.
+type cuChecklist struct {
+	ID    string            `json:"id"`
+	Name  string            `json:"name"`
+	Items []cuChecklistItem `json:"items"`
+}
+
+type rawCUChecklist struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Items []struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		Resolved bool   `json:"resolved"`
+	} `json:"items"`
+}
+
+func slimChecklist(raw rawCUChecklist) cuChecklist {
+	items := make([]cuChecklistItem, 0, len(raw.Items))
+	for _, it := range raw.Items {
+		items = append(items, cuChecklistItem{ID: it.ID, Name: it.Name, Resolved: it.Resolved})
+	}
+	return cuChecklist{ID: raw.ID, Name: raw.Name, Items: items}
+}
+
+type cuCreateChecklistIn struct {
+	TaskID string `json:"task_id" jsonschema:"task to add the checklist to"`
+	Name   string `json:"name" jsonschema:"checklist name"`
+}
+
+// clickupCreateChecklist adds a checklist to a task via POST /task/{id}/checklist.
+func (c *Client) clickupCreateChecklist(ctx context.Context, _ *mcp.CallToolRequest, in cuCreateChecklistIn) (*mcp.CallToolResult, any, error) {
+	if in.TaskID == "" || in.Name == "" {
+		return nil, nil, fmt.Errorf("task_id and name are required")
+	}
+	var out struct {
+		Checklist rawCUChecklist `json:"checklist"`
+	}
+	if err := c.clickup(ctx, http.MethodPost, "/task/"+url.PathEscape(in.TaskID)+"/checklist", nil, map[string]any{"name": in.Name}, &out); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]any{"created_checklist": slimChecklist(out.Checklist)})
+}
+
+type cuUpdateChecklistIn struct {
+	ChecklistID string `json:"checklist_id" jsonschema:"checklist ID (from clickup_create_checklist or clickup_get_task)"`
+	Name        string `json:"name,omitempty" jsonschema:"new checklist name"`
+	Position    *int   `json:"position,omitempty" jsonschema:"new position among the task's checklists (0-based)"`
+}
+
+// updateChecklistBody maps the input onto ClickUp's PUT /checklist/{id} body.
+// Position is a pointer so 0 (a valid, first-position value) is distinct from
+// "omitted".
+func updateChecklistBody(in cuUpdateChecklistIn) (map[string]any, error) {
+	body := map[string]any{}
+	if in.Name != "" {
+		body["name"] = in.Name
+	}
+	if in.Position != nil {
+		body["position"] = *in.Position
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("nothing to update — provide name and/or position")
+	}
+	return body, nil
+}
+
+// clickupUpdateChecklist renames or repositions a checklist via PUT /checklist/{id}.
+func (c *Client) clickupUpdateChecklist(ctx context.Context, _ *mcp.CallToolRequest, in cuUpdateChecklistIn) (*mcp.CallToolResult, any, error) {
+	if in.ChecklistID == "" {
+		return nil, nil, fmt.Errorf("checklist_id is required")
+	}
+	body, err := updateChecklistBody(in)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := c.clickup(ctx, http.MethodPut, "/checklist/"+url.PathEscape(in.ChecklistID), nil, body, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"checklist_id": in.ChecklistID, "status": "updated"})
+}
+
+type cuDeleteChecklistIn struct {
+	ChecklistID string `json:"checklist_id" jsonschema:"checklist ID to delete (with all its items)"`
+}
+
+// clickupDeleteChecklist deletes a checklist (and its items) via DELETE /checklist/{id}.
+func (c *Client) clickupDeleteChecklist(ctx context.Context, _ *mcp.CallToolRequest, in cuDeleteChecklistIn) (*mcp.CallToolResult, any, error) {
+	if in.ChecklistID == "" {
+		return nil, nil, fmt.Errorf("checklist_id is required")
+	}
+	if err := c.clickup(ctx, http.MethodDelete, "/checklist/"+url.PathEscape(in.ChecklistID), nil, nil, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"checklist_id": in.ChecklistID, "status": "deleted"})
+}
+
+type cuCreateChecklistItemIn struct {
+	ChecklistID string `json:"checklist_id" jsonschema:"checklist to add the item to"`
+	Name        string `json:"name" jsonschema:"item text"`
+	Assignee    *int   `json:"assignee,omitempty" jsonschema:"user ID to assign the item to (resolve with clickup_list_members)"`
+}
+
+// clickupCreateChecklistItem adds an item to a checklist via
+// POST /checklist/{id}/checklist_item; the response carries the whole checklist,
+// so the new item's id comes back in the returned items list.
+func (c *Client) clickupCreateChecklistItem(ctx context.Context, _ *mcp.CallToolRequest, in cuCreateChecklistItemIn) (*mcp.CallToolResult, any, error) {
+	if in.ChecklistID == "" || in.Name == "" {
+		return nil, nil, fmt.Errorf("checklist_id and name are required")
+	}
+	body := map[string]any{"name": in.Name}
+	if in.Assignee != nil {
+		body["assignee"] = *in.Assignee
+	}
+	var out struct {
+		Checklist rawCUChecklist `json:"checklist"`
+	}
+	if err := c.clickup(ctx, http.MethodPost, "/checklist/"+url.PathEscape(in.ChecklistID)+"/checklist_item", nil, body, &out); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]any{"checklist": slimChecklist(out.Checklist)})
+}
+
+type cuUpdateChecklistItemIn struct {
+	ChecklistID     string `json:"checklist_id" jsonschema:"parent checklist ID"`
+	ChecklistItemID string `json:"checklist_item_id" jsonschema:"item ID (from clickup_create_checklist_item or clickup_get_task)"`
+	Name            string `json:"name,omitempty" jsonschema:"new item text"`
+	Assignee        *int   `json:"assignee,omitempty" jsonschema:"user ID to assign the item to (resolve with clickup_list_members)"`
+	Resolved        *bool  `json:"resolved,omitempty" jsonschema:"mark the item done (true) or not done (false)"`
+	Parent          string `json:"parent,omitempty" jsonschema:"nest this item under another checklist item ID (makes it a sub-item)"`
+}
+
+// updateChecklistItemBody maps the input onto ClickUp's
+// PUT /checklist/{id}/checklist_item/{item} body. Assignee/Resolved are pointers
+// so a valid zero/false is distinct from "omitted".
+func updateChecklistItemBody(in cuUpdateChecklistItemIn) (map[string]any, error) {
+	body := map[string]any{}
+	if in.Name != "" {
+		body["name"] = in.Name
+	}
+	if in.Assignee != nil {
+		body["assignee"] = *in.Assignee
+	}
+	if in.Resolved != nil {
+		body["resolved"] = *in.Resolved
+	}
+	if in.Parent != "" {
+		body["parent"] = in.Parent
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("nothing to update — provide name, assignee, resolved, or parent")
+	}
+	return body, nil
+}
+
+// clickupUpdateChecklistItem edits a checklist item (rename, (un)resolve,
+// (re)assign, or re-nest) via PUT /checklist/{id}/checklist_item/{item}.
+func (c *Client) clickupUpdateChecklistItem(ctx context.Context, _ *mcp.CallToolRequest, in cuUpdateChecklistItemIn) (*mcp.CallToolResult, any, error) {
+	if in.ChecklistID == "" || in.ChecklistItemID == "" {
+		return nil, nil, fmt.Errorf("checklist_id and checklist_item_id are required")
+	}
+	body, err := updateChecklistItemBody(in)
+	if err != nil {
+		return nil, nil, err
+	}
+	path := "/checklist/" + url.PathEscape(in.ChecklistID) + "/checklist_item/" + url.PathEscape(in.ChecklistItemID)
+	if err := c.clickup(ctx, http.MethodPut, path, nil, body, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"checklist_item_id": in.ChecklistItemID, "status": "updated"})
+}
+
+type cuDeleteChecklistItemIn struct {
+	ChecklistID     string `json:"checklist_id" jsonschema:"parent checklist ID"`
+	ChecklistItemID string `json:"checklist_item_id" jsonschema:"item ID to delete"`
+}
+
+// clickupDeleteChecklistItem removes one item via
+// DELETE /checklist/{id}/checklist_item/{item}.
+func (c *Client) clickupDeleteChecklistItem(ctx context.Context, _ *mcp.CallToolRequest, in cuDeleteChecklistItemIn) (*mcp.CallToolResult, any, error) {
+	if in.ChecklistID == "" || in.ChecklistItemID == "" {
+		return nil, nil, fmt.Errorf("checklist_id and checklist_item_id are required")
+	}
+	path := "/checklist/" + url.PathEscape(in.ChecklistID) + "/checklist_item/" + url.PathEscape(in.ChecklistItemID)
+	if err := c.clickup(ctx, http.MethodDelete, path, nil, nil, nil); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"checklist_item_id": in.ChecklistItemID, "status": "deleted"})
+}
+
 // --- comments -----------------------------------------------------------
 
 // commentBody builds the request body for create/update comment, in priority
