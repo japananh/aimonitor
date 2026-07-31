@@ -49,9 +49,14 @@ func catalog() []toolDef {
 	return []toolDef{
 		// Slack
 		{name: "slack_post_message", svc: ServiceSlack, write: true,
-			desc: "Post a message to a Slack channel, or reply in a thread via thread_ts",
+			desc: "Post a message to a Slack channel, or reply in a thread via thread_ts. Set post_at (Unix epoch seconds, future, ≤120 days) to schedule it instead — Slack holds and sends it then, returning scheduled_message_id (cancel with slack_cancel_scheduled_message)",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackPostIn, any] {
 				return c.slackPostMessage
+			})},
+		{name: "slack_cancel_scheduled_message", svc: ServiceSlack, write: true,
+			desc: "Cancel a Slack message scheduled via slack_post_message's post_at, before it sends (by channel + scheduled_message_id)",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackCancelScheduledIn, any] {
+				return c.slackCancelScheduledMessage
 			})},
 		{name: "slack_update_message", svc: ServiceSlack, write: true,
 			desc: "Edit a Slack message you posted (by channel + ts) — e.g. to fix a broken mention",
