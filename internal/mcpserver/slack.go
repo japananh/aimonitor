@@ -109,6 +109,7 @@ type slackPostIn struct {
 	ReplyBroadcast bool   `json:"reply_broadcast,omitempty" jsonschema:"also show the thread reply in the channel"`
 	UnfurlLinks    *bool  `json:"unfurl_links,omitempty" jsonschema:"set false to suppress the link preview cards Slack expands under URLs (omit to keep Slack's default)"`
 	UnfurlMedia    *bool  `json:"unfurl_media,omitempty" jsonschema:"set false to suppress image/video previews under URLs (omit to keep Slack's default)"`
+	PostAt         int64  `json:"post_at,omitempty" jsonschema:"schedule the message for this Unix epoch time (seconds); must be in the future and within 120 days. When set, Slack holds and sends it at that time and the result carries scheduled_message_id instead of ts — cancel it before then with slack_cancel_scheduled_message"`
 }
 
 func (c *Client) slackPostMessage(ctx context.Context, _ *mcp.CallToolRequest, in slackPostIn) (*mcp.CallToolResult, any, error) {
@@ -125,6 +126,29 @@ func (c *Client) slackPostMessage(ctx context.Context, _ *mcp.CallToolRequest, i
 	if in.UnfurlMedia != nil {
 		body["unfurl_media"] = *in.UnfurlMedia
 	}
+
+	// post_at > 0 → hand it to Slack's native scheduler (same chat:write scope,
+	// same body) so the message is held and sent at that time. The response
+	// swaps ts for scheduled_message_id (cancel via slack_cancel_scheduled_message).
+	if in.PostAt > 0 {
+		body["post_at"] = in.PostAt
+		var out struct {
+			slackEnvelope
+			Channel            string `json:"channel"`
+			ScheduledMessageID string `json:"scheduled_message_id"`
+			PostAt             int64  `json:"post_at"`
+		}
+		if err := c.slackPOST(ctx, "chat.scheduleMessage", body, &out); err != nil {
+			return nil, nil, err
+		}
+		return textResult(map[string]any{
+			"channel":              out.Channel,
+			"scheduled_message_id": out.ScheduledMessageID,
+			"post_at":              out.PostAt,
+			"status":               "scheduled",
+		})
+	}
+
 	var out struct {
 		slackEnvelope
 		Channel string `json:"channel"`
@@ -134,6 +158,28 @@ func (c *Client) slackPostMessage(ctx context.Context, _ *mcp.CallToolRequest, i
 		return nil, nil, err
 	}
 	return textResult(map[string]string{"channel": out.Channel, "ts": out.TS, "status": "posted"})
+}
+
+// --- cancel scheduled message -----------------------------------------
+
+type slackCancelScheduledIn struct {
+	Channel            string `json:"channel" jsonschema:"channel ID the message was scheduled into (C…/D…/G…)"`
+	ScheduledMessageID string `json:"scheduled_message_id" jsonschema:"the scheduled_message_id returned by slack_post_message when it was scheduled with post_at"`
+}
+
+func (c *Client) slackCancelScheduledMessage(ctx context.Context, _ *mcp.CallToolRequest, in slackCancelScheduledIn) (*mcp.CallToolResult, any, error) {
+	body := map[string]any{"channel": in.Channel, "scheduled_message_id": in.ScheduledMessageID}
+	var out struct {
+		slackEnvelope
+	}
+	if err := c.slackPOST(ctx, "chat.deleteScheduledMessage", body, &out); err != nil {
+		return nil, nil, err
+	}
+	return textResult(map[string]string{
+		"channel":              in.Channel,
+		"scheduled_message_id": in.ScheduledMessageID,
+		"status":               "canceled",
+	})
 }
 
 // --- update (edit) message --------------------------------------------

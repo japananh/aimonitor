@@ -120,6 +120,120 @@ func TestSlackPostMessage_ThreadReplyAndText(t *testing.T) {
 	}
 }
 
+// slack_post_message with a future post_at routes to chat.scheduleMessage
+// (same body, incl. post_at), and surfaces scheduled_message_id instead of ts.
+func TestSlackPostMessage_ScheduleWithPostAt(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "channel": "C1", "scheduled_message_id": "Q1234", "post_at": 1893456000,
+		})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	res, _, err := c.slackPostMessage(context.Background(), nil, slackPostIn{
+		Channel: "C1", Text: "review please", PostAt: 1893456000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/chat.scheduleMessage" {
+		t.Errorf("path = %s, want /chat.scheduleMessage", gotPath)
+	}
+	if gotBody["channel"] != "C1" || gotBody["text"] != "review please" {
+		t.Errorf("body = %v, want channel + text", gotBody)
+	}
+	// post_at decodes from JSON as a float64; compare numerically.
+	if pa, _ := gotBody["post_at"].(float64); int64(pa) != 1893456000 {
+		t.Errorf("post_at = %v, want 1893456000", gotBody["post_at"])
+	}
+	out := resultJSON(t, res)
+	for _, want := range []string{"scheduled", "Q1234", `"channel": "C1"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("scheduled result missing %q in %s", want, out)
+		}
+	}
+	// A scheduled post has no ts yet — must not claim one.
+	if strings.Contains(out, `"ts"`) {
+		t.Errorf("scheduled result must not carry a ts: %s", out)
+	}
+}
+
+// slack_post_message with post_at == 0 (the default) still posts immediately
+// via chat.postMessage — scheduling is strictly opt-in.
+func TestSlackPostMessage_NoPostAtPostsImmediately(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": "C1", "ts": "9.9"})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	res, _, err := c.slackPostMessage(context.Background(), nil, slackPostIn{Channel: "C1", Text: "now"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/chat.postMessage" {
+		t.Errorf("path = %s, want /chat.postMessage", gotPath)
+	}
+	if _, ok := gotBody["post_at"]; ok {
+		t.Errorf("post_at must be absent when not scheduling: %v", gotBody)
+	}
+	if out := resultJSON(t, res); !strings.Contains(out, "posted") || !strings.Contains(out, "9.9") {
+		t.Errorf("result missing posted/ts: %s", out)
+	}
+}
+
+// slack_cancel_scheduled_message removes a pending scheduled post via
+// chat.deleteScheduledMessage (channel + scheduled_message_id) and reports
+// status "canceled".
+func TestSlackCancelScheduledMessage(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	res, _, err := c.slackCancelScheduledMessage(context.Background(), nil, slackCancelScheduledIn{
+		Channel: "C1", ScheduledMessageID: "Q1234",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/chat.deleteScheduledMessage" {
+		t.Errorf("path = %s, want /chat.deleteScheduledMessage", gotPath)
+	}
+	if gotBody["channel"] != "C1" || gotBody["scheduled_message_id"] != "Q1234" {
+		t.Errorf("body = %v, want channel + scheduled_message_id", gotBody)
+	}
+	if out := resultJSON(t, res); !strings.Contains(out, "canceled") || !strings.Contains(out, "Q1234") {
+		t.Errorf("cancel result missing canceled/id: %s", out)
+	}
+}
+
 // slack_update_message edits a posted message via chat.update and reports
 // status "updated".
 func TestSlackUpdateMessage(t *testing.T) {
