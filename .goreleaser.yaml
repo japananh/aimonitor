@@ -146,17 +146,30 @@ homebrew_casks:
     # so inject the cask DSL directly via custom_block:
     #   - app: install AIMonitor.app into /Applications.
     #   - depends_on: enforce the minimum macOS at install time.
-    #   - postflight: register the daemon to start at login so the menu
-    #     bar shows live data immediately, instead of every fresh install
-    #     hitting "daemon not running" until the user reads the caveats.
-    #     must_succeed:false → a headless/quarantine-blocked install still
-    #     completes; the user can run the command from the caveats. The
-    #     LaunchAgent records the staged binary path; postflight re-runs
-    #     on every `brew upgrade`, so the path self-heals across versions.
+    #   - postflight (runs on install AND every `brew upgrade`):
+    #       1. strip the Gatekeeper quarantine flag off the freshly-staged
+    #          unsigned .app so the GUI opens without the "damaged" block.
+    #          Each upgrade re-stages a re-quarantined copy, so this re-runs
+    #          every time — without it, `brew upgrade` silently breaks the app.
+    #       2. register the daemon at login so the menu bar shows live data
+    #          immediately instead of "daemon not running".
+    #     must_succeed:false on both → a headless/locked-down install still
+    #     completes; the caveats repeat the manual commands as a fallback.
+    #     The LaunchAgent records the staged binary path; the postflight
+    #     re-runs on every upgrade, so the path self-heals across versions.
     custom_block: |
       depends_on macos: :sonoma
       app "AIMonitor.app"
       postflight do
+        # Strip the Gatekeeper quarantine flag off the freshly-staged,
+        # unsigned .app so the GUI opens without the "damaged" /
+        # "unidentified developer" block. Homebrew re-stages a fresh,
+        # re-quarantined copy on every `brew upgrade`, so this must re-run
+        # each time — and it does (postflight runs on install AND upgrade).
+        system_command "/usr/bin/xattr",
+                       args: ["-dr", "com.apple.quarantine", "#{appdir}/AIMonitor.app"],
+                       must_succeed: false
+        # Register the daemon at login so the menu bar shows live data at once.
         system_command "#{staged_path}/aimonitor",
                        args: ["config", "set", "autostart", "true"],
                        must_succeed: false
@@ -168,8 +181,9 @@ homebrew_casks:
 
         aimonitor config set autostart false
 
-      The menu bar app is unsigned — macOS Gatekeeper blocks the first
-      GUI launch. Clear it once:
+      The menu bar app is unsigned. Install auto-clears the Gatekeeper
+      quarantine flag; if macOS still blocks the launch ("damaged" or
+      "unidentified developer"), clear it manually:
 
         xattr -dr com.apple.quarantine /Applications/AIMonitor.app
 
