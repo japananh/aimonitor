@@ -18,6 +18,7 @@
 
 - 🔍 **Live 5h + 7d usage bars per account** — polled from Anthropic's `/api/oauth/usage` (no tokens consumed), with a trend line (`↗ +21% in 45m`).
 - 🔀 **Silent switching** — `aimonitor switch <label>` refreshes the OAuth token and swaps the live credential. No `claude /login`, no terminal hop.
+- ♻️ **Assisted re-login** — when an account's OAuth session finally expires, `aimonitor relogin` opens claude.ai, captures the fresh credential, and clears the flag. If your login links are delivered somewhere machine-readable (pluggable — Slack today), it fetches and opens the *right* one automatically, matched by the account's email.
 - 🤖 **Auto-swap** at the 5h *or* 7d threshold (default 80 %) — picks the account with the most overall headroom, skips exhausted/rate-limited ones, and rescues immediately if the active account hits 100 %. Running `claude` sessions follow automatically.
 - 🔔 **Threshold notifications** as an account nears its limit (when auto-swap is off).
 - 💾 **Export / import** settings, or migrate accounts to another machine — credentials optional and passphrase-encrypted (Argon2id + AES-256-GCM).
@@ -99,6 +100,8 @@ AIMONITOR_PASSPHRASE=… aimonitor config import full.json                      
 | `mcp.sentry.org` | (empty) | Sentry organization slug the tools query |
 | `mcp.sentry.base_url` | `https://sentry.io` | Sentry API host (set to your self-hosted host) |
 | `mcp.disabled_tools` | (empty) | Comma-separated tool names to hide |
+| `relogin.link_source` | (unset) | Where `aimonitor relogin` auto-fetches login links from. `slack` today; unset ⇒ open them yourself |
+| `relogin.slack.channel` | (unset) | Channel ID for the `slack` link source (needs Slack connected) |
 
 </details>
 
@@ -107,6 +110,26 @@ AIMONITOR_PASSPHRASE=… aimonitor config import full.json                      
 The daemon polls `/api/oauth/usage` (~5 min ± jitter, no tokens consumed). When the active account crosses its 5h **or** 7d threshold, it picks the account with the most overall headroom, refreshes that account's OAuth token (`POST .../v1/oauth/token`), and writes it to the live Keychain slot. Running and new `claude` sessions adopt the new account — no `/login`, no restart.
 
 See [`docs/architecture.md`](docs/architecture.md) and [`docs/thresholds.md`](docs/thresholds.md) for the full picture.
+
+## Re-login when a session expires
+
+Silent switching keeps refreshing each account's OAuth token — but the *refresh token itself* eventually dies, and then the account genuinely has to log in again (aimonitor flags it "session expired"). `relogin` drives that:
+
+```sh
+aimonitor relogin                 # re-login every account flagged "session expired"
+aimonitor relogin "work"          # a specific account
+aimonitor relogin --all           # every registered account
+```
+
+It opens claude.ai (email copied to your clipboard), waits while you sign in — by whatever method your accounts use — and run `claude` + `/login`, then captures the fresh credential into that account's slot and clears the flag, refreshing the live slot too if it was the active account.
+
+**Optional auto-fetch.** If your login links are delivered somewhere machine-readable, aimonitor can grab the right one and open it for you, matched by the account's email — no more hunting for it or grabbing the wrong account's. The source is pluggable via `relogin.link_source`; **Slack** is supported today (email / Telegram / Discord / … can be added as further sources):
+
+```sh
+aimonitor mcp connect slack                          # once, if not already
+aimonitor config set relogin.link_source slack
+aimonitor config set relogin.slack.channel C01234567 # the channel your links land in
+```
 
 ## MCP server (Slack, ClickUp & Sentry for Claude Code)
 
