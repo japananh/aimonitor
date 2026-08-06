@@ -347,6 +347,13 @@ func (a *AutoSwapper) refreshStaleCandidates(ctx context.Context, activeID int64
 		if acct.ID == activeID {
 			continue
 		}
+		// Already known to need re-login: its credential can't authenticate, so
+		// re-probing wastes a call (and pickCandidate skips it anyway). An
+		// account not yet flagged is still probed below — that probe is exactly
+		// what detects a newly-dead account and flags it.
+		if acct.NeedsRelogin {
+			continue
+		}
 		// Barred as a swap target (issue #13) or parked after a 429 —
 		// pickCandidate will skip it either way, so don't spend a refresh on it.
 		if excluded[acct.ID] {
@@ -451,6 +458,12 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 	var viable, uncertain []candidate
 	for _, acct := range accounts {
 		if acct.ID == activeID {
+			continue
+		}
+		// Needs re-login: its stashed credential can't authenticate. Switching to
+		// it would push a dead credential into the live keychain slot and break
+		// the running `claude` session ("Login expired") — never a candidate.
+		if acct.NeedsRelogin {
 			continue
 		}
 		// User barred this account from being a swap target (issue #13).

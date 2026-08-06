@@ -2,11 +2,17 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/japananh/aimonitor/internal/provider/claude"
 	"github.com/japananh/aimonitor/internal/store"
 )
+
+// reloginNotify posts the "session expired" banner when an account first needs
+// re-login. A package var so tests can stub it; the default shells out to
+// Notification Center on darwin (no-op elsewhere).
+var reloginNotify = notifyMacOS
 
 // Per-account cooldown bounds. A 429 parks an account for the server's
 // Retry-After when present, otherwise a conservative default — always clamped
@@ -60,10 +66,18 @@ func markRelogin(ctx context.Context, st *store.Store, acct store.Account, err e
 		if e := st.SetNeedsRelogin(ctx, acct.ID, false); e != nil {
 			logger.Warn("clear needs_relogin failed", "account", acct.Label, "err", e)
 		}
-	case claude.IsRefreshExpired(err):
+	case claude.RequiresRelogin(err):
 		if e := st.SetNeedsRelogin(ctx, acct.ID, true); e != nil {
 			logger.Warn("set needs_relogin failed", "account", acct.Label, "err", e)
+			return
 		}
-		logger.Warn("account needs re-login (refresh token dead)", "account", acct.Label)
+		logger.Warn("account needs re-login", "account", acct.Label, "err", err)
+		// Notify once, on the false→true transition. acct reflects the flag as
+		// loaded this cycle; once it's true the account is skipped on later
+		// cycles, so this fires a single banner per expiry, not one per poll.
+		if !acct.NeedsRelogin {
+			reloginNotify("Claude session expired",
+				fmt.Sprintf("%s can't sign in — open aimonitor and click Re-login.", acct.Label))
+		}
 	}
 }
