@@ -36,6 +36,11 @@ func RefreshAccountUsage(ctx context.Context, st *store.Store, fetcher *claude.U
 
 	limits, err := fetcher.FetchLimits(ctx, cred)
 	if err != nil {
+		// A usage-endpoint 401 means the server revoked the token even though it
+		// looked locally valid (so ensureFreshStash didn't refresh it). That's a
+		// re-login condition, not a transient error — flag it. markRelogin
+		// ignores non-relogin errors, so a network blip leaves the flag alone.
+		markRelogin(ctx, st, acct, err)
 		return provider.Limits{}, err
 	}
 	limits.AccountID = acct.ID
@@ -92,12 +97,20 @@ func ensureFreshStash(ctx context.Context, refresher *claude.TokenRefresher, acc
 		stash.Zero()
 		return provider.Credential{}, fmt.Errorf("parse stash for %q: %w", acct.Label, err)
 	}
+	// No usable tokens at all — Claude Code blanked the blob on logout/expiry.
+	// A valid-looking (non-expired) but empty access token would otherwise sail
+	// past the check below and only fail later at the usage fetch, where it
+	// wouldn't be classified as a re-login condition. Catch it here.
+	if tokens.AccessToken == "" && tokens.RefreshToken == "" {
+		stash.Zero()
+		return provider.Credential{}, &claude.CredentialUnusableError{Label: acct.Label, Reason: "stash has no access or refresh token"}
+	}
 	if !claude.IsExpired(tokens.ExpiresAt) {
 		return stash, nil
 	}
 	stash.Zero()
 	if tokens.RefreshToken == "" {
-		return provider.Credential{}, fmt.Errorf("account %q has no refresh token in its stash; re-add it", acct.Label)
+		return provider.Credential{}, &claude.CredentialUnusableError{Label: acct.Label, Reason: "access token expired and no refresh token to renew it"}
 	}
 
 	lock, err := filelock.Acquire(defaultLockPath())
