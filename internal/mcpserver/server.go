@@ -69,7 +69,7 @@ func catalog() []toolDef {
 				return c.slackDeleteMessage
 			})},
 		{name: "slack_upload_file", svc: ServiceSlack, write: true,
-			desc: "Upload a text file to Slack, optionally sharing it into a channel or thread",
+			desc: "Upload a file to Slack from a local path (preferred for large/binary files) or inline text, optionally sharing it into a channel or thread",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackUploadIn, any] {
 				return c.slackUploadFile
 			})},
@@ -241,7 +241,7 @@ func catalog() []toolDef {
 				return c.clickupListCommentReplies
 			})},
 		{name: "clickup_upload_attachment", svc: ServiceClickUp, write: true,
-			desc: "Attach a file (given as text content) to a ClickUp task",
+			desc: "Attach a file to a ClickUp task from a local path (preferred for large/binary files) or inline text",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuUploadAttachmentIn, any] {
 				return c.clickupUploadAttachment
 			})},

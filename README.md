@@ -121,8 +121,8 @@ aimonitor mcp connect sentry    # store a Sentry auth token (set mcp.sentry.org 
 aimonitor mcp register          # add the server to Claude Code
 ```
 
-- **Slack:** post to channels/threads (mrkdwn, code blocks), upload, search, history, permalinks.
-- **ClickUp:** workspace hierarchy, tasks, comments, attachments, Docs (read & write).
+- **Slack:** post to channels/threads (mrkdwn, code blocks), upload files (from a local path or inline text), search, history, permalinks.
+- **ClickUp:** workspace hierarchy, tasks, comments, attachments (from a local path or inline text), Docs (read & write).
 - **Sentry:** triage digests (projects, issue search, detail), root-cause (latest event stacktrace, tag/value distributions), and actions (resolve/ignore/assign, comment). Org-scoped and self-hosted-aware (`mcp.sentry.org`, `mcp.sentry.base_url`).
 - **Safety:** Claude Code's per-tool prompts are the approval layer; per-service Enabled / Read-only switches and a per-tool disable list refine it. Tokens are verified live, then stored in the OS keyring — never in SQLite or logs.
 
