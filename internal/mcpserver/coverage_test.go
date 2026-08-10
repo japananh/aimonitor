@@ -599,14 +599,14 @@ func TestClickUpUploadAttachment_Validation(t *testing.T) {
 		t.Errorf("must not make HTTP call, hit %s", r.URL.Path)
 	})
 	cases := []cuUploadAttachmentIn{
-		{Filename: "f", Content: "x"}, // missing task_id
-		{TaskID: "T1", Content: "x"},  // missing filename
-		{TaskID: "T1", Filename: "f"}, // missing content
+		{Filename: "f", Content: "x"},                // missing task_id
+		{TaskID: "T1"},                               // neither path nor content
+		{TaskID: "T1", Content: "x"},                 // inline content without a filename
+		{TaskID: "T1", Path: "/tmp/f", Content: "x"}, // both path and content
 	}
 	for _, in := range cases {
-		if _, _, err := c.clickupUploadAttachment(context.Background(), nil, in); err == nil ||
-			!strings.Contains(err.Error(), "required") {
-			t.Errorf("in=%+v err=%v, want required-fields guard", in, err)
+		if _, _, err := c.clickupUploadAttachment(context.Background(), nil, in); err == nil {
+			t.Errorf("in=%+v, want a validation error before any HTTP call", in)
 		}
 	}
 }

@@ -583,8 +583,9 @@ func (c *Client) slackGetPermalink(ctx context.Context, _ *mcp.CallToolRequest, 
 // --- file upload --------------------------------------------------------
 
 type slackUploadIn struct {
-	Filename string `json:"filename" jsonschema:"file name including extension (e.g. report.txt, snippet.go)"`
-	Content  string `json:"content" jsonschema:"the file's content as text"`
+	Path     string `json:"path,omitempty" jsonschema:"absolute path to a file on disk to upload — use this for large or binary files; its bytes are read locally, so nothing has to pass through your output (which would truncate a big file)"`
+	Content  string `json:"content,omitempty" jsonschema:"inline file content as text, for small snippets already in hand; provide either path or content, not both"`
+	Filename string `json:"filename,omitempty" jsonschema:"file name including extension (e.g. report.csv); optional with path (defaults to the path's base name), required with content"`
 	Channel  string `json:"channel,omitempty" jsonschema:"share into this channel ID"`
 	ThreadTS string `json:"thread_ts,omitempty" jsonschema:"share as a reply in this thread (requires channel)"`
 	Title    string `json:"title,omitempty" jsonschema:"display title (defaults to filename)"`
@@ -595,10 +596,10 @@ type slackUploadIn struct {
 // getUploadURLExternal → raw POST of the bytes → completeUploadExternal
 // (which also shares it into a channel/thread when given).
 func (c *Client) slackUploadFile(ctx context.Context, _ *mcp.CallToolRequest, in slackUploadIn) (*mcp.CallToolResult, any, error) {
-	if in.Filename == "" || in.Content == "" {
-		return nil, nil, fmt.Errorf("filename and content are required")
+	data, filename, err := resolveUploadContent(in.Path, in.Content, in.Filename)
+	if err != nil {
+		return nil, nil, err
 	}
-	data := []byte(in.Content)
 
 	// Step 1: reserve an upload URL.
 	var urlOut struct {
@@ -607,7 +608,7 @@ func (c *Client) slackUploadFile(ctx context.Context, _ *mcp.CallToolRequest, in
 		FileID    string `json:"file_id"`
 	}
 	params := url.Values{
-		"filename": {in.Filename},
+		"filename": {filename},
 		"length":   {strconv.Itoa(len(data))},
 	}
 	if err := c.slackGET(ctx, "files.getUploadURLExternal", params, &urlOut); err != nil {
@@ -633,7 +634,7 @@ func (c *Client) slackUploadFile(ctx context.Context, _ *mcp.CallToolRequest, in
 	// Step 3: finalize + share.
 	title := in.Title
 	if title == "" {
-		title = in.Filename
+		title = filename
 	}
 	body := map[string]any{
 		"files": []map[string]string{{"id": urlOut.FileID, "title": title}},
