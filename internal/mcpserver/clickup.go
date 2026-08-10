@@ -1140,8 +1140,9 @@ func (c *Client) clickupUpdateComment(ctx context.Context, _ *mcp.CallToolReques
 
 type cuUploadAttachmentIn struct {
 	TaskID   string `json:"task_id" jsonschema:"task to attach the file to"`
-	Filename string `json:"filename" jsonschema:"file name including extension (e.g. errors.csv)"`
-	Content  string `json:"content" jsonschema:"the file's content as text"`
+	Path     string `json:"path,omitempty" jsonschema:"absolute path to a file on disk to attach — use this for large or binary files; its bytes are read locally, so nothing has to pass through your output (which would truncate a big file)"`
+	Content  string `json:"content,omitempty" jsonschema:"inline file content as text, for small snippets already in hand; provide either path or content, not both"`
+	Filename string `json:"filename,omitempty" jsonschema:"file name including extension (e.g. errors.csv); optional with path (defaults to the path's base name), required with content"`
 }
 
 // multipartFile builds a single-file multipart/form-data body under the given
@@ -1167,14 +1168,18 @@ func multipartFile(field, filename string, content []byte) (*bytes.Buffer, strin
 // field. ClickUp wants the raw token in Authorization (no Bearer), like every
 // other ClickUp call, but the multipart body bypasses the JSON `clickup` helper.
 func (c *Client) clickupUploadAttachment(ctx context.Context, _ *mcp.CallToolRequest, in cuUploadAttachmentIn) (*mcp.CallToolResult, any, error) {
-	if in.TaskID == "" || in.Filename == "" || in.Content == "" {
-		return nil, nil, fmt.Errorf("task_id, filename and content are required")
+	if in.TaskID == "" {
+		return nil, nil, fmt.Errorf("task_id is required")
+	}
+	data, filename, err := resolveUploadContent(in.Path, in.Content, in.Filename)
+	if err != nil {
+		return nil, nil, err
 	}
 	tok, err := c.token(ServiceClickUp)
 	if err != nil {
 		return nil, nil, err
 	}
-	body, ctype, err := multipartFile("attachment", in.Filename, []byte(in.Content))
+	body, ctype, err := multipartFile("attachment", filename, data)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1193,7 +1198,7 @@ func (c *Client) clickupUploadAttachment(ctx context.Context, _ *mcp.CallToolReq
 	if err := c.do(req, &out); err != nil {
 		return nil, nil, err
 	}
-	res := map[string]any{"status": "attached", "filename": in.Filename}
+	res := map[string]any{"status": "attached", "filename": filename}
 	if out.ID != "" {
 		res["attachment_id"] = out.ID
 	}
