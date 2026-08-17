@@ -353,6 +353,28 @@ type slackFileInfo struct {
 	Lines              int    `json:"lines"`
 	URLPrivate         string `json:"url_private"`
 	URLPrivateDownload string `json:"url_private_download"`
+	OriginalW          int    `json:"original_w"`
+	OriginalH          int    `json:"original_h"`
+	// Slack pre-renders these for images. Largest first when we need a
+	// smaller stand-in for an oversized original — no local image decoding.
+	Thumb1024 string `json:"thumb_1024"`
+	Thumb960  string `json:"thumb_960"`
+	Thumb800  string `json:"thumb_800"`
+	Thumb720  string `json:"thumb_720"`
+	Thumb480  string `json:"thumb_480"`
+	Thumb360  string `json:"thumb_360"`
+}
+
+// thumbsLargestFirst returns the file's thumbnail URLs, biggest first, skipping
+// the sizes Slack didn't generate.
+func (f slackFileInfo) thumbsLargestFirst() []string {
+	var out []string
+	for _, u := range []string{f.Thumb1024, f.Thumb960, f.Thumb800, f.Thumb720, f.Thumb480, f.Thumb360} {
+		if u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // isTextMimetype reports whether a Slack file's mimetype is text-like enough to
@@ -402,14 +424,18 @@ func sliceLines(s string, offset, limit int) (out string, total int, ranged bool
 
 type slackGetFileIn struct {
 	File   string `json:"file" jsonschema:"file ID (F…), taken from a message's files[].id (returned when a read tool is called with include_files)"`
+	SaveTo string `json:"save_to,omitempty" jsonschema:"absolute path to write the raw bytes to instead of returning them inline — works for ANY mimetype (PDF, zip, oversized image); returns the path so you can open it locally"`
 	Offset int    `json:"offset,omitempty" jsonschema:"1-based line to start returning from (default 1); pair with limit to page through a large file"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"max lines to return starting at offset (default: all, up to the ~1 MiB byte cap)"`
 }
 
-// slackGetFile resolves a file id server-side: files.info for metadata, then —
-// for text-like mimetypes — downloads url_private with the held token and
-// returns the full text (optionally a line window). Binary/non-text files get
-// metadata + a note, never raw bytes.
+// slackGetFile resolves a file id server-side: files.info for metadata, then
+// downloads url_private with the held token and returns the payload in the shape
+// that fits the mimetype — full text (optionally a line window) for text-like
+// files, an MCP image block for png/jpeg/gif/webp, or, with save_to, the raw
+// bytes written to a local path for anything at all. Only formats that are
+// neither text nor an inline-able image and were not saved come back as
+// metadata + a note.
 func (c *Client) slackGetFile(ctx context.Context, _ *mcp.CallToolRequest, in slackGetFileIn) (*mcp.CallToolResult, any, error) {
 	if in.File == "" {
 		return nil, nil, fmt.Errorf("file is required")
@@ -427,17 +453,44 @@ func (c *Client) slackGetFile(ctx context.Context, _ *mcp.CallToolRequest, in sl
 		"mimetype": f.Mimetype, "filetype": f.Filetype,
 		"size": f.Size, "lines": f.Lines,
 	}
-
-	// Non-text mimetype → metadata + a note, no bytes.
-	if !isTextMimetype(f.Mimetype) {
-		out["note"] = fmt.Sprintf("non-text file (mimetype %q); content not returned", f.Mimetype)
-		return textResult(out)
+	if f.OriginalW > 0 && f.OriginalH > 0 {
+		out["dimensions"] = fmt.Sprintf("%dx%d", f.OriginalW, f.OriginalH)
 	}
 
 	dl := f.URLPrivateDownload
 	if dl == "" {
 		dl = f.URLPrivate
 	}
+
+	// save_to wins over any inline shape: the caller asked for bytes on disk.
+	// Mimetype-agnostic, so it's the escape hatch for PDFs, archives, and
+	// images too big to inline.
+	if in.SaveTo != "" {
+		if dl == "" {
+			out["note"] = "no download URL available for this file"
+			return textResult(out)
+		}
+		n, err := saveDownloadedFile(ctx, in.SaveTo, dl, c.slackDownload)
+		if err != nil {
+			return nil, nil, err
+		}
+		out["saved_to"] = in.SaveTo
+		out["bytes_written"] = n
+		return textResult(out)
+	}
+
+	// Image → hand back real pixels as an MCP image block.
+	if isInlineImageMimetype(f.Mimetype) {
+		return c.slackImageResult(ctx, f, dl, out)
+	}
+
+	// Neither text nor an inline-able image → metadata + a note pointing at the
+	// way to actually get the bytes.
+	if !isTextMimetype(f.Mimetype) {
+		out["note"] = fmt.Sprintf("non-text file (mimetype %q); pass save_to=<absolute path> to download it and open it locally", f.Mimetype)
+		return textResult(out)
+	}
+
 	if dl == "" {
 		out["note"] = "no download URL available for this file"
 		return textResult(out)
@@ -463,6 +516,20 @@ func (c *Client) slackGetFile(ctx context.Context, _ *mcp.CallToolRequest, in sl
 		out["content_lines"] = total
 	}
 	return textResult(out)
+}
+
+// slackImageResult hands slackGetFile's image case to the shared inline-image
+// path: the original first (skipped outright when files.info already reports it
+// over the cap), then Slack's pre-rendered thumbnails largest-first.
+func (c *Client) slackImageResult(ctx context.Context, f slackFileInfo, dl string, out map[string]any) (*mcp.CallToolResult, any, error) {
+	var sources []imageSource
+	if dl != "" && f.Size <= inlineImageMaxBytes {
+		sources = append(sources, imageSource{URL: dl, Original: true})
+	}
+	for _, u := range f.thumbsLargestFirst() {
+		sources = append(sources, imageSource{URL: u})
+	}
+	return inlineImageResult(ctx, out, sources, c.slackDownload, "pass save_to=<absolute path>")
 }
 
 // --- channels / users -------------------------------------------------

@@ -817,7 +817,7 @@ func TestSlackGetFile_BinaryReturnsNote(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok": true,
 				"file": map[string]any{
-					"id": "F3", "name": "photo.png", "mimetype": "image/png",
+					"id": "F3", "name": "spec.pdf", "mimetype": "application/pdf",
 					"size": 40000, "url_private_download": "http://" + r.Host + "/download",
 				},
 			})
@@ -837,11 +837,15 @@ func TestSlackGetFile_BinaryReturnsNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	if downloaded {
-		t.Error("must NOT download bytes for a non-text mimetype")
+		t.Error("must NOT download bytes for a non-text, non-image mimetype")
 	}
 	out := resultJSON(t, res)
-	if !strings.Contains(out, "photo.png") || !strings.Contains(out, "note") || !strings.Contains(out, "image/png") {
+	if !strings.Contains(out, "spec.pdf") || !strings.Contains(out, "note") || !strings.Contains(out, "application/pdf") {
 		t.Errorf("binary result must carry metadata + a note: %s", out)
+	}
+	// The note must name the way out, not just refuse.
+	if !strings.Contains(out, "save_to") {
+		t.Errorf("binary note must point at save_to: %s", out)
 	}
 	if strings.Contains(out, `"content"`) {
 		t.Errorf("binary result must not carry a content field: %s", out)

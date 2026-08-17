@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -103,6 +104,34 @@ type rawCUAttachment struct {
 	URL          string `json:"url"`
 	URLWithQuery string `json:"url_w_query"`
 	URLWithHost  string `json:"url_w_host"`
+	// Pre-rendered smaller sizes ClickUp generates for images; used as
+	// stand-ins when the original is too big to return inline.
+	ThumbnailLarge  string `json:"thumbnail_large"`
+	ThumbnailMedium string `json:"thumbnail_medium"`
+	ThumbnailSmall  string `json:"thumbnail_small"`
+}
+
+// thumbsLargestFirst returns the attachment's thumbnail URLs, biggest first,
+// skipping the sizes ClickUp didn't generate.
+func (a rawCUAttachment) thumbsLargestFirst() []string {
+	var out []string
+	for _, u := range []string{a.ThumbnailLarge, a.ThumbnailMedium, a.ThumbnailSmall} {
+		if u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// downloadURL picks the fetchable URL for an attachment, preferring the
+// presigned variant ClickUp hands out for direct download.
+func (a rawCUAttachment) downloadURL() string {
+	for _, u := range []string{a.URLWithQuery, a.URL, a.URLWithHost} {
+		if u != "" {
+			return u
+		}
+	}
+	return ""
 }
 
 // slimAttachment picks the directly-downloadable URL and coalesces the mimetype
@@ -110,13 +139,7 @@ type rawCUAttachment struct {
 // without auth; plain url can 401 on a private workspace, so prefer the signed
 // variant and fall back only if it's absent.
 func slimAttachment(a rawCUAttachment) cuAttachment {
-	dl := a.URLWithQuery
-	if dl == "" {
-		dl = a.URL
-	}
-	if dl == "" {
-		dl = a.URLWithHost
-	}
+	dl := a.downloadURL()
 	mime := a.Mimetype
 	if mime == "" {
 		mime = a.MimeType
@@ -1137,6 +1160,108 @@ func (c *Client) clickupUpdateComment(ctx context.Context, _ *mcp.CallToolReques
 }
 
 // --- attachments --------------------------------------------------------
+
+type cuGetAttachmentIn struct {
+	TaskID       string `json:"task_id" jsonschema:"task the attachment is on"`
+	AttachmentID string `json:"attachment_id" jsonschema:"attachments[].id from clickup_get_task"`
+	SaveTo       string `json:"save_to,omitempty" jsonschema:"absolute path to write the raw bytes to instead of returning them inline — works for ANY mimetype (PDF, zip, oversized image); returns the path so you can open it locally"`
+	Offset       int    `json:"offset,omitempty" jsonschema:"1-based line to start returning from, for text attachments"`
+	Limit        int    `json:"limit,omitempty" jsonschema:"max lines to return starting at offset, for text attachments"`
+}
+
+// clickupGetAttachment reads a task attachment's actual content. The URL is
+// resolved fresh from the task on every call rather than taken from the caller,
+// because ClickUp's download links are presigned and expire.
+//
+// Shape mirrors slack_get_file: images come back as an MCP image block, text-like
+// files as text, and save_to writes raw bytes to disk for anything at all.
+func (c *Client) clickupGetAttachment(ctx context.Context, _ *mcp.CallToolRequest, in cuGetAttachmentIn) (*mcp.CallToolResult, any, error) {
+	if in.TaskID == "" || in.AttachmentID == "" {
+		return nil, nil, fmt.Errorf("task_id and attachment_id are required")
+	}
+	var task struct {
+		Attachments []rawCUAttachment `json:"attachments"`
+	}
+	if err := c.clickup(ctx, http.MethodGet, "/task/"+url.PathEscape(in.TaskID), nil, nil, &task); err != nil {
+		return nil, nil, err
+	}
+	var a rawCUAttachment
+	found := false
+	for _, cand := range task.Attachments {
+		if cand.ID == in.AttachmentID {
+			a, found = cand, true
+			break
+		}
+	}
+	if !found {
+		ids := make([]string, 0, len(task.Attachments))
+		for _, cand := range task.Attachments {
+			ids = append(ids, cand.ID)
+		}
+		return nil, nil, fmt.Errorf("attachment %q not found on task %s (available: %s)",
+			in.AttachmentID, in.TaskID, strings.Join(ids, ", "))
+	}
+
+	mime := a.Mimetype
+	if mime == "" {
+		mime = a.MimeType
+	}
+	out := map[string]any{
+		"id": a.ID, "title": a.Title, "mimetype": mime,
+		"extension": a.Extension, "size": a.Size,
+	}
+	dl := a.downloadURL()
+	if dl == "" {
+		out["note"] = "no download URL available for this attachment"
+		return textResult(out)
+	}
+
+	if in.SaveTo != "" {
+		n, err := saveDownloadedFile(ctx, in.SaveTo, dl, c.clickupDownload)
+		if err != nil {
+			return nil, nil, err
+		}
+		out["saved_to"] = in.SaveTo
+		out["bytes_written"] = n
+		return textResult(out)
+	}
+
+	if isInlineImageMimetype(mime) {
+		var sources []imageSource
+		if a.Size <= inlineImageMaxBytes {
+			sources = append(sources, imageSource{URL: dl, Original: true})
+		}
+		for _, u := range a.thumbsLargestFirst() {
+			sources = append(sources, imageSource{URL: u})
+		}
+		return inlineImageResult(ctx, out, sources, c.clickupDownload, "pass save_to=<absolute path>")
+	}
+
+	if !isTextMimetype(mime) {
+		out["note"] = fmt.Sprintf("non-text attachment (mimetype %q); pass save_to=<absolute path> to download it and open it locally", mime)
+		return textResult(out)
+	}
+
+	data, err := c.clickupDownload(ctx, dl, slackFileMaxBytes+1)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(data) > slackFileMaxBytes {
+		data = data[:slackFileMaxBytes]
+		out["truncated"] = true
+	}
+	content, total, ranged := sliceLines(string(data), in.Offset, in.Limit)
+	out["content"] = content
+	if ranged {
+		start := in.Offset
+		if start < 1 {
+			start = 1
+		}
+		out["offset"] = start
+		out["content_lines"] = total
+	}
+	return textResult(out)
+}
 
 type cuUploadAttachmentIn struct {
 	TaskID   string `json:"task_id" jsonschema:"task to attach the file to"`
