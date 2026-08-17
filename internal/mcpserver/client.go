@@ -179,6 +179,49 @@ func (c *Client) slackDownload(ctx context.Context, rawURL string, maxBytes int6
 	return io.ReadAll(io.LimitReader(resp.Body, maxBytes))
 }
 
+// getBytes GETs rawURL, optionally authenticated, and returns the body (capped
+// at maxBytes) with the HTTP status so the caller can branch on 401/403.
+func (c *Client) getBytes(ctx context.Context, rawURL, authz string, maxBytes int64) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	if authz != "" {
+		req.Header.Set("Authorization", authz)
+	}
+	req.Header.Set("User-Agent", userAgent())
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("download file: %w", err)
+	}
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return nil, resp.StatusCode, fmt.Errorf("download file: HTTP %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	return b, resp.StatusCode, err
+}
+
+// clickupDownload fetches a ClickUp attachment URL. Those are usually presigned
+// object-storage links that carry their own auth in the query string — and S3
+// rejects a request that also sends an Authorization header — so try unauthenticated
+// first and only retry with the ClickUp token when the host demands it (401/403).
+func (c *Client) clickupDownload(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
+	data, status, err := c.getBytes(ctx, rawURL, "", maxBytes)
+	if err == nil {
+		return data, nil
+	}
+	if status != http.StatusUnauthorized && status != http.StatusForbidden {
+		return nil, err
+	}
+	tok, terr := c.token(ServiceClickUp)
+	if terr != nil {
+		return nil, err // surface the download failure, not the missing token
+	}
+	data, _, err = c.getBytes(ctx, rawURL, tok, maxBytes)
+	return data, err
+}
+
 // clickup runs one ClickUp v2 API call. ClickUp wants the raw personal
 // token in Authorization (no Bearer prefix).
 func (c *Client) clickup(ctx context.Context, method, path string, query url.Values, body, out any) error {

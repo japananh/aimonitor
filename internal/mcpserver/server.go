@@ -17,13 +17,21 @@ import (
 // standard return shape for every tool here. Tools return raw data;
 // Claude does the prose.
 func textResult(v any) (*mcp.CallToolResult, any, error) {
+	return textResultWith(v)
+}
+
+// textResultWith is textResult plus trailing content blocks — an image, say —
+// after the JSON metadata block. Keeps the marshal-and-wrap logic in one place
+// for the tools that return more than text.
+func textResultWith(v any, extra ...mcp.Content) (*mcp.CallToolResult, any, error) {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode result: %w", err)
 	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: string(b)}},
-	}, nil, nil
+	content := make([]mcp.Content, 0, 1+len(extra))
+	content = append(content, &mcp.TextContent{Text: string(b)})
+	content = append(content, extra...)
+	return &mcp.CallToolResult{Content: content}, nil, nil
 }
 
 // toolDef pairs a tool's metadata with its registration thunk so the
@@ -89,7 +97,7 @@ func catalog() []toolDef {
 				return c.slackThreadReplies
 			})},
 		{name: "slack_get_file", svc: ServiceSlack,
-			desc: "Read the full content of a Slack file attachment by its files[].id (the read tools only expose Slack's short, truncated preview). Fetches server-side with the workspace token; returns full text + metadata (name, mimetype, size, lines) for text-like files, with optional offset/limit line paging and a ~1 MiB cap. Binary/non-text files return metadata + a note",
+			desc: "Read a Slack file attachment by its files[].id (the read tools only expose Slack's short, truncated preview). Fetches server-side with the workspace token. Text-like files return full text + metadata, with optional offset/limit line paging and a ~1 MiB cap. IMAGES (png/jpeg/gif/webp) come back as a viewable image — use this to actually see a posted screenshot; an oversized one falls back to Slack's largest fitting thumbnail. For any other binary (PDF, zip) or a full-resolution image, pass save_to=<absolute path> to download it and open it locally",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackGetFileIn, any] {
 				return c.slackGetFile
 			})},
@@ -239,6 +247,11 @@ func catalog() []toolDef {
 			desc: "List the threaded replies to a ClickUp comment (comment_id from clickup_list_comments; use when a comment's reply_count > 0)",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuCommentRepliesIn, any] {
 				return c.clickupListCommentReplies
+			})},
+		{name: "clickup_get_attachment", svc: ServiceClickUp,
+			desc: "Read a ClickUp task attachment's actual content by task_id + attachments[].id (clickup_get_task only returns metadata + an expiring URL). IMAGES (png/jpeg/gif/webp) come back as a viewable image — use this to actually see a screenshot attached to a task; text-like files return their text. For any other binary (PDF, zip) or a full-resolution image, pass save_to=<absolute path> to download it and open it locally",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[cuGetAttachmentIn, any] {
+				return c.clickupGetAttachment
 			})},
 		{name: "clickup_upload_attachment", svc: ServiceClickUp, write: true,
 			desc: "Attach a file to a ClickUp task from a local path (preferred for large/binary files) or inline text",
