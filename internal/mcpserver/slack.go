@@ -582,12 +582,62 @@ type slackListUsersIn struct {
 	Cursor string `json:"cursor,omitempty" jsonschema:"pagination cursor from a previous call"`
 }
 
-type slackUser struct {
+// rawSlackUser is Slack's user object from users.info/users.list. The fields
+// worth surfacing are split across the top level and the nested profile.
+type rawSlackUser struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
-	RealName string `json:"real_name,omitempty"`
-	Deleted  bool   `json:"deleted,omitempty"`
-	IsBot    bool   `json:"is_bot,omitempty"`
+	RealName string `json:"real_name"`
+	TZ       string `json:"tz"`
+	Deleted  bool   `json:"deleted"`
+	IsBot    bool   `json:"is_bot"`
+	Profile  struct {
+		Title       string `json:"title"`
+		Email       string `json:"email"`
+		DisplayName string `json:"display_name"`
+		RealName    string `json:"real_name"`
+		Phone       string `json:"phone"`
+	} `json:"profile"`
+}
+
+type slackUser struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	RealName    string `json:"real_name,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Phone       string `json:"phone,omitempty"`
+	TZ          string `json:"tz,omitempty"`
+	Deleted     bool   `json:"deleted,omitempty"`
+	IsBot       bool   `json:"is_bot,omitempty"`
+}
+
+func slimUser(u rawSlackUser) slackUser {
+	realName := u.RealName
+	if realName == "" {
+		realName = u.Profile.RealName
+	}
+	return slackUser{
+		ID:          u.ID,
+		Name:        u.Name,
+		RealName:    realName,
+		DisplayName: u.Profile.DisplayName,
+		Title:       u.Profile.Title,
+		Email:       u.Profile.Email,
+		Phone:       u.Profile.Phone,
+		TZ:          u.TZ,
+		Deleted:     u.Deleted,
+		IsBot:       u.IsBot,
+	}
+}
+
+func slimUsers(us []rawSlackUser) []slackUser {
+	out := make([]slackUser, 0, len(us))
+	for _, u := range us {
+		out = append(out, slimUser(u))
+	}
+	return out
 }
 
 func (c *Client) slackListUsers(ctx context.Context, _ *mcp.CallToolRequest, in slackListUsersIn) (*mcp.CallToolResult, any, error) {
@@ -601,7 +651,7 @@ func (c *Client) slackListUsers(ctx context.Context, _ *mcp.CallToolRequest, in 
 	}
 	var out struct {
 		slackEnvelope
-		Members          []slackUser `json:"members"`
+		Members          []rawSlackUser `json:"members"`
 		ResponseMetadata struct {
 			NextCursor string `json:"next_cursor"`
 		} `json:"response_metadata"`
@@ -610,7 +660,7 @@ func (c *Client) slackListUsers(ctx context.Context, _ *mcp.CallToolRequest, in 
 		return nil, nil, err
 	}
 	return textResult(map[string]any{
-		"users":       out.Members,
+		"users":       slimUsers(out.Members),
 		"next_cursor": out.ResponseMetadata.NextCursor,
 	})
 }
@@ -622,12 +672,12 @@ type slackGetUserIn struct {
 func (c *Client) slackGetUser(ctx context.Context, _ *mcp.CallToolRequest, in slackGetUserIn) (*mcp.CallToolResult, any, error) {
 	var out struct {
 		slackEnvelope
-		User slackUser `json:"user"`
+		User rawSlackUser `json:"user"`
 	}
 	if err := c.slackGET(ctx, "users.info", url.Values{"user": {in.User}}, &out); err != nil {
 		return nil, nil, err
 	}
-	return textResult(out.User)
+	return textResult(slimUser(out.User))
 }
 
 type slackPermalinkIn struct {

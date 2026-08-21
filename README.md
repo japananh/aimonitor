@@ -127,7 +127,7 @@ aimonitor mcp register          # add the server to Claude Code
 - **Safety:** Claude Code's per-tool prompts are the approval layer; per-service Enabled / Read-only switches and a per-tool disable list refine it. Tokens are verified live, then stored in the OS keyring — never in SQLite or logs.
 
 > **Slack token scopes.** The Slack token is a **user** token (`xoxp-…`). Grant these **User Token Scopes** on your Slack app (api.slack.com → OAuth & Permissions), reinstall, then connect — a missing one surfaces as `slack: missing scope "…"` on the affected tool:
-> `search:read`, `users:read`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `files:read`, `files:write`.
+> `search:read`, `users:read`, `users:read.email`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `files:read`, `files:write`.
 
 > **Sentry token scopes.** A Sentry **auth token** (User Auth Token, or an Internal Integration). Set `mcp.sentry.org` — and `mcp.sentry.base_url` for self-hosted — *before* `connect`. Scopes: `org:read`, `project:read`, `event:read` for the read/triage tools; add `event:write` + `member:read` to resolve/assign/comment; `event:admin` to delete comments.
 
