@@ -107,12 +107,12 @@ func catalog() []toolDef {
 				return c.slackListChannels
 			})},
 		{name: "slack_list_users", svc: ServiceSlack,
-			desc: "List Slack workspace users",
+			desc: "List Slack workspace users. Each entry carries the profile: real_name/display_name, title (job title), email, phone and tz — enough to build a roster or disambiguate two people sharing a first name (email needs the users:read.email scope)",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackListUsersIn, any] {
 				return c.slackListUsers
 			})},
 		{name: "slack_get_user", svc: ServiceSlack,
-			desc: "Get one Slack user by ID",
+			desc: "Get one Slack user by ID, with their profile: real_name/display_name, title (job title), email, phone and tz (email needs the users:read.email scope)",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackGetUserIn, any] {
 				return c.slackGetUser
 			})},

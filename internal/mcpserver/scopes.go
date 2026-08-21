@@ -11,7 +11,7 @@ import "strings"
 // Tool → Slack method → scope:
 //
 //	search_messages                       search.messages        search:read
-//	get_user / list_users                 users.info/users.list  users:read
+//	get_user / list_users                 users.info/users.list  users:read users:read.email
 //	channel_history / thread_replies      conversations.history  channels:history groups:history im:history mpim:history
 //	list_channels                         conversations.list     channels:read groups:read im:read mpim:read
 //	post_message / update / delete        chat.*                 chat:write
@@ -19,7 +19,7 @@ import "strings"
 //	get_file                              files.info + download  files:read
 var SlackUserTokenScopes = []string{
 	"search:read",
-	"users:read",
+	"users:read", "users:read.email",
 	"channels:history", "groups:history", "im:history", "mpim:history",
 	"channels:read", "groups:read", "im:read", "mpim:read",
 	"chat:write",
