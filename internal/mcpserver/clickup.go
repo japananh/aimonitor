@@ -243,7 +243,7 @@ func (c *Client) clickupListLists(ctx context.Context, _ *mcp.CallToolRequest, i
 // GET /task/{id}/member does, and it's the task you'd be @mentioning on anyway.
 type cuListMembersIn struct {
 	WorkspaceID string `json:"workspace_id,omitempty" jsonschema:"workspace (team) ID — lists workspace members via GET /team. ClickUp omits members from /team for large workspaces (returns an empty list); pass task_id then."`
-	TaskID      string `json:"task_id,omitempty" jsonschema:"a task ID — lists the members with access to this task (GET /task/{id}/member), each as {id, username, email}. Use this to resolve user IDs for @mentions when the workspace member list is empty; pass the task you're commenting on."`
+	TaskID      string `json:"task_id,omitempty" jsonschema:"a task ID — lists the members with access to this task (GET /task/{id}/member), each as {id, username, email}. Use this to resolve user IDs for @mentions when the workspace member list is empty; pass the task you're commenting on. NOTE: this roster is scoped by Space access, NOT a workspace directory — a workspace member with no access to the task's Space is legitimately absent and can't be resolved here. If someone you need is missing, harvest their id from clickup_list_comments/clickup_list_comment_replies (each comment's mentions[] carries the numeric id of anyone already @mentioned on the task)."`
 }
 
 func (c *Client) clickupListMembers(ctx context.Context, _ *mcp.CallToolRequest, in cuListMembersIn) (*mcp.CallToolResult, any, error) {
@@ -1058,7 +1058,7 @@ func commentBody(text string, mentions []int, rich []map[string]any) map[string]
 type cuAddCommentIn struct {
 	TaskID      string           `json:"task_id" jsonschema:"task to comment on"`
 	Comment     string           `json:"comment,omitempty" jsonschema:"comment text (plain); optional if comment_json or mentions is given"`
-	Mentions    []int            `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members (for a large workspace whose member list is empty, call it with task_id set to this task)"`
+	Mentions    []int            `json:"mentions,omitempty" jsonschema:"ClickUp user IDs to @mention as live tags that notify them; get IDs from clickup_list_members (for a large workspace whose member list is empty, call it with task_id set to this task). If someone isn't in either roster (the task-member list is Space-scoped, not a workspace directory), their id may still appear in clickup_list_comments mentions[] if a human already tagged them here."`
 	CommentJSON []map[string]any `json:"comment_json,omitempty" jsonschema:"optional ClickUp rich-text comment array (segments like {text, attributes} and/or {type:tag, user:{id}}); when set it is sent verbatim and overrides comment/mentions — use for bullet lists, code blocks, bold, etc."`
 }
 
@@ -1073,20 +1073,48 @@ func (c *Client) clickupAddComment(ctx context.Context, _ *mcp.CallToolRequest, 
 	return textResult(map[string]any{"comment_id": out.ID, "status": "posted"})
 }
 
+// cuMention is one @mention harvested from a comment's structured segments —
+// the numeric id is what clickup_add_comment / clickup_update_comment want in
+// mentions[]. It lets a caller resolve a user ID for someone the member-list
+// tools can't reach (a member outside the task's Space isn't in either roster);
+// when a human has tagged them on the task, their id reads back here (#126).
+type cuMention struct {
+	ID       int    `json:"id"`
+	Username string `json:"username,omitempty"`
+	Email    string `json:"email,omitempty"`
+}
+
 // cuComment is the slimmed comment/reply shape. reply_count > 0 means the
 // comment has threaded replies — fetch them with clickup_list_comment_replies
 // (ClickUp's /task/{id}/comment returns only top-level comments, not replies).
+// mentions lists any @mentioned users (with their numeric ids), harvested from
+// ClickUp's structured comment segments that `text` flattens away.
 type cuComment struct {
-	ID         string `json:"id"`
-	Text       string `json:"text"`
-	By         string `json:"by"`
-	Date       string `json:"date"`
-	ReplyCount int    `json:"reply_count,omitempty"`
+	ID         string      `json:"id"`
+	Text       string      `json:"text"`
+	By         string      `json:"by"`
+	Date       string      `json:"date"`
+	ReplyCount int         `json:"reply_count,omitempty"`
+	Mentions   []cuMention `json:"mentions,omitempty"`
+}
+
+// rawCUCommentSegment is one piece of ClickUp's structured `comment` array. A
+// mention rides on a segment whose `user` is populated — user.id is the numeric
+// id needed to @mention that person again. `text` collapses these to a flat
+// string (dropping the ids), so we read the segments to recover them.
+type rawCUCommentSegment struct {
+	Text string `json:"text"`
+	User *struct {
+		ID       int    `json:"id"`
+		Username string `json:"username"`
+		Email    string `json:"email"`
+	} `json:"user"`
 }
 
 type rawCUComment struct {
-	ID          string `json:"id"`
-	CommentText string `json:"comment_text"`
+	ID          string                `json:"id"`
+	CommentText string                `json:"comment_text"`
+	Comment     []rawCUCommentSegment `json:"comment"`
 	User        struct {
 		Username string `json:"username"`
 	} `json:"user"`
@@ -1095,7 +1123,19 @@ type rawCUComment struct {
 }
 
 func slimComment(cm rawCUComment) cuComment {
-	return cuComment{ID: cm.ID, Text: cm.CommentText, By: cm.User.Username, Date: cm.Date, ReplyCount: cm.ReplyCount}
+	out := cuComment{ID: cm.ID, Text: cm.CommentText, By: cm.User.Username, Date: cm.Date, ReplyCount: cm.ReplyCount}
+	// Recover @mentioned user ids from the structured segments — a member the
+	// list tools can't reach can still be resolved from a tag a human left (#126).
+	for _, seg := range cm.Comment {
+		if seg.User != nil && seg.User.ID != 0 {
+			out.Mentions = append(out.Mentions, cuMention{
+				ID:       seg.User.ID,
+				Username: seg.User.Username,
+				Email:    seg.User.Email,
+			})
+		}
+	}
+	return out
 }
 
 func (c *Client) clickupListComments(ctx context.Context, _ *mcp.CallToolRequest, in cuTaskIn) (*mcp.CallToolResult, any, error) {
