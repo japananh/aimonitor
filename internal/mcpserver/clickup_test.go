@@ -179,6 +179,46 @@ func TestCommentBody_RichTextWinsAndIsVerbatim(t *testing.T) {
 	}
 }
 
+// slimComment must recover @mentioned user ids from ClickUp's structured
+// `comment` segment array — which `text` flattens away — so a caller can harvest
+// the numeric id of someone the member-list tools can't reach (#126). Only
+// segments carrying a real user (id != 0) count; plain text segments don't.
+func TestSlimComment_SurfacesMentionIDs(t *testing.T) {
+	raw := rawCUComment{ID: "c1", CommentText: "hey @Backend Lead please review", Date: "1782891262181", ReplyCount: 2}
+	raw.User.Username = "alice"
+	raw.Comment = []rawCUCommentSegment{
+		{Text: "hey "},
+		{Text: "@Backend Lead", User: &struct {
+			ID       int    `json:"id"`
+			Username string `json:"username"`
+			Email    string `json:"email"`
+		}{ID: 777, Username: "backend.lead", Email: "lead@example.com"}},
+		{Text: " please review"},
+	}
+
+	got := slimComment(raw)
+	if got.ID != "c1" || got.Text != "hey @Backend Lead please review" || got.By != "alice" || got.ReplyCount != 2 {
+		t.Errorf("base fields = %+v, want id/text/by/reply_count preserved", got)
+	}
+	if len(got.Mentions) != 1 {
+		t.Fatalf("mentions = %v, want exactly one harvested tag", got.Mentions)
+	}
+	m := got.Mentions[0]
+	if m.ID != 777 || m.Username != "backend.lead" || m.Email != "lead@example.com" {
+		t.Errorf("mention = %+v, want {777 backend.lead lead@example.com}", m)
+	}
+}
+
+// A comment with no tag segments must carry no mentions (nil slice → omitted
+// from JSON via omitempty), matching the pre-#126 readback shape.
+func TestSlimComment_NoMentionsWhenNoTags(t *testing.T) {
+	raw := rawCUComment{ID: "c2", CommentText: "just text"}
+	raw.Comment = []rawCUCommentSegment{{Text: "just text"}}
+	if got := slimComment(raw); got.Mentions != nil {
+		t.Errorf("mentions = %v, want nil (no tag segments)", got.Mentions)
+	}
+}
+
 // createTaskBody must map custom_item_id onto the ClickUp body, and send it even
 // when the type ID is 0 (a valid work-item type id) — the field is a pointer so
 // "set to 0" is distinct from "omitted".
