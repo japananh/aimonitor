@@ -142,11 +142,11 @@ homebrew_casks:
     # Cask only runs on darwin; goreleaser auto-picks the universal artifact.
     binaries:
       - aimonitor
-    # goreleaser's HomebrewCask schema has no `app:`/`postflight:` field,
-    # so inject the cask DSL directly via custom_block:
+    # goreleaser's HomebrewCask schema has no `app:`/`postflight_steps:`
+    # field, so inject the cask DSL directly via custom_block:
     #   - app: install AIMonitor.app into /Applications.
     #   - depends_on: enforce the minimum macOS at install time.
-    #   - postflight (runs on install AND every `brew upgrade`):
+    #   - postflight_steps (runs on install AND every `brew upgrade`):
     #       1. strip the Gatekeeper quarantine flag off the freshly-staged
     #          unsigned .app so the GUI opens without the "damaged" block.
     #          Each upgrade re-stages a re-quarantined copy, so this re-runs
@@ -155,24 +155,38 @@ homebrew_casks:
     #          immediately instead of "daemon not running".
     #     must_succeed:false on both → a headless/locked-down install still
     #     completes; the caveats repeat the manual commands as a fallback.
-    #     The LaunchAgent records the staged binary path; the postflight
-    #     re-runs on every upgrade, so the path self-heals across versions.
+    #     The LaunchAgent records the staged binary path; the steps re-run
+    #     on every upgrade, so the path self-heals across versions.
+    #
+    # postflight_steps is a declarative step plan, NOT arbitrary Ruby, so
+    # the two habits carried over from `postflight` both fail SILENTLY:
+    #   - `#{appdir}` / `#{staged_path}` do not exist here (the block is
+    #     evaluated against InstallSteps::DSL). A path argument must use a
+    #     {{token}} template, which the runner expands at execution time.
+    #   - only `command` accepts base:, so a path that is an *argument*
+    #     (xattr's target) has to carry {{appdir}} itself; routing it
+    #     through chdir: silently does nothing.
+    # Both were verified against Homebrew 6.0.22 by installing from a
+    # scratch tap and checking the quarantine flag afterwards.
     custom_block: |
       depends_on macos: :sonoma
       app "AIMonitor.app"
-      postflight do
+      postflight_steps do
         # Strip the Gatekeeper quarantine flag off the freshly-staged,
         # unsigned .app so the GUI opens without the "damaged" /
         # "unidentified developer" block. Homebrew re-stages a fresh,
         # re-quarantined copy on every `brew upgrade`, so this must re-run
-        # each time — and it does (postflight runs on install AND upgrade).
-        system_command "/usr/bin/xattr",
-                       args: ["-dr", "com.apple.quarantine", "#{appdir}/AIMonitor.app"],
-                       must_succeed: false
+        # each time — and it does (the steps run on install AND upgrade).
+        run "/usr/bin/xattr",
+            args: ["-dr", "com.apple.quarantine", "{{appdir}}/AIMonitor.app"],
+            writable_paths: ["AIMonitor.app"],
+            writable_base: :appdir,
+            must_succeed: false
         # Register the daemon at login so the menu bar shows live data at once.
-        system_command "#{staged_path}/aimonitor",
-                       args: ["config", "set", "autostart", "true"],
-                       must_succeed: false
+        run "aimonitor",
+            base: :staged_path,
+            args: ["config", "set", "autostart", "true"],
+            must_succeed: false
       end
     # Surfaced after `brew install`. Documented in docs/unsigned-app.md.
     caveats: |
