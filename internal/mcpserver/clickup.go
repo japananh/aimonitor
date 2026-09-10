@@ -1088,7 +1088,8 @@ type cuMention struct {
 // comment has threaded replies — fetch them with clickup_list_comment_replies
 // (ClickUp's /task/{id}/comment returns only top-level comments, not replies).
 // mentions lists any @mentioned users (with their numeric ids), harvested from
-// ClickUp's structured comment segments that `text` flattens away.
+// ClickUp's structured comment segments. text is rendered from those same
+// segments, so an @mention appears where it really sits in the comment.
 type cuComment struct {
 	ID         string      `json:"id"`
 	Text       string      `json:"text"`
@@ -1122,8 +1123,37 @@ type rawCUComment struct {
 	ReplyCount int    `json:"reply_count"`
 }
 
+// commentText renders a comment in the order its segments actually appear.
+// ClickUp's own comment_text collapses every @mention tag to the end of the
+// string regardless of where the tag sits, so a comment posted with the tag
+// first reads back identical to one posted with it last and placement can't be
+// verified from the readback (#124). The structured array preserves the real
+// order, so it wins whenever it is present; comment_text remains the fallback
+// for payloads that carry no segments (and for a segment array that renders
+// empty, e.g. an attachment-only comment).
+func commentText(cm rawCUComment) string {
+	if len(cm.Comment) == 0 {
+		return cm.CommentText
+	}
+	var b strings.Builder
+	for _, seg := range cm.Comment {
+		switch {
+		case seg.Text != "":
+			b.WriteString(seg.Text)
+		case seg.User != nil && seg.User.Username != "":
+			// A tag segment normally carries its own "@Name" text; synthesise
+			// one when it doesn't, so the mention still holds its position.
+			b.WriteString("@" + seg.User.Username)
+		}
+	}
+	if b.Len() == 0 {
+		return cm.CommentText
+	}
+	return b.String()
+}
+
 func slimComment(cm rawCUComment) cuComment {
-	out := cuComment{ID: cm.ID, Text: cm.CommentText, By: cm.User.Username, Date: cm.Date, ReplyCount: cm.ReplyCount}
+	out := cuComment{ID: cm.ID, Text: commentText(cm), By: cm.User.Username, Date: cm.Date, ReplyCount: cm.ReplyCount}
 	// Recover @mentioned user ids from the structured segments — a member the
 	// list tools can't reach can still be resolved from a tag a human left (#126).
 	for _, seg := range cm.Comment {
