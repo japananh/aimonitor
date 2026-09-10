@@ -76,6 +76,16 @@ func catalog() []toolDef {
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackDeleteIn, any] {
 				return c.slackDeleteMessage
 			})},
+		{name: "slack_add_reaction", svc: ServiceSlack, write: true,
+			desc: "Add an emoji reaction to a Slack message (by channel + ts) — the lightweight way to acknowledge a message (e.g. ⏳ \"picked this up\") without posting a reply that notifies again. Needs the reactions:write scope",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackReactionIn, any] {
+				return c.slackAddReaction
+			})},
+		{name: "slack_remove_reaction", svc: ServiceSlack, write: true,
+			desc: "Remove an emoji reaction you added to a Slack message (by channel + ts) — e.g. to clear the ⏳ once the real answer is posted. Needs the reactions:write scope",
+			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackReactionIn, any] {
+				return c.slackRemoveReaction
+			})},
 		{name: "slack_upload_file", svc: ServiceSlack, write: true,
 			desc: "Upload a file to Slack from a local path (preferred for large/binary files) or inline text, optionally sharing it into a channel or thread",
 			add: addTyped(func(c *Client) mcp.ToolHandlerFor[slackUploadIn, any] {

@@ -231,6 +231,55 @@ func (c *Client) slackDeleteMessage(ctx context.Context, _ *mcp.CallToolRequest,
 	return textResult(map[string]string{"channel": out.Channel, "ts": out.TS, "status": "deleted"})
 }
 
+// --- reactions --------------------------------------------------------
+
+// reactionName normalises an emoji to the bare name reactions.add/remove want.
+// Callers naturally write it the way Slack renders it (":eyes:"), and Slack
+// rejects that with invalid_name. Only the outer colons go — a skin-tone
+// variant carries its own inner pair ("+1::skin-tone-2") that must survive.
+func reactionName(s string) string {
+	return strings.Trim(strings.TrimSpace(s), ":")
+}
+
+type slackReactionIn struct {
+	Channel string `json:"channel" jsonschema:"channel ID the message is in (C…/D…/G…)"`
+	TS      string `json:"ts" jsonschema:"the target message's ts (its timestamp ID, e.g. from slack_channel_history or slack_post_message)"`
+	Name    string `json:"name" jsonschema:"emoji name without colons, e.g. eyes, hourglass_flowing_sand, white_check_mark (a skin-tone variant keeps its inner pair: +1::skin-tone-2)"`
+}
+
+func (c *Client) slackAddReaction(ctx context.Context, _ *mcp.CallToolRequest, in slackReactionIn) (*mcp.CallToolResult, any, error) {
+	name := reactionName(in.Name)
+	body := map[string]any{"channel": in.Channel, "timestamp": in.TS, "name": name}
+	var out struct {
+		slackEnvelope
+	}
+	if err := c.slackPOST(ctx, "reactions.add", body, &out); err != nil {
+		// The reaction is already on the message, which is the end state the
+		// caller asked for — report it instead of failing a retry.
+		if out.Error == "already_reacted" {
+			return textResult(map[string]string{"channel": in.Channel, "ts": in.TS, "name": name, "status": "already_reacted"})
+		}
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"channel": in.Channel, "ts": in.TS, "name": name, "status": "added"})
+}
+
+func (c *Client) slackRemoveReaction(ctx context.Context, _ *mcp.CallToolRequest, in slackReactionIn) (*mcp.CallToolResult, any, error) {
+	name := reactionName(in.Name)
+	body := map[string]any{"channel": in.Channel, "timestamp": in.TS, "name": name}
+	var out struct {
+		slackEnvelope
+	}
+	if err := c.slackPOST(ctx, "reactions.remove", body, &out); err != nil {
+		// Nothing to clear — same end state as a successful removal.
+		if out.Error == "no_reaction" {
+			return textResult(map[string]string{"channel": in.Channel, "ts": in.TS, "name": name, "status": "not_reacted"})
+		}
+		return nil, nil, err
+	}
+	return textResult(map[string]string{"channel": in.Channel, "ts": in.TS, "name": name, "status": "removed"})
+}
+
 // --- search -----------------------------------------------------------
 
 type slackSearchIn struct {

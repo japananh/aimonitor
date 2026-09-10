@@ -302,6 +302,157 @@ func TestSlackDeleteMessage(t *testing.T) {
 	}
 }
 
+// reactionName strips the colons a caller naturally types around an emoji,
+// which Slack rejects as invalid_name — but must leave a skin-tone variant's
+// inner pair alone.
+func TestReactionName(t *testing.T) {
+	for in, want := range map[string]string{
+		":eyes:":            "eyes",
+		"eyes":              "eyes",
+		"  :tada:  ":        "tada",
+		":+1::skin-tone-2:": "+1::skin-tone-2",
+		"+1::skin-tone-2":   "+1::skin-tone-2",
+	} {
+		if got := reactionName(in); got != want {
+			t.Errorf("reactionName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// slack_add_reaction reacts to a message via reactions.add — Slack names the
+// message field `timestamp` here, not `ts` as the chat.* methods do.
+func TestSlackAddReaction(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	res, _, err := c.slackAddReaction(context.Background(), nil, slackReactionIn{
+		Channel: "C1", TS: "5.5", Name: ":hourglass_flowing_sand:",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/reactions.add" {
+		t.Errorf("path = %s, want /reactions.add", gotPath)
+	}
+	if gotBody["channel"] != "C1" || gotBody["timestamp"] != "5.5" || gotBody["name"] != "hourglass_flowing_sand" {
+		t.Errorf("body = %v, want channel + timestamp + colon-free name", gotBody)
+	}
+	if out := resultJSON(t, res); !strings.Contains(out, "added") {
+		t.Errorf("result missing added: %s", out)
+	}
+}
+
+// already_reacted means the acknowledgement the caller wanted is already on the
+// message — the end state is right, so report it rather than fail the retry.
+func TestSlackAddReaction_AlreadyReacted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "already_reacted"})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	res, _, err := c.slackAddReaction(context.Background(), nil, slackReactionIn{Channel: "C1", TS: "5.5", Name: "eyes"})
+	if err != nil {
+		t.Fatalf("already_reacted must not surface as an error: %v", err)
+	}
+	if out := resultJSON(t, res); !strings.Contains(out, "already_reacted") {
+		t.Errorf("result missing already_reacted: %s", out)
+	}
+}
+
+// Every other Slack error must still propagate — missing_scope especially,
+// since reactions:write is a scope the app is unlikely to already hold.
+func TestSlackAddReaction_MissingScopePropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": false, "error": "missing_scope", "needed": "reactions:write", "provided": "chat:write",
+		})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	_, _, err := c.slackAddReaction(context.Background(), nil, slackReactionIn{Channel: "C1", TS: "5.5", Name: "eyes"})
+	if err == nil {
+		t.Fatal("missing_scope must surface as an error")
+	}
+	if !strings.Contains(err.Error(), "reactions:write") {
+		t.Errorf("error = %v, want it to name the missing scope", err)
+	}
+}
+
+// slack_remove_reaction clears a reaction via reactions.remove.
+func TestSlackRemoveReaction(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	res, _, err := c.slackRemoveReaction(context.Background(), nil, slackReactionIn{
+		Channel: "C1", TS: "5.5", Name: "eyes",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/reactions.remove" {
+		t.Errorf("path = %s, want /reactions.remove", gotPath)
+	}
+	if gotBody["channel"] != "C1" || gotBody["timestamp"] != "5.5" || gotBody["name"] != "eyes" {
+		t.Errorf("body = %v", gotBody)
+	}
+	if out := resultJSON(t, res); !strings.Contains(out, "removed") {
+		t.Errorf("result missing removed: %s", out)
+	}
+}
+
+// no_reaction means there was nothing to clear — same end state as a removal.
+func TestSlackRemoveReaction_NoReaction(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "no_reaction"})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceSlack, "xoxp-tok")
+	c := NewClient(creds)
+
+	res, _, err := c.slackRemoveReaction(context.Background(), nil, slackReactionIn{Channel: "C1", TS: "5.5", Name: "eyes"})
+	if err != nil {
+		t.Fatalf("no_reaction must not surface as an error: %v", err)
+	}
+	if out := resultJSON(t, res); !strings.Contains(out, "not_reacted") {
+		t.Errorf("result missing not_reacted: %s", out)
+	}
+}
+
 // slack_search_messages parses populated matches into the slim message shape:
 // total + each match's ts/user/text/permalink survive, raw noise is dropped.
 func TestSlackSearchMessages_SlimsMatches(t *testing.T) {

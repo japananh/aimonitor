@@ -121,13 +121,13 @@ aimonitor mcp connect sentry    # store a Sentry auth token (set mcp.sentry.org 
 aimonitor mcp register          # add the server to Claude Code
 ```
 
-- **Slack:** post to channels/threads (mrkdwn, code blocks), upload files (from a local path or inline text), search, history, permalinks, and **read attachments — including images, returned as viewable pixels** (or saved to a local path).
+- **Slack:** post to channels/threads (mrkdwn, code blocks), upload files (from a local path or inline text), search, history, permalinks, react to a message (acknowledge it without posting a reply), and **read attachments — including images, returned as viewable pixels** (or saved to a local path).
 - **ClickUp:** workspace hierarchy, tasks, comments, attachments both ways — upload from a local path/inline text and **read them back, images included** — Docs (read & write).
 - **Sentry:** triage digests (projects, issue search, detail), root-cause (latest event stacktrace, tag/value distributions), and actions (resolve/ignore/assign, comment). Org-scoped and self-hosted-aware (`mcp.sentry.org`, `mcp.sentry.base_url`).
 - **Safety:** Claude Code's per-tool prompts are the approval layer; per-service Enabled / Read-only switches and a per-tool disable list refine it. Tokens are verified live, then stored in the OS keyring — never in SQLite or logs.
 
 > **Slack token scopes.** The Slack token is a **user** token (`xoxp-…`). Grant these **User Token Scopes** on your Slack app (api.slack.com → OAuth & Permissions), reinstall, then connect — a missing one surfaces as `slack: missing scope "…"` on the affected tool:
-> `search:read`, `users:read`, `users:read.email`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `files:read`, `files:write`.
+> `search:read`, `users:read`, `users:read.email`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `files:read`, `files:write`, `reactions:write`.
 
 > **Sentry token scopes.** A Sentry **auth token** (User Auth Token, or an Internal Integration). Set `mcp.sentry.org` — and `mcp.sentry.base_url` for self-hosted — *before* `connect`. Scopes: `org:read`, `project:read`, `event:read` for the read/triage tools; add `event:write` + `member:read` to resolve/assign/comment; `event:admin` to delete comments.
 
