@@ -1123,7 +1123,8 @@ type rawCUComment struct {
 	ReplyCount int    `json:"reply_count"`
 }
 
-// commentText renders a comment in the order its segments actually appear.
+// commentText renders a comment in the order its segments actually appear,
+// but only when every segment can be rendered — see the default branch.
 // ClickUp's own comment_text collapses every @mention tag to the end of the
 // string regardless of where the tag sits, so a comment posted with the tag
 // first reads back identical to one posted with it last and placement can't be
@@ -1144,6 +1145,14 @@ func commentText(cm rawCUComment) string {
 			// A tag segment normally carries its own "@Name" text; synthesise
 			// one when it doesn't, so the mention still holds its position.
 			b.WriteString("@" + seg.User.Username)
+		default:
+			// A segment we cannot render. ClickUp returns exactly this for a
+			// tag posted via the mentions param — no text, and a user object
+			// that carries no username — and skipping it would delete the
+			// @mention from the readback entirely. That is strictly worse
+			// than the misplaced tag this function exists to fix, so give up
+			// on ordering and hand back ClickUp's own flattening.
+			return cm.CommentText
 		}
 	}
 	if b.Len() == 0 {
