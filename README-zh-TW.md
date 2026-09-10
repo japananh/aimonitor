@@ -116,12 +116,12 @@ aimonitor mcp connect clickup   # 儲存 ClickUp token（pk_…）
 aimonitor mcp register          # 把伺服器加入 Claude Code
 ```
 
-- **Slack：** 發到頻道／討論串（mrkdwn、程式碼區塊）、上傳、搜尋、歷史、permalink。
+- **Slack：** 發到頻道／討論串（mrkdwn、程式碼區塊）、上傳、搜尋、歷史、permalink、表情回應（不必回覆就能確認已讀）。
 - **ClickUp：** 工作區階層、任務、留言、附件、Docs（讀寫）。
 - **安全：** Claude Code 自身的逐工具授權提示是審批層；再加上各服務的 Enabled / Read-only 開關與逐工具停用清單。token 會先即時驗證，再存入系統鑰匙圈 —— 不進 SQLite 或日誌。
 
 > **Slack token scopes。** Slack token 是 **使用者** token（`xoxp-…`）。請在你的 Slack app（api.slack.com → OAuth & Permissions）授予下列 **User Token Scopes**，重新安裝後再連線 —— 若缺少其中任一個，會在受影響的工具上以 `slack: missing scope "…"` 的形式出現：
-> `search:read`、`users:read`、`users:read.email`、`channels:history`、`groups:history`、`im:history`、`mpim:history`、`channels:read`、`groups:read`、`im:read`、`mpim:read`、`chat:write`、`files:read`、`files:write`。
+> `search:read`、`users:read`、`users:read.email`、`channels:history`、`groups:history`、`im:history`、`mpim:history`、`channels:read`、`groups:read`、`im:read`、`mpim:read`、`chat:write`、`files:read`、`files:write`、`reactions:write`。
 
 ## 隱私與安全
 

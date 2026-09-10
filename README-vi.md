@@ -116,12 +116,12 @@ aimonitor mcp connect clickup   # lưu ClickUp token (pk_…)
 aimonitor mcp register          # thêm server vào Claude Code
 ```
 
-- **Slack:** post vào channel/thread (mrkdwn, code block), upload, search, history, permalink.
+- **Slack:** post vào channel/thread (mrkdwn, code block), upload, search, history, permalink, thả reaction (xác nhận đã xem mà không cần trả lời).
 - **ClickUp:** cây workspace, task, comment, tệp đính kèm, Docs (đọc & ghi).
 - **An toàn:** prompt xin-quyền theo từng tool của Claude Code là lớp duyệt; thêm công tắc Enabled / Read-only theo dịch vụ và danh sách ẩn từng tool. Token được verify trực tiếp rồi lưu OS keyring — không vào SQLite hay log.
 
 > **Scope của Slack token.** Slack token là **user** token (`xoxp-…`). Cấp những **User Token Scopes** sau trên Slack app của bạn (api.slack.com → OAuth & Permissions), cài lại, rồi connect — thiếu scope nào sẽ hiện `slack: missing scope "…"` trên tool tương ứng:
-> `search:read`, `users:read`, `users:read.email`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `files:read`, `files:write`.
+> `search:read`, `users:read`, `users:read.email`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `files:read`, `files:write`, `reactions:write`.
 
 ## Quyền riêng tư & bảo mật
 
