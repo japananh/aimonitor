@@ -164,8 +164,11 @@ homebrew_casks:
     #     evaluated against InstallSteps::DSL). A path argument must use a
     #     {{token}} template, which the runner expands at execution time.
     #   - only `command` accepts base:, so a path that is an *argument*
-    #     (xattr's target) has to carry {{appdir}} itself; routing it
-    #     through chdir: silently does nothing.
+    #     (xattr's target) has to carry the appdir token itself; routing
+    #     it through chdir: silently does nothing.
+    # goreleaser renders custom_block through its OWN Go template first,
+    # so the cask's {{...}} token must be escaped as {{ "{{...}}" }} or
+    # the release dies with `function "appdir" not defined`.
     # Both were verified against Homebrew 6.0.22 by installing from a
     # scratch tap and checking the quarantine flag afterwards.
     custom_block: |
@@ -178,7 +181,7 @@ homebrew_casks:
         # re-quarantined copy on every `brew upgrade`, so this must re-run
         # each time — and it does (the steps run on install AND upgrade).
         run "/usr/bin/xattr",
-            args: ["-dr", "com.apple.quarantine", "{{appdir}}/AIMonitor.app"],
+            args: ["-dr", "com.apple.quarantine", "{{ "{{appdir}}" }}/AIMonitor.app"],
             writable_paths: ["AIMonitor.app"],
             writable_base: :appdir,
             must_succeed: false
