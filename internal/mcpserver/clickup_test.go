@@ -209,6 +209,64 @@ func TestSlimComment_SurfacesMentionIDs(t *testing.T) {
 	}
 }
 
+// tagSegment builds a segment carrying a live @mention, spelling out the
+// anonymous user struct once so the ordering tests stay readable.
+func tagSegment(id int, username, email, text string) rawCUCommentSegment {
+	return rawCUCommentSegment{Text: text, User: &struct {
+		ID       int    `json:"id"`
+		Username string `json:"username"`
+		Email    string `json:"email"`
+	}{ID: id, Username: username, Email: email}}
+}
+
+// text must follow the structured segments, not ClickUp's comment_text — which
+// reports every tag at the end however the comment was actually written, making
+// a leading mention indistinguishable from a trailing one on readback (#124).
+func TestSlimComment_TextFollowsSegmentOrder(t *testing.T) {
+	raw := rawCUComment{ID: "c3", CommentText: "please review this @Backend Lead"}
+	raw.Comment = []rawCUCommentSegment{
+		tagSegment(777, "backend.lead", "lead@example.com", "@Backend Lead"),
+		{Text: " please review this"},
+	}
+
+	got := slimComment(raw)
+	if got.Text != "@Backend Lead please review this" {
+		t.Errorf("text = %q, want the mention kept in its leading position", got.Text)
+	}
+	if len(got.Mentions) != 1 || got.Mentions[0].ID != 777 {
+		t.Errorf("mentions = %+v, want the id still harvested", got.Mentions)
+	}
+}
+
+// A tag segment with no text of its own must still hold its place, so the
+// mention doesn't silently vanish from the rendered comment.
+func TestSlimComment_TextSynthesisesUntitledTag(t *testing.T) {
+	raw := rawCUComment{ID: "c4", CommentText: "ping"}
+	raw.Comment = []rawCUCommentSegment{
+		{Text: "ping "},
+		tagSegment(42, "dana", "dana@example.com", ""),
+		{Text: " when done"},
+	}
+	if got := slimComment(raw).Text; got != "ping @dana when done" {
+		t.Errorf("text = %q, want the untitled tag rendered in place", got)
+	}
+}
+
+// With no segments at all — and for a segment array that renders to nothing,
+// e.g. an attachment-only comment — comment_text stays the fallback.
+func TestSlimComment_TextFallsBackToCommentText(t *testing.T) {
+	bare := rawCUComment{ID: "c5", CommentText: "no segments here"}
+	if got := slimComment(bare).Text; got != "no segments here" {
+		t.Errorf("text = %q, want comment_text when there are no segments", got)
+	}
+
+	empty := rawCUComment{ID: "c6", CommentText: "screenshot.png"}
+	empty.Comment = []rawCUCommentSegment{{}}
+	if got := slimComment(empty).Text; got != "screenshot.png" {
+		t.Errorf("text = %q, want comment_text when the segments render empty", got)
+	}
+}
+
 // A comment with no tag segments must carry no mentions (nil slice → omitted
 // from JSON via omitempty), matching the pre-#126 readback shape.
 func TestSlimComment_NoMentionsWhenNoTags(t *testing.T) {
