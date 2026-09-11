@@ -267,6 +267,26 @@ func TestSlimComment_TextFallsBackToCommentText(t *testing.T) {
 	}
 }
 
+// A tag segment carrying neither text nor a username — which is what ClickUp
+// returns for a mention posted via the mentions param — must NOT be dropped:
+// rendering it away deletes the @mention from the readback. Fall back to
+// comment_text, which still shows it (at the end).
+func TestSlimComment_UnrenderableTagFallsBackNotDropped(t *testing.T) {
+	raw := rawCUComment{ID: "c7", CommentText: "please review this @Violet Tran"}
+	raw.Comment = []rawCUCommentSegment{
+		{Text: "please review this"},
+		{Text: " "},
+		tagSegment(88804062, "", "", ""),
+	}
+	got := slimComment(raw).Text
+	if got != "please review this @Violet Tran" {
+		t.Errorf("text = %q, want comment_text so the mention survives", got)
+	}
+	if !strings.Contains(got, "@") {
+		t.Errorf("text = %q, the @mention must not vanish", got)
+	}
+}
+
 // A comment with no tag segments must carry no mentions (nil slice → omitted
 // from JSON via omitempty), matching the pre-#126 readback shape.
 func TestSlimComment_NoMentionsWhenNoTags(t *testing.T) {
