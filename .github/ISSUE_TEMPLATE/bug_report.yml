@@ -2,17 +2,10 @@ name: 🐞 Bug report
 description: Something in aimonitor isn't working
 labels: ["bug"]
 body:
-  - type: checkboxes
-    id: preflight
-    attributes:
-      label: Before filing
-      options:
-        - label: I searched existing issues, and any logs I paste contain no tokens or secrets.
-          required: true
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
-      description: What you saw, what you expected, and how to reproduce it. Include version + OS and any relevant logs (`aimonitor doctor`).
+      description: What you saw, what you expected, and how to reproduce it. Include your version & OS (`aimonitor doctor`), and remove any tokens or secrets from logs.
     validations:
       required: true
