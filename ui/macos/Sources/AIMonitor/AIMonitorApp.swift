@@ -293,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     // updateStatusTitle renders the status item as a compact two-line text:
     //   <account name>
-    //   5h | <usage>%
+    //   <5h usage>% | <7d usage>%
     // replacing the chart icon whenever an active account is known. The
     // icon returns as the fallback when there's no active account / no
     // daemon data yet. A tooltip carries the full picture (name, email,
@@ -311,32 +311,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         button.image = nil
 
-        // "Has data" is gated on limits_fetched_at, NOT on the pct value:
-        // a genuine 0% (fresh, unused account) is real data and must show
-        // "0%", while a never-fetched account shows "–". (The daemon
-        // publishes five_hour_pct without omitempty so 0 survives the JSON.)
-        //
-        // Always show the 5h window in the compact number (the tooltip lists
-        // both windows with reset times). #91 showed whichever window was closer
-        // to its limit, but users expect the bar to track 5h (#105). Accepted
-        // trade-off: a 7d-driven auto-swap warning can now sit next to a low 5h
-        // number — the case #91 removed. Tinted by the shared severity scale
-        // (amber ≥60, red ≥85) so a maxed 5h is unmistakable.
-        let bottom: String
-        var bottomColor = NSColor.labelColor
-        if model.status?.limits_fetched_at != nil,
-           let pct5 = model.status?.five_hour_pct {
-            bottom = "5h | " + String(format: "%.0f%%", pct5)
-            bottomColor = severityNSColor(for: pct5)
-        } else {
-            bottom = "5h | –"
-        }
-
         // Two stacked lines inside the 22pt menu bar: 8pt name over 11pt
-        // usage, 1px gap between them. Fixed
-        // line heights keep the pair vertically centered, with a per-line
-        // paragraph style so the bigger number line isn't clamped to the
-        // name line's height.
+        // usage, 1px gap between them. Fixed line heights keep the pair
+        // vertically centered, with a per-line paragraph style so the bigger
+        // number line isn't clamped to the name line's height.
         let paraName = NSMutableParagraphStyle()
         paraName.alignment = .center
         paraName.minimumLineHeight = 11
@@ -346,23 +324,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         paraPct.alignment = .center
         paraPct.minimumLineHeight = 12
         paraPct.maximumLineHeight = 12
-        // Usage line in semibold, tinted by severity (bottomColor) so a
-        // maxed window stands out; default label color while healthy. The
-        // name keeps the default menu-bar text color. The severity colors are
-        // appearance-aware, so they stay correct in a light or dark menu bar.
+        // The name keeps the default menu-bar text color; the usage numbers
+        // below are tinted per window. Severity colors are appearance-aware,
+        // so they stay correct in a light or dark menu bar.
         let top = NSMutableAttributedString(
             string: name + "\n",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
                 .paragraphStyle: paraName,
             ])
-        top.append(NSAttributedString(
-            string: bottom,
-            attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: bottomColor,
+        // Show both windows as "<5h> | <7d>" (#133). Each number carries its
+        // own severity tint (amber ≥60, red ≥85) rather than one colour for
+        // the line: with both on screen, a hot 7d next to a cool 5h is now
+        // readable as such — the ambiguity #91/#105 traded back and forth over.
+        //
+        // "Has data" is gated on limits_fetched_at, NOT on the pct value: a
+        // genuine 0% (fresh, unused account) is real data and must show "0%",
+        // while a never-fetched account shows "–". (The daemon publishes the
+        // pcts without omitempty so 0 survives the JSON.)
+        let pctFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        let fetched = model.status?.limits_fetched_at != nil
+        func pctPart(_ pct: Double?) -> NSAttributedString {
+            guard fetched, let pct else {
+                return NSAttributedString(string: "–", attributes: [
+                    .font: pctFont,
+                    .foregroundColor: NSColor.labelColor,
+                    .paragraphStyle: paraPct,
+                ])
+            }
+            return NSAttributedString(string: String(format: "%.0f%%", pct), attributes: [
+                .font: pctFont,
+                .foregroundColor: severityNSColor(for: pct),
                 .paragraphStyle: paraPct,
-            ]))
+            ])
+        }
+        top.append(pctPart(model.status?.five_hour_pct))
+        top.append(NSAttributedString(string: " | ", attributes: [
+            .font: pctFont,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paraPct,
+        ]))
+        top.append(pctPart(model.status?.seven_day_pct))
         // Nudge the block down so the two lines sit centered in the bar.
         top.addAttribute(.baselineOffset, value: -4,
                          range: NSRange(location: 0, length: top.length))
