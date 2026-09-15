@@ -12,10 +12,34 @@ body:
   - type: textarea
     id: what-happened
     attributes:
-      label: What happened?
-      description: The version and a way to reproduce it matter most; the rest is a bonus.
+      label: Describe the bug
+      description: What happened, what you expected instead, and how to reproduce it.
       placeholder: |
-        What I did, what happened, what I expected instead.
-        Version + OS (aimonitor version), and anything useful from aimonitor doctor.
+        What I did:
+        What happened:
+        What I expected:
     validations:
       required: true
+  - type: input
+    id: version
+    attributes:
+      label: aimonitor version
+      description: Output of `aimonitor version`.
+      placeholder: aimonitor 1.1.57 (commit 29f19e6)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 26.1 (arm64)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Optional. `aimonitor doctor`, or anything from ~/Library/Logs/aimonitor. Check for secrets first.
+      render: shell
+    validations:
+      required: false
