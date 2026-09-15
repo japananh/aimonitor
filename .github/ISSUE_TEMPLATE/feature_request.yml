@@ -3,15 +3,12 @@ description: Suggest an idea or improvement for aimonitor
 labels: ["enhancement"]
 body:
   - type: textarea
-    id: problem
-    attributes:
-      label: What problem are you trying to solve?
-      description: The pain point, not the solution yet.
-    validations:
-      required: true
-  - type: textarea
     id: proposal
     attributes:
       label: What would you like to happen?
+      description: What you'd like, and the problem it solves. One box — say as much or as little as it needs.
+      placeholder: |
+        Today I have to … which is a problem because …
+        I'd like aimonitor to … instead.
     validations:
       required: true

@@ -7,12 +7,48 @@ body:
     attributes:
       label: Before filing
       options:
-        - label: I searched existing issues, and any logs I paste contain no tokens or secrets.
+        - label: Any logs I paste contain no tokens or secrets.
           required: true
   - type: textarea
     id: what-happened
     attributes:
-      label: What happened?
-      description: What you saw, what you expected, and how to reproduce it. Include version + OS and any relevant logs (`aimonitor doctor`).
+      label: Describe the bug
+      description: What happened, what you expected instead, and how to reproduce it.
+      placeholder: |
+        What I did:
+        What happened:
+        What I expected:
     validations:
       required: true
+  - type: input
+    id: version
+    attributes:
+      label: aimonitor version
+      description: Output of `aimonitor version`.
+      placeholder: aimonitor 1.1.57 (commit 29f19e6)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 26.1 (arm64)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Optional — but it usually turns a guess into a fix.
+
+        How to get them:
+        - **In the app:** Preferences → **Show Logs in Finder**, then open `aimonitor.daemon.log`.
+        - **In a terminal:** `tail -n 200 ~/Library/Logs/aimonitor/aimonitor.daemon.log`
+        - **Health summary:** `aimonitor doctor`
+        - **Account switches:** `aimonitor log`
+
+        Skim for tokens before pasting.
+      render: shell
+    validations:
+      required: false
