@@ -287,6 +287,55 @@ func TestSlimComment_UnrenderableTagFallsBackNotDropped(t *testing.T) {
 	}
 }
 
+// linkSegment builds the shape ClickUp returns for a URL pasted into a
+// comment: type link_mention, empty text, URL only in the link_mention object.
+func linkSegment(u string) rawCUCommentSegment {
+	return rawCUCommentSegment{Text: "", LinkMention: &struct {
+		URL string `json:"url"`
+	}{URL: u}}
+}
+
+// A link pasted into a comment must survive readback. ClickUp's own
+// comment_text omits it, so dropping the segment loses the URL entirely and
+// the comment reads as blank lines where the links were (#135).
+func TestSlimComment_RendersLinkMentions(t *testing.T) {
+	raw := rawCUComment{ID: "c8", CommentText: "Các page build bằng replo\n\n\n"}
+	raw.Comment = []rawCUCommentSegment{
+		{Text: "Các page build bằng replo"},
+		{Text: "\n"},
+		linkSegment("https://mudwtr.com/pages/6-reasons-gut"),
+		{Text: "\n"},
+		linkSegment("https://theearthlingco.com/pages/come-back"),
+	}
+	got := slimComment(raw).Text
+	for _, want := range []string{
+		"https://mudwtr.com/pages/6-reasons-gut",
+		"https://theearthlingco.com/pages/come-back",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("text = %q, missing link %q", got, want)
+		}
+	}
+	if !strings.HasPrefix(got, "Các page build bằng replo") {
+		t.Errorf("text = %q, want the body text kept in front", got)
+	}
+}
+
+// A link_mention with no URL carries nothing renderable, so it must still take
+// the #132 fallback rather than being silently skipped.
+func TestSlimComment_EmptyLinkMentionFallsBack(t *testing.T) {
+	raw := rawCUComment{ID: "c9", CommentText: "fallback body"}
+	raw.Comment = []rawCUCommentSegment{
+		{Text: "body"},
+		{LinkMention: &struct {
+			URL string `json:"url"`
+		}{URL: ""}},
+	}
+	if got := slimComment(raw).Text; got != "fallback body" {
+		t.Errorf("text = %q, want comment_text fallback", got)
+	}
+}
+
 // A comment with no tag segments must carry no mentions (nil slice → omitted
 // from JSON via omitempty), matching the pre-#126 readback shape.
 func TestSlimComment_NoMentionsWhenNoTags(t *testing.T) {

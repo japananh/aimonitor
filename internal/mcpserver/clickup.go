@@ -1110,6 +1110,12 @@ type rawCUCommentSegment struct {
 		Username string `json:"username"`
 		Email    string `json:"email"`
 	} `json:"user"`
+	// A link pasted into a comment becomes a type:"link_mention" segment whose
+	// own text is empty — the URL lives only here, and ClickUp's comment_text
+	// omits it too, so this is the only copy on the wire (#135).
+	LinkMention *struct {
+		URL string `json:"url"`
+	} `json:"link_mention"`
 }
 
 type rawCUComment struct {
@@ -1145,6 +1151,10 @@ func commentText(cm rawCUComment) string {
 			// A tag segment normally carries its own "@Name" text; synthesise
 			// one when it doesn't, so the mention still holds its position.
 			b.WriteString("@" + seg.User.Username)
+		case seg.LinkMention != nil && seg.LinkMention.URL != "":
+			// The URL is the segment's whole content; without this the link
+			// disappears from the comment entirely (#135).
+			b.WriteString(seg.LinkMention.URL)
 		default:
 			// A segment we cannot render. ClickUp returns exactly this for a
 			// tag posted via the mentions param — no text, and a user object
