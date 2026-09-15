@@ -39,7 +39,16 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Optional. `aimonitor doctor`, or anything from ~/Library/Logs/aimonitor. Check for secrets first.
+      description: |
+        Optional — but it usually turns a guess into a fix.
+
+        How to get them:
+        - **In the app:** Preferences → **Show Logs in Finder**, then open `aimonitor.daemon.log`.
+        - **In a terminal:** `tail -n 200 ~/Library/Logs/aimonitor/aimonitor.daemon.log`
+        - **Health summary:** `aimonitor doctor`
+        - **Account switches:** `aimonitor log`
+
+        Skim for tokens before pasting.
       render: shell
     validations:
       required: false
