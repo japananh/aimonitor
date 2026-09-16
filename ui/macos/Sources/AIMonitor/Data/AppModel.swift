@@ -9,6 +9,9 @@
 import Foundation
 import Combine
 
+/// Must match internal/install.LaunchAgentLabel — the daemon's launchd label.
+let daemonLaunchAgentLabel = "dev.aimonitor.daemon"
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var status: DaemonStatus? = nil
@@ -141,6 +144,35 @@ final class AppModel: ObservableObject {
         Task { await refresh(forceDetail: true) }
         // Launches with the popover closed → idle cadence.
         scheduleTimer(every: idleInterval)
+        repairAutostartIfNeeded()
+    }
+
+    private var autostartRepairAttempted = false
+
+    /// Re-registers the daemon's LaunchAgent when the config says autostart is
+    /// on but the plist is gone.
+    ///
+    /// `brew upgrade` deletes ~/Library/LaunchAgents/dev.aimonitor.daemon.plist
+    /// (the cask's `uninstall launchctl:` stanza) and cannot put it back: a
+    /// Homebrew install step runs sandboxed, so its write to the user's home
+    /// does not survive and `launchctl bootstrap` fails with an I/O error the
+    /// cask swallows. The daemon then stays dead behind the "not running"
+    /// banner until someone notices. The app is unsandboxed and runs on every
+    /// launch, so it owns the repair.
+    ///
+    /// Only repairs drift between stated intent and reality — autostart off in
+    /// the config is a deliberate opt-out and is left alone. Once per launch;
+    /// the CLI call is idempotent.
+    private func repairAutostartIfNeeded() {
+        guard !autostartRepairAttempted else { return }
+        autostartRepairAttempted = true
+        DispatchQueue.global(qos: .utility).async {
+            let plist = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/LaunchAgents/" + daemonLaunchAgentLabel + ".plist")
+            if FileManager.default.fileExists(atPath: plist.path) { return }
+            guard let want = try? CLIBridge.configGet("autostart"), want == "true" else { return }
+            try? CLIBridge.configSet("autostart", "true")
+        }
     }
 
     /// (Re)schedules the poll at `interval`, overridable via AIMONITOR_POLL_MS
