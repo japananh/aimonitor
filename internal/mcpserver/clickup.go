@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -1091,12 +1092,28 @@ type cuMention struct {
 // ClickUp's structured comment segments. text is rendered from those same
 // segments, so an @mention appears where it really sits in the comment.
 type cuComment struct {
-	ID         string      `json:"id"`
-	Text       string      `json:"text"`
-	By         string      `json:"by"`
-	Date       string      `json:"date"`
-	ReplyCount int         `json:"reply_count,omitempty"`
-	Mentions   []cuMention `json:"mentions,omitempty"`
+	ID         string          `json:"id"`
+	Text       string          `json:"text"`
+	By         string          `json:"by"`
+	Date       string          `json:"date"`
+	ReplyCount int             `json:"reply_count,omitempty"`
+	Mentions   []cuMention     `json:"mentions,omitempty"`
+	Files      []cuCommentFile `json:"files,omitempty"`
+}
+
+// cuCommentFile is a file living on a comment — a dropped attachment or a
+// pasted image. ClickUp keeps these out of the task's attachments[], so their
+// id and URL reached no caller at all and the file could not be fetched
+// through the server (#135). Pass the id to clickup_get_attachment with the
+// task it was commented on.
+type cuCommentFile struct {
+	ID       string `json:"id"`
+	Title    string `json:"title,omitempty"`
+	Mimetype string `json:"mimetype,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Width    int    `json:"width,omitempty"`
+	Height   int    `json:"height,omitempty"`
 }
 
 // rawCUCommentSegment is one piece of ClickUp's structured `comment` array. A
@@ -1116,6 +1133,67 @@ type rawCUCommentSegment struct {
 	LinkMention *struct {
 		URL string `json:"url"`
 	} `json:"link_mention"`
+	// Same story as link_mention: no text of its own, URL only here.
+	Bookmark *struct {
+		URL string `json:"url"`
+	} `json:"bookmark"`
+	// A file dropped into a comment. Same shape as a task attachment, so
+	// slimAttachment/downloadURL apply — but it is NOT in the task's
+	// attachments[], which is why clickup_get_attachment couldn't reach it.
+	Attachment *rawCUAttachment `json:"attachment"`
+	// A pasted image. Sibling of Attachment with its own, smaller shape;
+	// note the field names lie — Extension carries the mimetype and Type
+	// carries the file extension.
+	Image *struct {
+		ID        string `json:"id"`
+		Title     string `json:"title"`
+		Name      string `json:"name"`
+		Extension string `json:"extension"`
+		URL       string `json:"url"`
+		Width     int    `json:"width"`
+		Height    int    `json:"height"`
+	} `json:"image"`
+	// A table has no text of its own either; renderCUTable flattens it.
+	Table *rawCUTable `json:"table-embed"`
+}
+
+// rawCUTable is ClickUp's table-embed. rows/columns are lists whose length is
+// the table's size; cells are keyed "<row>:<col>", 1-based, and each cell's
+// content is a Quill op list whose inserts are strings for text (and objects
+// for embeds, which we skip).
+type rawCUTable struct {
+	Cells map[string]struct {
+		Content []struct {
+			Insert json.RawMessage `json:"insert"`
+		} `json:"content"`
+	} `json:"cells"`
+	Columns []json.RawMessage `json:"columns"`
+	Rows    []json.RawMessage `json:"rows"`
+}
+
+// renderCUTable flattens a table into pipe-separated rows. The segment carries
+// no text, and comment_text drops it, so without this the table vanishes.
+func renderCUTable(t *rawCUTable) string {
+	if len(t.Rows) == 0 || len(t.Columns) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(t.Rows))
+	for r := 1; r <= len(t.Rows); r++ {
+		cells := make([]string, 0, len(t.Columns))
+		for c := 1; c <= len(t.Columns); c++ {
+			var cell strings.Builder
+			for _, op := range t.Cells[fmt.Sprintf("%d:%d", r, c)].Content {
+				var text string
+				// Only string inserts are text; an object insert is an embed.
+				if err := json.Unmarshal(op.Insert, &text); err == nil {
+					cell.WriteString(text)
+				}
+			}
+			cells = append(cells, strings.TrimSpace(cell.String()))
+		}
+		lines = append(lines, strings.Join(cells, " | "))
+	}
+	return strings.Join(lines, "\n")
 }
 
 type rawCUComment struct {
@@ -1155,6 +1233,22 @@ func commentText(cm rawCUComment) string {
 			// The URL is the segment's whole content; without this the link
 			// disappears from the comment entirely (#135).
 			b.WriteString(seg.LinkMention.URL)
+		case seg.Bookmark != nil && seg.Bookmark.URL != "":
+			b.WriteString(seg.Bookmark.URL)
+		case seg.Table != nil:
+			if t := renderCUTable(seg.Table); t != "" {
+				b.WriteString(t)
+			}
+		case seg.Attachment != nil && seg.Attachment.Title != "":
+			// Normally the segment's text is already the filename; this only
+			// covers a payload that omits it.
+			b.WriteString(seg.Attachment.Title)
+		case seg.Image != nil && (seg.Image.Title != "" || seg.Image.Name != ""):
+			if seg.Image.Title != "" {
+				b.WriteString(seg.Image.Title)
+			} else {
+				b.WriteString(seg.Image.Name)
+			}
 		default:
 			// A segment we cannot render. ClickUp returns exactly this for a
 			// tag posted via the mentions param — no text, and a user object
@@ -1181,6 +1275,28 @@ func slimComment(cm rawCUComment) cuComment {
 				ID:       seg.User.ID,
 				Username: seg.User.Username,
 				Email:    seg.User.Email,
+			})
+		}
+		// Files ride the same segments. text only ever carries the filename,
+		// so the id and URL needed to actually fetch one live here alone.
+		switch {
+		case seg.Attachment != nil && seg.Attachment.ID != "":
+			a := slimAttachment(*seg.Attachment)
+			out.Files = append(out.Files, cuCommentFile{
+				ID: a.ID, Title: a.Title, Mimetype: a.Mimetype, Size: a.Size, URL: a.URL,
+			})
+		case seg.Image != nil && seg.Image.ID != "":
+			title := seg.Image.Title
+			if title == "" {
+				title = seg.Image.Name
+			}
+			out.Files = append(out.Files, cuCommentFile{
+				ID:       seg.Image.ID,
+				Title:    title,
+				Mimetype: seg.Image.Extension, // ClickUp puts the mimetype here
+				URL:      seg.Image.URL,
+				Width:    seg.Image.Width,
+				Height:   seg.Image.Height,
 			})
 		}
 	}
@@ -1252,7 +1368,7 @@ func (c *Client) clickupUpdateComment(ctx context.Context, _ *mcp.CallToolReques
 
 type cuGetAttachmentIn struct {
 	TaskID       string `json:"task_id" jsonschema:"task the attachment is on"`
-	AttachmentID string `json:"attachment_id" jsonschema:"attachments[].id from clickup_get_task"`
+	AttachmentID string `json:"attachment_id" jsonschema:"attachments[].id from clickup_get_task, or files[].id from clickup_list_comments for a file posted in a comment"`
 	SaveTo       string `json:"save_to,omitempty" jsonschema:"absolute path to write the raw bytes to instead of returning them inline — works for ANY mimetype (PDF, zip, oversized image); returns the path so you can open it locally"`
 	Offset       int    `json:"offset,omitempty" jsonschema:"1-based line to start returning from, for text attachments"`
 	Limit        int    `json:"limit,omitempty" jsonschema:"max lines to return starting at offset, for text attachments"`
@@ -1264,6 +1380,46 @@ type cuGetAttachmentIn struct {
 //
 // Shape mirrors slack_get_file: images come back as an MCP image block, text-like
 // files as text, and save_to writes raw bytes to disk for anything at all.
+// findCommentAttachment looks for an attachment or pasted image with this id
+// among the task's comment segments, returning every id it saw so a miss can
+// still name the candidates. An image is normalised onto rawCUAttachment;
+// ClickUp files its mimetype under "extension".
+func (c *Client) findCommentAttachment(ctx context.Context, taskID, attachmentID string) ([]string, rawCUAttachment, bool) {
+	var out struct {
+		Comments []rawCUComment `json:"comments"`
+	}
+	if err := c.clickup(ctx, http.MethodGet, "/task/"+url.PathEscape(taskID)+"/comment", nil, nil, &out); err != nil {
+		return nil, rawCUAttachment{}, false
+	}
+	var ids []string
+	for _, cm := range out.Comments {
+		for _, seg := range cm.Comment {
+			switch {
+			case seg.Attachment != nil && seg.Attachment.ID != "":
+				ids = append(ids, seg.Attachment.ID)
+				if seg.Attachment.ID == attachmentID {
+					return ids, *seg.Attachment, true
+				}
+			case seg.Image != nil && seg.Image.ID != "":
+				ids = append(ids, seg.Image.ID)
+				if seg.Image.ID == attachmentID {
+					title := seg.Image.Title
+					if title == "" {
+						title = seg.Image.Name
+					}
+					return ids, rawCUAttachment{
+						ID:       seg.Image.ID,
+						Title:    title,
+						Mimetype: seg.Image.Extension,
+						URL:      seg.Image.URL,
+					}, true
+				}
+			}
+		}
+	}
+	return ids, rawCUAttachment{}, false
+}
+
 func (c *Client) clickupGetAttachment(ctx context.Context, _ *mcp.CallToolRequest, in cuGetAttachmentIn) (*mcp.CallToolResult, any, error) {
 	if in.TaskID == "" || in.AttachmentID == "" {
 		return nil, nil, fmt.Errorf("task_id and attachment_id are required")
@@ -1274,19 +1430,25 @@ func (c *Client) clickupGetAttachment(ctx context.Context, _ *mcp.CallToolReques
 	if err := c.clickup(ctx, http.MethodGet, "/task/"+url.PathEscape(in.TaskID), nil, nil, &task); err != nil {
 		return nil, nil, err
 	}
+	ids := make([]string, 0, len(task.Attachments))
 	var a rawCUAttachment
 	found := false
 	for _, cand := range task.Attachments {
+		ids = append(ids, cand.ID)
 		if cand.ID == in.AttachmentID {
 			a, found = cand, true
 			break
 		}
 	}
+	// A file dropped into a comment is not in the task's attachments[] — it
+	// only exists as a segment of that comment, which is why this tool could
+	// not reach one before (#135). Fall through to the comment segments.
 	if !found {
-		ids := make([]string, 0, len(task.Attachments))
-		for _, cand := range task.Attachments {
-			ids = append(ids, cand.ID)
-		}
+		cIDs, cand, ok := c.findCommentAttachment(ctx, in.TaskID, in.AttachmentID)
+		ids = append(ids, cIDs...)
+		a, found = cand, ok
+	}
+	if !found {
 		return nil, nil, fmt.Errorf("attachment %q not found on task %s (available: %s)",
 			in.AttachmentID, in.TaskID, strings.Join(ids, ", "))
 	}
