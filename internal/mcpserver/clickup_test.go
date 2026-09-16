@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"encoding/json"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -333,6 +334,84 @@ func TestSlimComment_EmptyLinkMentionFallsBack(t *testing.T) {
 	}
 	if got := slimComment(raw).Text; got != "fallback body" {
 		t.Errorf("text = %q, want comment_text fallback", got)
+	}
+}
+
+// A bookmark, like a link mention, has no text of its own — the URL is the
+// whole segment, so skipping it loses the content (#135).
+func TestSlimComment_RendersBookmark(t *testing.T) {
+	raw := rawCUComment{ID: "c10", CommentText: "see thread"}
+	raw.Comment = []rawCUCommentSegment{
+		{Text: "see "},
+		{Bookmark: &struct {
+			URL string `json:"url"`
+		}{URL: "https://app.intercom.com/a/inbox/z11/conversation/2154"}},
+	}
+	if got := slimComment(raw).Text; !strings.Contains(got, "intercom.com") {
+		t.Errorf("text = %q, want the bookmark URL kept", got)
+	}
+}
+
+// A table-embed carries no text either; renderCUTable walks rows × columns in
+// order and joins each cell's string inserts.
+func TestSlimComment_RendersTable(t *testing.T) {
+	var raw rawCUComment
+	raw.ID, raw.CommentText = "c11", "fallback"
+	if err := json.Unmarshal([]byte(`[{"type":"table-embed","table-embed":{
+      "rows":[{"insert":{"id":"r1"}},{"insert":{"id":"r2"}}],
+      "columns":[{"insert":{"id":"c1"}},{"insert":{"id":"c2"}}],
+      "cells":{
+        "1:1":{"content":[{"insert":"Đo"},{"insert":"\n"}]},
+        "1:2":{"content":[{"insert":"Trước"},{"insert":"\n"}]},
+        "2:1":{"content":[{"insert":"Ca lệch"},{"insert":"\n"}]},
+        "2:2":{"content":[{"attributes":{"bold":true},"insert":"12 / 12"},{"insert":"\n"}]}}}}]`),
+		&raw.Comment); err != nil {
+		t.Fatal(err)
+	}
+	got := slimComment(raw).Text
+	want := "Đo | Trước\nCa lệch | 12 / 12"
+	if got != want {
+		t.Errorf("text = %q, want %q", got, want)
+	}
+}
+
+// A file dropped into a comment must surface with the id and URL needed to
+// fetch it — text only ever carries the filename (#135).
+func TestSlimComment_SurfacesCommentFiles(t *testing.T) {
+	var raw rawCUComment
+	raw.ID, raw.CommentText = "c12", "gempage.txt"
+	if err := json.Unmarshal([]byte(`[
+      {"type":"attachment","text":"gempage.txt","attachment":{
+        "id":"1c93.txt","title":"gempage.txt","mimetype":"text/plain","size":25893,
+        "url":"https://t3807076.p.clickup-attachments.com/t/1c93/gempage.txt"}},
+      {"type":"image","text":"image.png","image":{
+        "id":"99d2.png","title":"image.png","extension":"image/png","width":1873,"height":940,
+        "url":"https://t3807076.p.clickup-attachments.com/t/99d2/image.png"}}]`),
+		&raw.Comment); err != nil {
+		t.Fatal(err)
+	}
+	got := slimComment(raw)
+	if len(got.Files) != 2 {
+		t.Fatalf("files = %+v, want the attachment and the image", got.Files)
+	}
+	if got.Files[0].ID != "1c93.txt" || got.Files[0].Size != 25893 || got.Files[0].Mimetype != "text/plain" {
+		t.Errorf("attachment = %+v", got.Files[0])
+	}
+	// ClickUp files an image's mimetype under "extension".
+	if got.Files[1].ID != "99d2.png" || got.Files[1].Mimetype != "image/png" || got.Files[1].Width != 1873 {
+		t.Errorf("image = %+v", got.Files[1])
+	}
+	if got.Text != "gempage.txtimage.png" {
+		t.Errorf("text = %q, want the filenames still rendered", got.Text)
+	}
+}
+
+// A comment with no files must carry no files[] (nil → omitted via omitempty).
+func TestSlimComment_NoFilesWhenNone(t *testing.T) {
+	raw := rawCUComment{ID: "c13", CommentText: "plain"}
+	raw.Comment = []rawCUCommentSegment{{Text: "plain"}}
+	if got := slimComment(raw); got.Files != nil {
+		t.Errorf("files = %v, want nil", got.Files)
 	}
 }
 
