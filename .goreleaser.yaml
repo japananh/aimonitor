@@ -146,55 +146,42 @@ homebrew_casks:
     # field, so inject the cask DSL directly via custom_block:
     #   - app: install AIMonitor.app into /Applications.
     #   - depends_on: enforce the minimum macOS at install time.
-    #   - postflight_steps (runs on install AND every `brew upgrade`):
-    #       1. strip the Gatekeeper quarantine flag off the freshly-staged
-    #          unsigned .app so the GUI opens without the "damaged" block.
-    #          Each upgrade re-stages a re-quarantined copy, so this re-runs
-    #          every time — without it, `brew upgrade` silently breaks the app.
-    #       2. register the daemon at login so the menu bar shows live data
-    #          immediately instead of "daemon not running".
-    #     must_succeed:false on both → a headless/locked-down install still
-    #     completes; the caveats repeat the manual commands as a fallback.
-    #     The LaunchAgent records the staged binary path; the steps re-run
-    #     on every upgrade, so the path self-heals across versions.
+    #   - postflight_steps: strip the Gatekeeper quarantine flag off the
+    #     freshly-staged unsigned .app so the GUI opens without the "damaged"
+    #     block. Each upgrade re-stages a re-quarantined copy, so this re-runs
+    #     every time — without it, `brew upgrade` silently breaks the app.
+    #     must_succeed:false → a headless/locked-down install still completes;
+    #     the caveats repeat the manual command as a fallback.
     #
-    # postflight_steps is a declarative step plan, NOT arbitrary Ruby, so
-    # the two habits carried over from `postflight` both fail SILENTLY:
-    #   - `#{appdir}` / `#{staged_path}` do not exist here (the block is
-    #     evaluated against InstallSteps::DSL). A path argument must use a
-    #     {{token}} template, which the runner expands at execution time.
-    #   - only `command` accepts base:, so a path that is an *argument*
-    #     (xattr's target) has to carry the appdir token itself; routing
-    #     it through chdir: silently does nothing.
-    # goreleaser renders custom_block through its OWN Go template first,
-    # so the cask's {{...}} token must be escaped as {{ "{{...}}" }} or
-    # the release dies with `function "appdir" not defined`.
-    # Both were verified against Homebrew 6.0.22 by installing from a
-    # scratch tap and checking the quarantine flag afterwards.
+    # Registering the daemon's LaunchAgent is deliberately NOT done here. An
+    # install step runs sandboxed, and writing
+    # ~/Library/LaunchAgents/dev.aimonitor.daemon.plist does not survive that:
+    # the write reports success, `launchctl bootstrap` then fails with
+    # "5: Input/output error", and must_succeed:false buries it. Since brew's
+    # own uninstall step deletes that plist before every upgrade, the daemon
+    # was left dead behind a "Daemon not running" banner. Declaring
+    # writable_paths for the LaunchAgents directory does not lift the sandbox.
+    # The app repairs it instead (AppModel.repairAutostartIfNeeded), which is
+    # unsandboxed and runs on every launch.
+    #
+    # postflight_steps is a declarative step plan, NOT arbitrary Ruby:
+    # `#{appdir}` does not exist here, so a path argument carries a {{token}}
+    # the runner expands at execution time — and goreleaser renders this block
+    # through its OWN Go template first, hence the {{ "{{...}}" }} escaping.
     custom_block: |
       depends_on macos: :sonoma
       app "AIMonitor.app"
       postflight_steps do
-        # Strip the Gatekeeper quarantine flag off the freshly-staged,
-        # unsigned .app so the GUI opens without the "damaged" /
-        # "unidentified developer" block. Homebrew re-stages a fresh,
-        # re-quarantined copy on every `brew upgrade`, so this must re-run
-        # each time — and it does (the steps run on install AND upgrade).
         run "/usr/bin/xattr",
             args: ["-dr", "com.apple.quarantine", "{{ "{{appdir}}" }}/AIMonitor.app"],
             writable_paths: ["AIMonitor.app"],
             writable_base: :appdir,
             must_succeed: false
-        # Register the daemon at login so the menu bar shows live data at once.
-        run "aimonitor",
-            base: :staged_path,
-            args: ["config", "set", "autostart", "true"],
-            must_succeed: false
       end
     # Surfaced after `brew install`. Documented in docs/unsigned-app.md.
     caveats: |
-      The aimonitor daemon is registered to start at login during install,
-      so the menu bar shows live data right away. Opt out any time with:
+      Open AIMonitor once after installing — it registers the daemon to
+      start at login, so the menu bar shows live data. Opt out any time with:
 
         aimonitor config set autostart false
 
