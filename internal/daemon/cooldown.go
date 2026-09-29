@@ -85,12 +85,12 @@ func recordThrottleAt(ctx context.Context, st *store.Store, acct store.Account, 
 type SkipReason string
 
 const (
-	// SkipRateLimited: the account is in its post-429 cooldown.
+	// SkipRateLimited means the account is in its post-429 cooldown.
 	SkipRateLimited SkipReason = "rate-limited"
-	// SkipAtLimit: a window is at 100% and has not reset yet, so a fetch can
+	// SkipAtLimit means a window is at 100% and has not reset yet, so a fetch can
 	// only return the same number.
 	SkipAtLimit SkipReason = "at-limit"
-	// SkipFresh: the stored snapshot is younger than the minimum refresh age.
+	// SkipFresh means the stored snapshot is younger than the minimum refresh age.
 	SkipFresh SkipReason = "fresh"
 )
 
