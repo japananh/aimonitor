@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/provider/claude"
 	"github.com/japananh/aimonitor/internal/store"
 )
@@ -15,35 +16,147 @@ import (
 var reloginNotify = notifyMacOS
 
 // Per-account cooldown bounds. A 429 parks an account for the server's
-// Retry-After when present, otherwise a conservative default — always clamped
-// so a missing or absurd header can neither leave it effectively un-parked nor
-// sideline an account for a day.
+// Retry-After when present; otherwise for cooldownDefault doubled per strike in
+// the current streak. Always clamped so a missing or absurd header can neither
+// leave it effectively un-parked nor sideline it for a day.
 const (
 	cooldownDefault = 15 * time.Minute
 	cooldownMin     = 1 * time.Minute
 	cooldownMax     = 1 * time.Hour
+	// throttleStreakWindow: a 429 this long after the previous one starts a
+	// new streak. Longer than cooldownMax so a success between two capped
+	// cooldowns does not reset the escalation.
+	throttleStreakWindow = 2 * cooldownMax
+	// minRefreshAge is the youngest snapshot an on-demand refresh (CLI, popover,
+	// widget) will re-fetch — the scheduler's default baseline, so no path
+	// polls an account faster than the background schedule does.
+	minRefreshAge  = 5 * time.Minute
+	throttleReason = "rate-limited (429)"
 )
 
-// recordThrottle parks acct after a 429, honoring its Retry-After (clamped to
-// [cooldownMin, cooldownMax]). No-op for non-throttle errors. Best-effort: a
-// store failure is logged, never propagated — cooldown is an optimization, not
-// a correctness requirement. Returns true when a cooldown was set.
-func recordThrottle(ctx context.Context, st *store.Store, acct store.Account, err error) bool {
-	if !claude.IsThrottledError(err) {
-		return false
+// throttleBackoff is the no-Retry-After cooldown for the Nth strike:
+// cooldownDefault · 2^(strikes-1), capped at cooldownMax.
+func throttleBackoff(strikes int) time.Duration {
+	d := cooldownDefault
+	for i := 1; i < strikes && d < cooldownMax; i++ {
+		d *= 2
 	}
-	dur := cooldownDefault
+	return min(d, cooldownMax)
+}
+
+// recordThrottle parks acct after a 429. See recordThrottleAt.
+func recordThrottle(ctx context.Context, st *store.Store, acct store.Account, err error) (time.Time, bool) {
+	return recordThrottleAt(ctx, st, acct, err, time.Now())
+}
+
+// recordThrottleAt parks acct after a 429 and returns the cooldown deadline.
+// The duration honors Retry-After, else grows with the streak. No-op for
+// non-throttle errors. Best-effort: a store failure is logged, never
+// propagated. Returns ok=false when no cooldown was set.
+func recordThrottleAt(ctx context.Context, st *store.Store, acct store.Account, err error, now time.Time) (time.Time, bool) {
+	if !claude.IsThrottledError(err) {
+		return time.Time{}, false
+	}
+	// Re-read: another process (CLI refresh vs daemon) may have extended the
+	// streak since acct was loaded.
+	cur, gerr := st.GetAccountByID(ctx, acct.ID)
+	if gerr != nil {
+		cur = acct
+	}
+	strikes := 1
+	if !cur.ThrottledAt.IsZero() && now.Sub(cur.ThrottledAt) < throttleStreakWindow {
+		strikes = cur.ThrottleStrikes + 1
+	}
+	dur := throttleBackoff(strikes)
 	if ra, ok := claude.ThrottleRetryAfter(err); ok {
 		dur = ra
 	}
 	dur = clampDuration(dur, cooldownMin, cooldownMax)
-	until := time.Now().Add(dur)
-	if serr := st.SetCooldown(ctx, acct.ID, until, "rate-limited (429)"); serr != nil {
+	until := now.Add(dur)
+	if serr := st.SetThrottle(ctx, acct.ID, until, throttleReason, strikes, now); serr != nil {
 		logger.Warn("set cooldown failed", "account", acct.Label, "err", serr)
-		return false
+		return time.Time{}, false
 	}
-	logger.Warn("account parked after 429", "account", acct.Label, "for", dur, "until", until.Format(time.RFC3339))
-	return true
+	logger.Warn("account parked after 429", "account", acct.Label, "strike", strikes, "for", dur, "until", until.Format(time.RFC3339))
+	return until, true
+}
+
+// SkipReason says why a usage fetch was withheld.
+type SkipReason string
+
+const (
+	// SkipRateLimited: the account is in its post-429 cooldown.
+	SkipRateLimited SkipReason = "rate-limited"
+	// SkipAtLimit: a window is at 100% and has not reset yet, so a fetch can
+	// only return the same number.
+	SkipAtLimit SkipReason = "at-limit"
+	// SkipFresh: the stored snapshot is younger than the minimum refresh age.
+	SkipFresh SkipReason = "fresh"
+)
+
+// RefreshSkippedError reports a usage fetch withheld without any network
+// call. Cached is the stored snapshot (HasCached=false when there is none).
+type RefreshSkippedError struct {
+	Label     string
+	Reason    SkipReason
+	Until     time.Time
+	Cached    provider.Limits
+	HasCached bool
+}
+
+func (e *RefreshSkippedError) Error() string {
+	at := e.Until.Local().Format("15:04")
+	switch e.Reason {
+	case SkipRateLimited:
+		return fmt.Sprintf("%q is rate-limited by Anthropic until %s; not re-fetched", e.Label, at)
+	case SkipAtLimit:
+		return fmt.Sprintf("%q is at its usage limit until %s; not re-fetched", e.Label, e.Until.Local().Format("Jan 2 15:04"))
+	default:
+		return fmt.Sprintf("%q was fetched under %s ago; not re-fetched", e.Label, minRefreshAge)
+	}
+}
+
+// exhaustedUntil returns when acct's usage can next change: the latest reset
+// among windows at/over exhaustedPct whose reset is still ahead. Zero when no
+// window is exhausted, or its reset time is unknown or already passed.
+func exhaustedUntil(lim provider.Limits, now time.Time) time.Time {
+	var until time.Time
+	if lim.FiveHourPct >= exhaustedPct && lim.FiveHourResetAt.After(now) {
+		until = lim.FiveHourResetAt
+	}
+	if lim.SevenDayPct >= exhaustedPct && lim.SevenDayResetAt.After(now) && lim.SevenDayResetAt.After(until) {
+		until = lim.SevenDayResetAt
+	}
+	return until
+}
+
+// fetchGate decides, from stored state only, whether acct's usage may be
+// fetched at now. Every path that calls Anthropic for usage (scheduler,
+// auto-swap candidate refresh, CLI/UI refresh) goes through it before any
+// token refresh or HTTP. minAge=0 disables the freshness check. Returns nil
+// when the fetch may proceed.
+func fetchGate(ctx context.Context, st *store.Store, acct store.Account, now time.Time, minAge time.Duration) *RefreshSkippedError {
+	cur, err := st.GetAccountByID(ctx, acct.ID)
+	if err != nil {
+		cur = acct
+	}
+	lim, lerr := st.GetLimits(ctx, acct.ID)
+	has := lerr == nil
+	skip := func(r SkipReason, until time.Time) *RefreshSkippedError {
+		return &RefreshSkippedError{Label: acct.Label, Reason: r, Until: until, Cached: lim, HasCached: has}
+	}
+	if has {
+		if until := exhaustedUntil(lim, now); !until.IsZero() {
+			return skip(SkipAtLimit, until)
+		}
+	}
+	if cur.CooldownUntil.After(now) {
+		return skip(SkipRateLimited, cur.CooldownUntil)
+	}
+	if has && minAge > 0 && now.Sub(lim.FetchedAt) < minAge && !windowResetCrossed(lim, now) {
+		return skip(SkipFresh, lim.FetchedAt.Add(minAge))
+	}
+	return nil
 }
 
 // clearThrottle lifts any cooldown on acct after a successful fetch.

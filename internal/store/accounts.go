@@ -36,6 +36,12 @@ type Account struct {
 	CooldownUntil  time.Time
 	CooldownReason string
 
+	// ThrottleStrikes counts the 429s in the current streak and ThrottledAt
+	// is the latest one. Unlike CooldownUntil they survive a successful fetch,
+	// so the next 429 escalates the cooldown instead of restarting it.
+	ThrottleStrikes int
+	ThrottledAt     time.Time
+
 	// NeedsRelogin is set when the account's OAuth refresh token is dead
 	// (a 400/401 on token refresh): it can't be refreshed or switched to
 	// until the user re-logs in via `aimonitor add`. Cleared on the next
@@ -46,7 +52,7 @@ type Account struct {
 // accountColumns is the canonical SELECT list, shared by every read so
 // the column order can't drift from the scan order. COALESCE guards the
 // nullable/added columns so pre-0003 rows scan cleanly.
-const accountColumns = `id, provider, label, COALESCE(email,''), COALESCE(organization_uuid,''), COALESCE(organization_name,''), keyring_ref, created_at, COALESCE(last_used_at, 0), COALESCE(cooldown_until, 0), COALESCE(cooldown_reason, ''), COALESCE(needs_relogin, 0)`
+const accountColumns = `id, provider, label, COALESCE(email,''), COALESCE(organization_uuid,''), COALESCE(organization_name,''), keyring_ref, created_at, COALESCE(last_used_at, 0), COALESCE(cooldown_until, 0), COALESCE(cooldown_reason, ''), COALESCE(needs_relogin, 0), COALESCE(throttle_strikes, 0), COALESCE(throttled_at, 0)`
 
 // ErrAccountNotFound is returned by GetAccountByLabel / GetAccountByID
 // when no matching row exists.
@@ -169,6 +175,23 @@ func (s *Store) SetCooldown(ctx context.Context, id int64, until time.Time, reas
 	return nil
 }
 
+// SetThrottle parks accountID until `until` after a 429 and records the
+// streak (strikes, at) that sizes the next cooldown. One statement, so a
+// reader never sees a cooldown without its streak.
+func (s *Store) SetThrottle(ctx context.Context, id int64, until time.Time, reason string, strikes int, at time.Time) error {
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE accounts SET cooldown_until = ?, cooldown_reason = ?, throttle_strikes = ?, throttled_at = ? WHERE id = ?`,
+		until.UnixMilli(), reason, strikes, at.UnixMilli(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("set throttle: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrAccountNotFound
+	}
+	return nil
+}
+
 // ClearCooldown removes any cooldown on accountID. Called on a successful
 // fetch. Cheap and idempotent: the WHERE only touches a currently-cooling
 // row, so the steady-state success path writes nothing.
@@ -252,8 +275,8 @@ type rowScanner interface {
 func scanAccountRow(r rowScanner) (Account, error) {
 	var a Account
 	var createdAt, lastUsedAt, cooldownUntil int64
-	var needsRelogin int64
-	err := r.Scan(&a.ID, &a.Provider, &a.Label, &a.Email, &a.OrganizationUUID, &a.OrganizationName, &a.KeyringRef, &createdAt, &lastUsedAt, &cooldownUntil, &a.CooldownReason, &needsRelogin)
+	var needsRelogin, throttledAt int64
+	err := r.Scan(&a.ID, &a.Provider, &a.Label, &a.Email, &a.OrganizationUUID, &a.OrganizationName, &a.KeyringRef, &createdAt, &lastUsedAt, &cooldownUntil, &a.CooldownReason, &needsRelogin, &a.ThrottleStrikes, &throttledAt)
 	if err != nil {
 		return Account{}, err
 	}
@@ -265,6 +288,9 @@ func scanAccountRow(r rowScanner) (Account, error) {
 		a.CooldownUntil = time.UnixMilli(cooldownUntil)
 	}
 	a.NeedsRelogin = needsRelogin != 0
+	if throttledAt != 0 {
+		a.ThrottledAt = time.UnixMilli(throttledAt)
+	}
 	return a, nil
 }
 

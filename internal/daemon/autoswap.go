@@ -131,6 +131,10 @@ type AutoSwapper struct {
 	// Reset to zero once a candidate reappears or the active account drops back
 	// below threshold, so the next stuck episode notifies right away.
 	noCandidateNotifiedAt time.Time
+	// stuck: the latest decision found the active account over threshold with
+	// no swap target. The scheduler drops its speed-up cadence while set —
+	// polling faster cannot help when there is nowhere to go.
+	stuck bool
 }
 
 // MaybeSwap is invoked by the UsageScheduler after every successful
@@ -161,6 +165,7 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 	}
 	if !enabled {
 		a.pending = nil
+		a.stuck = false
 		return false, nil
 	}
 	if activeLabel == "" {
@@ -199,6 +204,7 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 	if activeLim.FiveHourPct < threshold5h && activeLim.SevenDayPct < threshold7d {
 		a.pending = nil
 		a.noCandidateNotifiedAt = time.Time{}
+		a.stuck = false
 		return false, nil
 	}
 	// The binding window is the one driving this decision (the one furthest
@@ -213,6 +219,7 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 		a.log().Info("auto-swap no candidate",
 			"window", binding, "active", activeLabel, "pct", activePct)
 		a.pending = nil
+		a.stuck = true
 		a.cooldownUntil = a.now().Add(cooldownAfterExhausted)
 		title := "No account to switch to"
 		body := fmt.Sprintf("%q hit %.0f%% of its %s limit — no other account has headroom.", activeLabel, activePct, binding)
@@ -236,6 +243,7 @@ func (a *AutoSwapper) MaybeSwap(ctx context.Context, activeLabel string) (bool, 
 	// A candidate exists — clear the stuck-notification dedup so a later stuck
 	// episode notifies immediately rather than waiting out the reminder window.
 	a.noCandidateNotifiedAt = time.Time{}
+	a.stuck = false
 
 	// Swap immediately when grace is disabled (grace_sec=0) OR the active
 	// account is already exhausted (no point waiting out a grace window on an
@@ -362,12 +370,19 @@ func (a *AutoSwapper) refreshStaleCandidates(ctx context.Context, activeID int64
 		if acct.CooldownUntil.After(a.now()) {
 			continue
 		}
-		if lim, err := a.Store.GetLimits(ctx, acct.ID); err == nil &&
-			a.now().Sub(lim.FetchedAt) <= candidateFreshWindow && !windowResetCrossed(lim, a.now()) {
-			continue // fresh AND no window has reset since the snapshot — trust it
+		if lim, err := a.Store.GetLimits(ctx, acct.ID); err == nil {
+			// At a limit that hasn't reset: a fetch can only confirm it, and
+			// pickCandidate rejects it however stale the snapshot is.
+			if !exhaustedUntil(lim, a.now()).IsZero() {
+				continue
+			}
+			if a.now().Sub(lim.FetchedAt) <= candidateFreshWindow && !windowResetCrossed(lim, a.now()) {
+				continue // fresh AND no window has reset since the snapshot — trust it
+			}
 		}
+		// RefreshUsage (RefreshAccountUsage in production) parks the account
+		// on a 429 itself; recording it here too would count the strike twice.
 		if _, err := a.RefreshUsage(ctx, acct); err != nil {
-			recordThrottle(ctx, a.Store, acct, err)
 			a.log().Warn("auto-swap refresh candidate failed", "account", acct.Label, "err", err)
 		}
 		done++
@@ -477,6 +492,12 @@ func (a *AutoSwapper) pickCandidate(ctx context.Context, activeID int64, activeL
 		}
 		lim, err := a.Store.GetLimits(ctx, acct.ID)
 		known := err == nil
+		// At a limit whose reset is still ahead: stays unusable until then, so
+		// a stale snapshot must not promote it to the uncertain tier (the JIT
+		// refresh deliberately doesn't re-fetch it).
+		if known && !exhaustedUntil(lim, now).IsZero() {
+			continue
+		}
 		// A snapshot whose window has reset since FetchedAt reads a stale-high
 		// pct (a just-reset account still showing ~100%). Treat it as not-fresh
 		// so it drops to the uncertain (last-resort) tier instead of being
@@ -661,6 +682,14 @@ func (a *AutoSwapper) HasPending() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.pending != nil
+}
+
+// Stuck reports whether the latest decision found no swap target for an
+// over-threshold active account. See the stuck field.
+func (a *AutoSwapper) Stuck() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.stuck
 }
 
 func (a *AutoSwapper) now() time.Time {

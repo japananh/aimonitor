@@ -296,8 +296,8 @@ func TestDoubleCapped(t *testing.T) {
 // successInterval must speed up not only when the active account is near its
 // limit (pct >= SpeedupAtPct) but also whenever a swap is armed — even below
 // the threshold — so the grace deadline isn't a full baseline interval late.
-// Error/backoff paths never call this, so a pending swap can't undercut a 429
-// backoff (that precedence lives in Run's switch).
+// When auto-swap is stuck (no target) the pct speed-up is dropped: that 60 s
+// cadence on an exhausted pool is what drove the 2026-09 429 loop.
 func TestUsageScheduler_SuccessInterval(t *testing.T) {
 	u := &UsageScheduler{}
 	u.defaults() // SpeedupAtPct=90, Baseline=300s, SpeedupInterval=60s
@@ -307,19 +307,22 @@ func TestUsageScheduler_SuccessInterval(t *testing.T) {
 		pct     float64
 		known   bool
 		pending bool
+		stuck   bool
 		want    time.Duration
 	}{
-		{"below threshold, no pending", 50, true, false, u.Baseline},
-		{"below threshold, pending", 50, true, true, u.SpeedupInterval},
-		{"at/above threshold, no pending", 95, true, false, u.SpeedupInterval},
-		{"at/above threshold, pending", 95, true, true, u.SpeedupInterval},
-		{"pct unknown, no pending", 0, false, false, u.Baseline},
-		{"pct unknown, pending", 0, false, true, u.SpeedupInterval},
+		{"below threshold, no pending", 50, true, false, false, u.Baseline},
+		{"below threshold, pending", 50, true, true, false, u.SpeedupInterval},
+		{"at/above threshold, no pending", 95, true, false, false, u.SpeedupInterval},
+		{"at/above threshold, pending", 95, true, true, false, u.SpeedupInterval},
+		{"pct unknown, no pending", 0, false, false, false, u.Baseline},
+		{"pct unknown, pending", 0, false, true, false, u.SpeedupInterval},
+		{"at/above threshold, stuck", 100, true, false, true, u.Baseline},
+		{"below threshold, stuck", 50, true, false, true, u.Baseline},
 	}
 	for _, c := range cases {
-		if got := u.successInterval(c.pct, c.known, c.pending); got != c.want {
-			t.Errorf("%s: successInterval(%v,%v,%v) = %v, want %v",
-				c.name, c.pct, c.known, c.pending, got, c.want)
+		if got := u.successInterval(c.pct, c.known, c.pending, c.stuck); got != c.want {
+			t.Errorf("%s: successInterval(%v,%v,%v,%v) = %v, want %v",
+				c.name, c.pct, c.known, c.pending, c.stuck, got, c.want)
 		}
 	}
 }

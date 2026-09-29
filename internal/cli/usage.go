@@ -42,7 +42,12 @@ calls on open so inactive accounts aren't polled continuously in the
 background.
 
 With a <label>, refreshes just that account and FAILS (non-zero exit) if
-the fetch can't complete, so the caller sees the error.`,
+the fetch can't complete, so the caller sees the error.
+
+An account is NOT re-fetched while it is rate-limited after a 429, at a
+usage limit that has not reset yet, or fetched under 5 minutes ago; its
+last stored numbers are shown instead. Only the rate-limited case fails a
+single-label refresh.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withRuntime(cmd.Context(), func(ctx context.Context, s *store.Store, p provider.Provider) error {
@@ -82,11 +87,26 @@ func runUsageRefreshOne(ctx context.Context, cmd *cobra.Command, s *store.Store,
 	} else {
 		lim, err = daemon.RefreshAccountUsage(ctx, s, fetcher, claude.NewTokenRefresher(), acct)
 	}
+	var skip *daemon.RefreshSkippedError
+	if errors.As(err, &skip) && skip.Reason != daemon.SkipRateLimited {
+		printHeld(cmd, label, skip)
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("refresh %q: %w", label, err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "%s 5h %.0f%%  7d %.0f%%\n", label, lim.FiveHourPct, lim.SevenDayPct)
 	return nil
+}
+
+// printHeld reports an account the fetch gate held back, with its cached
+// numbers when there are any.
+func printHeld(cmd *cobra.Command, label string, skip *daemon.RefreshSkippedError) {
+	if skip.HasCached {
+		fmt.Fprintf(cmd.OutOrStdout(), "%-18s 5h %.0f%%  7d %.0f%%  (cached: %v)\n", label, skip.Cached.FiveHourPct, skip.Cached.SevenDayPct, skip)
+		return
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%-18s held: %v\n", label, skip)
 }
 
 func runUsageRefresh(ctx context.Context, cmd *cobra.Command, s *store.Store, p provider.Provider, inactiveOnly bool) error {
@@ -112,7 +132,7 @@ func runUsageRefresh(ctx context.Context, cmd *cobra.Command, s *store.Store, p 
 	refresher := claude.NewTokenRefresher()
 	sw := daemon.NewSwitcher(s, p)
 
-	var refreshed, skipped, failed int
+	var refreshed, skipped, held, failed int
 	for _, acct := range accounts {
 		if acct.ID == activeID && inactiveOnly {
 			skipped++
@@ -124,6 +144,12 @@ func runUsageRefresh(ctx context.Context, cmd *cobra.Command, s *store.Store, p 
 			lim, err = daemon.RefreshActiveUsage(ctx, s, sw, fetcher, acct)
 		} else {
 			lim, err = daemon.RefreshAccountUsage(ctx, s, fetcher, refresher, acct)
+		}
+		var skip *daemon.RefreshSkippedError
+		if errors.As(err, &skip) {
+			printHeld(cmd, acct.Label, skip)
+			held++
+			continue
 		}
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "%-18s failed: %v\n", acct.Label, err)
@@ -137,6 +163,9 @@ func runUsageRefresh(ctx context.Context, cmd *cobra.Command, s *store.Store, p 
 		fmt.Fprintf(cmd.OutOrStdout(), "\n%d refreshed, %d skipped (active), %d failed.\n", refreshed, skipped, failed)
 	} else {
 		fmt.Fprintf(cmd.OutOrStdout(), "\n%d refreshed, %d failed.\n", refreshed, failed)
+	}
+	if held > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "%d not re-fetched (rate-limited, at limit, or fetched <5m ago).\n", held)
 	}
 	return nil
 }

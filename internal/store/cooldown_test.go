@@ -53,3 +53,40 @@ func TestCooldown_SetMissingAccount(t *testing.T) {
 		t.Errorf("SetCooldown on missing account = %v, want ErrAccountNotFound", err)
 	}
 }
+
+// The streak must outlive ClearCooldown: a success lifts the cooldown but the
+// next 429 still has to escalate from the recorded strikes.
+func TestThrottle_StreakSurvivesClearCooldown(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	acct, _ := s.CreateAccount(ctx, Account{Label: "a", KeyringRef: "r"})
+
+	at := time.Now().Truncate(time.Millisecond)
+	until := at.Add(30 * time.Minute)
+	if err := s.SetThrottle(ctx, acct.ID, until, "rate-limited (429)", 2, at); err != nil {
+		t.Fatalf("SetThrottle: %v", err)
+	}
+	got, _ := s.GetAccountByID(ctx, acct.ID)
+	if !got.CooldownUntil.Equal(until) || got.ThrottleStrikes != 2 || !got.ThrottledAt.Equal(at) {
+		t.Fatalf("throttle not persisted: %+v", got)
+	}
+
+	if err := s.ClearCooldown(ctx, acct.ID); err != nil {
+		t.Fatalf("ClearCooldown: %v", err)
+	}
+	got, _ = s.GetAccountByID(ctx, acct.ID)
+	if !got.CooldownUntil.IsZero() {
+		t.Errorf("cooldown not cleared: %v", got.CooldownUntil)
+	}
+	if got.ThrottleStrikes != 2 || !got.ThrottledAt.Equal(at) {
+		t.Errorf("streak lost on clear: strikes=%d at=%v", got.ThrottleStrikes, got.ThrottledAt)
+	}
+
+	if err := s.SetThrottle(ctx, 999, until, "x", 1, at); !errors.Is(err, ErrAccountNotFound) {
+		t.Errorf("SetThrottle on missing account = %v, want ErrAccountNotFound", err)
+	}
+}

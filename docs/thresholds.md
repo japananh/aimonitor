@@ -57,3 +57,17 @@ put and notifies that no account has more headroom.
 - 10-minute cooldown after a "no candidate" decision.
 - A manual switch (CLI or widget) always wins; auto-switch re-evaluates
   from the new active account.
+
+## Polling when there is nowhere to switch
+
+- With no swap target, the active account is polled every 5 minutes, never
+  at the 60-second near-limit cadence.
+- An account at 100 % on a window is not polled again until that window
+  resets. Auto-swap still re-checks the other accounts every 5 minutes.
+- A 429 parks the account: for the server's `Retry-After` if it sends one,
+  otherwise 15 min, then 30 min, then 1 h for each later 429. One success in
+  between does not reset that growth. It resets after 2 h without a 429.
+- These rules cover every path that fetches usage: the daemon, auto-swap's
+  candidate check, and `aimonitor usage refresh` (the popover and the
+  per-row Refresh button). A refresh within 5 minutes of the last fetch
+  shows the stored numbers instead of calling Anthropic.

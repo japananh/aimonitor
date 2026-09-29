@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/provider/claude"
@@ -25,7 +26,14 @@ import (
 // here would desync it from the live keychain slot. Use
 // Switcher.RefreshActive (live + stash together, under lock) for the active
 // account. Callers are responsible for excluding it.
+//
+// Returns *RefreshSkippedError, with no token refresh or HTTP, while the
+// account is cooling down after a 429, at a limit that has not reset, or was
+// fetched under minRefreshAge ago.
 func RefreshAccountUsage(ctx context.Context, st *store.Store, fetcher *claude.UsageFetcher, refresher *claude.TokenRefresher, acct store.Account) (provider.Limits, error) {
+	if skip := fetchGate(ctx, st, acct, time.Now(), minRefreshAge); skip != nil {
+		return provider.Limits{}, skip
+	}
 	cred, err := ensureFreshStash(ctx, refresher, acct)
 	if err != nil {
 		// Flag a dead refresh token so the popover can show "re-login".
@@ -41,12 +49,14 @@ func RefreshAccountUsage(ctx context.Context, st *store.Store, fetcher *claude.U
 		// re-login condition, not a transient error — flag it. markRelogin
 		// ignores non-relogin errors, so a network blip leaves the flag alone.
 		markRelogin(ctx, st, acct, err)
+		recordThrottle(ctx, st, acct, err)
 		return provider.Limits{}, err
 	}
 	limits.AccountID = acct.ID
 	if err := st.PutLimits(ctx, acct.ID, limits); err != nil {
 		return provider.Limits{}, fmt.Errorf("persist usage for %q: %w", acct.Label, err)
 	}
+	clearThrottle(ctx, st, acct)
 	markRelogin(ctx, st, acct, nil) // a successful refresh clears any stale flag
 	return limits, nil
 }
@@ -56,7 +66,11 @@ func RefreshAccountUsage(ctx context.Context, st *store.Store, fetcher *claude.U
 // the switch lock if expired, keeping live and stash in sync. Use this,
 // NOT RefreshAccountUsage, for the active account: its stash must stay
 // byte-equal to the live slot, which only RefreshActive guarantees.
+// Gated like RefreshAccountUsage.
 func RefreshActiveUsage(ctx context.Context, st *store.Store, sw *Switcher, fetcher *claude.UsageFetcher, acct store.Account) (provider.Limits, error) {
+	if skip := fetchGate(ctx, st, acct, time.Now(), minRefreshAge); skip != nil {
+		return provider.Limits{}, skip
+	}
 	cred, err := sw.RefreshActive(ctx, acct, false)
 	if err != nil {
 		markRelogin(ctx, st, acct, err)
@@ -68,12 +82,14 @@ func RefreshActiveUsage(ctx context.Context, st *store.Store, sw *Switcher, fetc
 	}
 	limits, err := fetcher.FetchLimits(ctx, cred)
 	if err != nil {
+		recordThrottle(ctx, st, acct, err)
 		return provider.Limits{}, err
 	}
 	limits.AccountID = acct.ID
 	if err := st.PutLimits(ctx, acct.ID, limits); err != nil {
 		return provider.Limits{}, fmt.Errorf("persist usage for %q: %w", acct.Label, err)
 	}
+	clearThrottle(ctx, st, acct)
 	markRelogin(ctx, st, acct, nil)
 	return limits, nil
 }
