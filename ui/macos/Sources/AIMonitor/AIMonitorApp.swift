@@ -34,6 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // A borderless NSPanel (not NSPopover) so there's no anchoring arrow.
     private var panel: NSPanel!
     private var clickMonitor: Any?
+    // Preferences and Token usage windows are retained, but their SwiftUI tree
+    // only exists while shown (see retireAuxWindow).
     private var preferencesWindow: NSWindow?
     // Standalone Token-usage window (per-account token breakdown), kept out of
     // the operational popover. Retained so it isn't released on close.
@@ -136,14 +138,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func showPreferences() {
         closePanel()
-        if preferencesWindow == nil {
-            let view = PreferencesView(
-                model: model,
-                checkForUpdates: { [weak self] in self?.checkForUpdates(userInitiated: true) },
-                backToMain: { [weak self] in self?.backToMainFromPreferences() }
-            )
-            let host = NSHostingController(rootView: view)
-            let win = NSWindow(contentViewController: host)
+        if let win = preferencesWindow {
+            if !(win.contentViewController is NSHostingController<PreferencesView>) {
+                Self.installContent(makePreferencesHost(), in: win)
+            }
+        } else {
+            let win = NSWindow(contentViewController: makePreferencesHost())
             win.title = "AIMonitor Preferences"
             win.styleMask = [.titled, .closable]
             win.isReleasedWhenClosed = false
@@ -151,6 +151,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // of yanking them back to the Space where it was first opened (the
             // default for a normal window).
             win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(auxWindowWillClose(_:)),
+                name: NSWindow.willCloseNotification, object: win)
             preferencesWindow = win
         }
         preferencesWindow?.center()
@@ -187,8 +190,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // panel when it's hidden (it is, while Preferences is up) and already
     // orders out a lingering Preferences window as it opens.
     private func backToMainFromPreferences() {
-        preferencesWindow?.orderOut(nil)
+        hideAuxWindow(preferencesWindow)
         if !panel.isVisible { togglePopover(nil) }
+    }
+
+    private func makePreferencesHost() -> NSHostingController<PreferencesView> {
+        NSHostingController(rootView: PreferencesView(
+            model: model,
+            checkForUpdates: { [weak self] in self?.checkForUpdates(userInitiated: true) },
+            backToMain: { [weak self] in self?.backToMainFromPreferences() }
+        ))
     }
 
     // showTokenUsage opens the standalone Token-usage window (per-account
@@ -197,9 +208,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // occasional review, so it lives here rather than in the popover.
     private func showTokenUsage() {
         closePanel()
-        if tokenUsageWindow == nil {
-            let host = NSHostingController(rootView: TokenUsageWindowView(model: model))
-            let win = NSWindow(contentViewController: host)
+        if let win = tokenUsageWindow {
+            if !(win.contentViewController is NSHostingController<TokenUsageWindowView>) {
+                Self.installContent(NSHostingController(rootView: TokenUsageWindowView(model: model)), in: win)
+            }
+        } else {
+            let win = NSWindow(contentViewController: NSHostingController(rootView: TokenUsageWindowView(model: model)))
             win.title = "AIMonitor — Token usage"
             win.styleMask = [.titled, .closable]
             win.isReleasedWhenClosed = false
@@ -209,9 +223,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // .help() tooltips need mouse-moved events; without this they fire
             // unreliably in this window (e.g. not on the active/expanded card).
             win.acceptsMouseMovedEvents = true
-            // Stop fetching the heavy token buckets once the window closes.
             NotificationCenter.default.addObserver(
-                self, selector: #selector(tokenWindowWillClose),
+                self, selector: #selector(auxWindowWillClose(_:)),
                 name: NSWindow.willCloseNotification, object: win)
             tokenUsageWindow = win
         }
@@ -225,8 +238,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         model.tokenWindowDidOpen()
     }
 
-    @objc private func tokenWindowWillClose() {
-        model.tokenWindowDidClose()
+    @objc private func auxWindowWillClose(_ note: Notification) {
+        guard let win = note.object as? NSWindow else { return }
+        retireAuxWindow(win)
+    }
+
+    private func hideAuxWindow(_ win: NSWindow?) {
+        guard let win, win.isVisible else { return }
+        win.orderOut(nil)
+        retireAuxWindow(win)
+    }
+
+    // retireAuxWindow tears down a hidden Preferences / Token-usage window's
+    // SwiftUI tree; showPreferences / showTokenUsage rebuild it on the next
+    // open. A retained hosting controller keeps running view-graph updates
+    // offscreen on every poll and each leaves Observation state behind: ~185k
+    // registrars (~150 MB) after 13 days, the growth #88 removed for the panel.
+    // Releasing the window instead doesn't help: AppKit keeps closed windows
+    // alive (close animation, window bookkeeping), and their trees with them.
+    private func retireAuxWindow(_ win: NSWindow) {
+        // Resigning first responder commits a focused Preferences field (it
+        // saves on blur) while its view still exists.
+        win.makeFirstResponder(nil)
+        // Deferred: out of the window's own close sequence, and a run-loop turn
+        // for the field commit to land before its view goes.
+        DispatchQueue.main.async { [weak self] in
+            // Reopened before this ran: it's in use again, keep it.
+            guard let self, !win.isVisible else { return }
+            win.contentViewController = Self.emptyContentVC()
+            if win === self.tokenUsageWindow {
+                // Stop fetching the heavy token buckets once the window is gone.
+                self.model.tokenWindowDidClose()
+            }
+        }
+    }
+
+    // installContent puts a freshly built SwiftUI tree into a retained window and
+    // sizes the window to it (the empty placeholder left it at zero size).
+    private static func installContent(_ host: NSViewController, in win: NSWindow) {
+        win.contentViewController = host
+        host.view.layoutSubtreeIfNeeded()
+        let fit = host.view.fittingSize
+        if fit.width > 1, fit.height > 1 {
+            win.setContentSize(fit)
+        }
     }
 
     // installPrefsClickMonitor makes a click anywhere in the Preferences
@@ -520,14 +575,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // render on top of it and cover its close button. Keep the two
         // mutually exclusive: hide Preferences when the panel opens. (Opening
         // Preferences already closes the panel — see showPreferences.)
-        if let prefs = preferencesWindow, prefs.isVisible {
-            prefs.orderOut(nil)
-        }
+        hideAuxWindow(preferencesWindow)
         // Same for the Token-usage window — the panel floats above it and would
         // cover its close button.
-        if let tokens = tokenUsageWindow, tokens.isVisible {
-            tokens.orderOut(nil)
-        }
+        hideAuxWindow(tokenUsageWindow)
         // Switch to the fast cadence and pull the full snapshot the moment it
         // opens, without waiting for the next idle tick.
         model.panelDidOpen()
