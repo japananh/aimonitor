@@ -4,7 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/provider/claude"
 	"github.com/japananh/aimonitor/internal/store"
 )
@@ -103,5 +105,42 @@ func TestRemove_DeleteStashFails(t *testing.T) {
 	s := openStoreAt(t, dbPath)
 	if _, err := s.GetAccountByLabel(ctx, "stuck"); err != nil {
 		t.Errorf("the registry row should be kept when the stash delete fails: %v", err)
+	}
+}
+
+// TestUsageRefresh_HeldAccountsMakeNoRequest: a rate-limited account and one at
+// a limit that hasn't reset are held back before any network call (the
+// fetcher has no seam, so reaching it would hit the real API and fail). The
+// single-label form fails only for the rate-limited one.
+func TestUsageRefresh_HeldAccountsMakeNoRequest(t *testing.T) {
+	_, dbPath := e2eEnv(t)
+	ctx := context.Background()
+	cooling := seedAccount(t, dbPath, store.Account{Label: "cooling"}, validBlob("sk-c"))
+	capped := seedAccount(t, dbPath, store.Account{Label: "capped"}, validBlob("sk-x"))
+	s := openStoreAt(t, dbPath)
+	if err := s.SetCooldown(ctx, cooling.ID, time.Now().Add(20*time.Minute), "rate-limited (429)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutLimits(ctx, capped.ID, provider.Limits{
+		FiveHourPct: 100, SevenDayPct: 98,
+		FiveHourResetAt: time.Now().Add(8 * time.Minute), FetchedAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runCLI(t, "", "usage", "refresh")
+	if err != nil {
+		t.Fatalf("usage refresh: %v (output: %q)", err, out)
+	}
+	if !strings.Contains(out, "2 not re-fetched") || !strings.Contains(out, "0 failed") {
+		t.Errorf("both accounts should be held, none failed\n%s", out)
+	}
+
+	out, err = runCLI(t, "", "usage", "refresh", "capped")
+	if err != nil || !strings.Contains(out, "capped") || !strings.Contains(out, "5h 100%") {
+		t.Errorf("at-limit single refresh should print cached numbers, got err=%v out=%q", err, out)
+	}
+	if _, err := runCLI(t, "", "usage", "refresh", "cooling"); err == nil || !strings.Contains(err.Error(), "rate-limited") {
+		t.Errorf("rate-limited single refresh should fail with the reason, got %v", err)
 	}
 }

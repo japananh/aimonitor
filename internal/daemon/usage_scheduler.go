@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"time"
@@ -46,7 +47,13 @@ import (
 //     token, backs the schedule off to the 1-hour cap — and even then it
 //     keeps retrying hourly, so usage self-heals once a valid token
 //     reappears (the user re-runs `claude`, or re-adds the account).
-//   - **429 forces the backoff to its maximum immediately.**
+//   - **429 parks the account** (see recordThrottle): Retry-After when
+//     sent, else a cooldown that doubles per strike up to 1 h and is not
+//     reset by one success in between. Every fetch path honours it.
+//
+// Nothing is fetched while the active account sits at a limit that has not
+// reset (the number cannot change), and the speed-up cadence is dropped
+// while auto-swap has no target (polling faster cannot help).
 type UsageScheduler struct {
 	Store    *store.Store
 	Provider provider.Provider
@@ -93,6 +100,11 @@ type UsageScheduler struct {
 	// auto-swap). Only consulted on a successful fetch — error backoffs always
 	// win, so a pending swap never undercuts a 429 backoff.
 	SwapPending func() bool
+
+	// SwapStuck, when set, reports that auto-swap found no target for the
+	// over-threshold active account. While true the scheduler never polls
+	// faster than Baseline. Nil = never stuck.
+	SwapStuck func() bool
 
 	// RefreshActive, when set, ensures the live credential holds a valid
 	// access token before each fetch — refreshing it under the switch lock
@@ -161,11 +173,33 @@ func (u *UsageScheduler) initialDelay() time.Duration {
 // baseline interval late. Baseline otherwise. Error/backoff intervals are
 // chosen by Run's other switch cases and deliberately never reach here, so a
 // 429 backoff is never undercut by a pending swap.
-func (u *UsageScheduler) successInterval(pct float64, pctKnown, pending bool) time.Duration {
-	if (pctKnown && pct >= u.SpeedupAtPct) || pending {
+// A stuck auto-swap (no target) overrides the pct speed-up: nothing can act
+// on a fresher number. A pending swap implies a target, so it still wins.
+func (u *UsageScheduler) successInterval(pct float64, pctKnown, pending, stuck bool) time.Duration {
+	if pending {
+		return u.SpeedupInterval
+	}
+	if !stuck && pctKnown && pct >= u.SpeedupAtPct {
 		return u.SpeedupInterval
 	}
 	return u.Baseline
+}
+
+func (u *UsageScheduler) swapPending() bool { return u.SwapPending != nil && u.SwapPending() }
+func (u *UsageScheduler) swapStuck() bool   { return u.SwapStuck != nil && u.SwapStuck() }
+
+// untilInterval is the wait before the next tick when a fetch may not happen
+// before `until`: padded by Jitter so the jittered timer never lands early,
+// floored at Baseline.
+func (u *UsageScheduler) untilInterval(until, now time.Time) time.Duration {
+	return max(until.Sub(now)+u.Jitter, u.Baseline)
+}
+
+// atLimitInterval is the wait while the active account is at a limit: tick
+// at Baseline to re-run the (network-free for this account) swap decision, or
+// just after the reset when that comes sooner.
+func (u *UsageScheduler) atLimitInterval(until, now time.Time) time.Duration {
+	return min(until.Sub(now)+u.Jitter, u.Baseline)
 }
 
 // Run blocks until ctx is cancelled, fetching limits for the active
@@ -183,6 +217,9 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 	defer timer.Stop()
 
 	currentBackoff := u.Baseline
+	// kicked marks the tick a Kick triggered; it alone gets a freshness floor,
+	// so switching back and forth cannot re-fetch the same account rapidly.
+	kicked := false
 
 	for {
 		select {
@@ -201,8 +238,19 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 				}
 			}
 			timer.Reset(0)
+			kicked = true
 		case <-timer.C:
-			err := u.tickOnce(ctx)
+			var minAge time.Duration
+			if kicked {
+				minAge = u.SpeedupInterval
+				if u.swapStuck() {
+					minAge = u.Baseline
+				}
+				kicked = false
+			}
+			err := u.tick(ctx, minAge)
+			var skip *RefreshSkippedError
+			var parked *parkedError
 			// Every switch case below assigns next (the default via
 			// successInterval), so don't pre-seed it — that would be a dead
 			// store (ineffassign).
@@ -228,16 +276,14 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 				next = u.MaxBackoff
 				logger.Warn("auth rejected after refresh", "retry_in", next, "err", err)
 			case claude.IsThrottledError(err):
-				// A 429 is often a transient burst limit (e.g. another tool
-				// polling the same /api/oauth/usage endpoint for this
-				// account). If Anthropic told us exactly
-				// how long to wait via Retry-After, honor it (clamped to our
-				// normal [baseline, cap] so we neither poll faster than the
-				// baseline nor wait past the 1 h cap). Otherwise escalate
-				// gradually with exponential backoff — a brief throttle costs
-				// minutes of staleness, not an hour of blank bars; sustained
-				// 429s still ramp to the cap.
-				if ra, ok := claude.ThrottleRetryAfter(err); ok {
+				// tick parked the account (Retry-After, else a per-strike
+				// doubling cooldown that survives a success); wait it out.
+				// The fallbacks only run if the store write failed.
+				if errors.As(err, &parked) {
+					next = u.untilInterval(parked.until, time.Now())
+					currentBackoff = min(max(next, u.Baseline), u.MaxBackoff)
+					logger.Warn("usage throttled", "status", 429, "retry_after", retryAfterLog(err), "wait", next)
+				} else if ra, ok := claude.ThrottleRetryAfter(err); ok {
 					next = clampDuration(ra, u.Baseline, u.MaxBackoff)
 					currentBackoff = next
 					logger.Warn("usage throttled", "status", 429, "retry_after", ra, "wait", next)
@@ -245,6 +291,17 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 					currentBackoff = doubleCapped(currentBackoff, u.MaxBackoff)
 					next = currentBackoff
 					logger.Warn("usage throttled", "status", 429, "retry_after", "none", "wait", next)
+				}
+			case errors.As(err, &skip):
+				// Withheld without any network call.
+				switch skip.Reason {
+				case SkipAtLimit:
+					next = u.atLimitInterval(skip.Until, time.Now())
+				case SkipRateLimited:
+					next = u.untilInterval(skip.Until, time.Now())
+				default:
+					pct, ok := u.activePct(ctx)
+					next = u.successInterval(pct, ok, u.swapPending(), u.swapStuck())
 				}
 			case err != nil:
 				currentBackoff = doubleCapped(currentBackoff, u.MaxBackoff)
@@ -260,17 +317,37 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 				// account is near its limit, or while a swap is armed so its
 				// grace deadline fires promptly (it can arm below SpeedupAtPct).
 				pct, ok := u.activePct(ctx)
-				next = u.successInterval(pct, ok, u.SwapPending != nil && u.SwapPending())
+				next = u.successInterval(pct, ok, u.swapPending(), u.swapStuck())
 			}
 			timer.Reset(u.jittered(next))
 		}
 	}
 }
 
-// tickOnce runs one fetch cycle. Returns nil on success, the underlying
-// error otherwise. Resolves the active account, reads its credential,
-// fetches limits, persists.
-func (u *UsageScheduler) tickOnce(ctx context.Context) error {
+// parkedError is a 429 after which the account was parked until `until`.
+type parkedError struct {
+	until time.Time
+	err   error
+}
+
+func (e *parkedError) Error() string { return e.err.Error() }
+func (e *parkedError) Unwrap() error { return e.err }
+
+func retryAfterLog(err error) any {
+	if ra, ok := claude.ThrottleRetryAfter(err); ok {
+		return ra
+	}
+	return "none"
+}
+
+// tickOnce runs one timer-driven fetch cycle (no freshness floor).
+func (u *UsageScheduler) tickOnce(ctx context.Context) error { return u.tick(ctx, 0) }
+
+// tick runs one fetch cycle. Returns nil on success, *RefreshSkippedError
+// when the gate withheld the fetch, the underlying error otherwise. Resolves
+// the active account, checks the gate, reads its credential, fetches limits,
+// persists.
+func (u *UsageScheduler) tick(ctx context.Context, minAge time.Duration) error {
 	resolve := u.ResolveActive
 	if resolve == nil {
 		resolve = u.activeAccount
@@ -283,6 +360,17 @@ func (u *UsageScheduler) tickOnce(ctx context.Context) error {
 		// No active account yet (e.g. before first `aimonitor add`).
 		// Not an error — just nothing to fetch this cycle.
 		return nil
+	}
+
+	// Gate before the token refresh too: a parked or at-limit account costs
+	// no request at all.
+	if skip := fetchGate(ctx, u.Store, acct, time.Now(), minAge); skip != nil {
+		if skip.Reason == SkipAtLimit && u.AfterFetch != nil {
+			// The active account can't recover before its reset, but another
+			// one might (its own window resets); let auto-swap look.
+			u.AfterFetch(ctx, acct.Label)
+		}
+		return skip
 	}
 
 	cred, err := u.liveCredential(ctx, acct, false)
@@ -316,12 +404,11 @@ func (u *UsageScheduler) tickOnce(ctx context.Context) error {
 		limits, err = u.Fetcher.FetchLimits(ctx, cred)
 	}
 	if err != nil {
-		// NB: deliberately do NOT cooldown the ACTIVE account on a 429. Active
-		// is always polled (it's the one in use) and is never a swap candidate,
-		// so a cooldown would have zero functional effect — it would only paint
-		// a misleading "cooling" badge on the account you're coding against. The
-		// Run loop's own backoff already handles the throttle. Cooldown is for
-		// *candidates* (set by the inactive poller + JIT candidate refresh).
+		// Park the active account too: the CLI/popover refresh paths must see
+		// the throttle, and the streak must outlive the next success.
+		if until, ok := recordThrottle(ctx, u.Store, acct, err); ok {
+			return &parkedError{until: until, err: err}
+		}
 		return err
 	}
 	// Clear any cooldown the account carried as a candidate before it became

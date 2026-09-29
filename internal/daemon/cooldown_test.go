@@ -67,7 +67,7 @@ func TestRecordThrottle_NonThrottleIsNoop(t *testing.T) {
 	s := openStore(t)
 	acct, _ := s.CreateAccount(ctx, store.Account{Label: "a", KeyringRef: "ref-a"})
 
-	if recordThrottle(ctx, s, acct, errors.New("boom")) {
+	if _, ok := recordThrottle(ctx, s, acct, errors.New("boom")); ok {
 		t.Errorf("non-throttle error must not set a cooldown")
 	}
 	got, _ := s.GetAccountByID(ctx, acct.ID)
@@ -84,7 +84,7 @@ func TestRecordThrottle_DefaultDuration(t *testing.T) {
 	acct, _ := s.CreateAccount(ctx, store.Account{Label: "a", KeyringRef: "ref-a"})
 
 	err := &claude.UsageThrottledError{Status: 429} // no RetryAfter
-	if !recordThrottle(ctx, s, acct, err) {
+	if _, ok := recordThrottle(ctx, s, acct, err); !ok {
 		t.Fatalf("a 429 should set a cooldown")
 	}
 	got, _ := s.GetAccountByID(ctx, acct.ID)
@@ -105,7 +105,7 @@ func TestRecordThrottle_RetryAfterClampedToMax(t *testing.T) {
 	acct, _ := s.CreateAccount(ctx, store.Account{Label: "a", KeyringRef: "ref-a"})
 
 	err := &claude.UsageThrottledError{Status: 429, RetryAfter: 24 * time.Hour}
-	if !recordThrottle(ctx, s, acct, err) {
+	if _, ok := recordThrottle(ctx, s, acct, err); !ok {
 		t.Fatalf("a 429 should set a cooldown")
 	}
 	got, _ := s.GetAccountByID(ctx, acct.ID)
@@ -126,7 +126,7 @@ func TestRecordThrottle_RetryAfterClampedToMin(t *testing.T) {
 	acct, _ := s.CreateAccount(ctx, store.Account{Label: "a", KeyringRef: "ref-a"})
 
 	err := &claude.UsageThrottledError{Status: 429, RetryAfter: time.Second}
-	if !recordThrottle(ctx, s, acct, err) {
+	if _, ok := recordThrottle(ctx, s, acct, err); !ok {
 		t.Fatalf("a 429 should set a cooldown")
 	}
 	got, _ := s.GetAccountByID(ctx, acct.ID)

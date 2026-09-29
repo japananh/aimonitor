@@ -212,6 +212,9 @@ func (s *Server) Run(ctx context.Context) error {
 			// grace deadline fires within ~one interval, not a full baseline
 			// one (a swap can arm below SpeedupAtPct).
 			SwapPending: autoSwap.HasPending,
+			// No target: drop the speed-up so an exhausted pool isn't polled
+			// every minute into a 429 loop.
+			SwapStuck: autoSwap.Stuck,
 			// Refresh the active account's usage immediately when it changes
 			// (manual switch or external `claude /login`) instead of waiting
 			// out the interval — see usageKick above.
