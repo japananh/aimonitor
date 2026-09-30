@@ -88,6 +88,27 @@ func applyDockIconPolicy(_ show: Bool) {
 
 // MARK: - Overlay scroll bars
 
+/// Legacy scrollers never auto-hide, but draw a wide bar with a track. This
+/// one keeps that always-visible behaviour with a slim, track-less knob that
+/// mimics the overlay look.
+final class ThinKnobScroller: NSScroller {
+    private static let thickness: CGFloat = 8
+
+    override class func scrollerWidth(for controlSize: NSControl.ControlSize,
+                                      scrollerStyle: NSScroller.Style) -> CGFloat {
+        thickness
+    }
+
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
+
+    override func drawKnob() {
+        let rect = rect(for: .knob).insetBy(dx: 1.5, dy: 0)
+        guard rect.width > 0, rect.height > 0 else { return }
+        NSColor.secondaryLabelColor.withAlphaComponent(0.6).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: rect.width / 2, yRadius: rect.width / 2).fill()
+    }
+}
+
 /// Placed inside scrollable content, this reaches the enclosing NSScrollView
 /// and forces the thin OVERLAY scroller (floats, reserves no width) instead of
 /// the wide legacy bar a "Show scroll bars: Always" system would otherwise
@@ -105,8 +126,15 @@ struct ScrollerStyler: NSViewRepresentable {
     private func apply(from view: NSView) {
         DispatchQueue.main.async { [weak view] in
             guard let scroll = view?.enclosingScrollView else { return }
-            scroll.scrollerStyle = style
-            if style == .legacy { scroll.autohidesScrollers = false }
+            if style == .legacy {
+                if !(scroll.verticalScroller is ThinKnobScroller) {
+                    scroll.verticalScroller = ThinKnobScroller()
+                }
+                scroll.scrollerStyle = .legacy
+                scroll.autohidesScrollers = false
+            } else {
+                scroll.scrollerStyle = style
+            }
         }
     }
 }
