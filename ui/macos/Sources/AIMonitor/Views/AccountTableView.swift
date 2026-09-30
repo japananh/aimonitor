@@ -63,7 +63,7 @@ struct AccountTableView: View {
                 // Past 3 accounts, cap the list to ~3 rows and scroll the rest
                 // so the panel doesn't grow unbounded with many accounts.
                 if model.accounts.count > 3 {
-                    ScrollView { rows.overlayScroller() }
+                    ScrollView { rows.persistentScroller() }
                         .frame(maxHeight: capHeight)
                 } else {
                     rows
