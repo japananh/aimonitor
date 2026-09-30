@@ -7,7 +7,7 @@ PKG           := ./...
 VERSION       := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS       := -s -w -X github.com/japananh/aimonitor/internal/version.Version=$(VERSION)
 
-.PHONY: build test lint tidy fmt run clean widget all
+.PHONY: build test lint tidy fmt run clean widget dev-clean all
 
 all: build
 
@@ -38,6 +38,9 @@ widget:
 	@if [ "$$(uname)" != "Darwin" ]; then echo "widget target is macOS-only"; exit 1; fi
 	@cd ui/macos && swift build -c release
 	@bash scripts/bundle-app.sh
+
+dev-clean:
+	@bash scripts/dev-clean.sh
 
 release-snapshot:
 	@which goreleaser >/dev/null || { echo "goreleaser missing: brew install goreleaser"; exit 1; }

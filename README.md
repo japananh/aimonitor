@@ -177,6 +177,16 @@ make widget             # AIMonitor.app (macOS; needs the Swift toolchain)
 make release-snapshot   # goreleaser dry-run
 ```
 
+To try a dev build of the app, run it against your dev CLI:
+
+```sh
+make widget
+AIMONITOR_SKIP_GUARD=1 AIMONITOR_BIN=$PWD/bin/aimonitor build/AIMonitor.app/Contents/MacOS/AIMonitor
+make dev-clean          # when done
+```
+
+The dev bundle shares the installed app's bundle id, so LaunchServices keeps it registered after the folder is gone and Spotlight shows two "AIMonitor" apps. `make dev-clean` quits dev bundles, deletes `build/AIMonitor.app` and unregisters every AIMonitor.app path except `/Applications`.
+
 ## License
 
 [MIT](LICENSE) © [@japananh](https://github.com/japananh)
