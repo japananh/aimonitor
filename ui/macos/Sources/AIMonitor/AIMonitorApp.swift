@@ -143,14 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 Self.installContent(makePreferencesHost(), in: win)
             }
         } else {
-            let win = NSWindow(contentViewController: makePreferencesHost())
-            win.title = "AIMonitor Preferences"
-            win.styleMask = [.titled, .closable]
-            win.isReleasedWhenClosed = false
-            // Follow the user to whatever Space is active when reopened, instead
-            // of yanking them back to the Space where it was first opened (the
-            // default for a normal window).
-            win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+            let win = Self.makeAuxPanel(title: "AIMonitor Preferences", content: makePreferencesHost())
             NotificationCenter.default.addObserver(
                 self, selector: #selector(auxWindowWillClose(_:)),
                 name: NSWindow.willCloseNotification, object: win)
@@ -162,6 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // got a focus ring on open) — same treatment as the panel: the
         // window stays key, no control is first responder.
         preferencesWindow?.makeFirstResponder(nil)
+        // After the panel is on the current Space, so activation finds a window
+        // here and has no reason to switch Spaces.
         NSApp.activate(ignoringOtherApps: true)
         installPrefsClickMonitor()
         // Force the form's scroll bar to the thin overlay style — a "Show
@@ -203,8 +198,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     // showTokenUsage opens the standalone Token-usage window (per-account
-    // daily/hourly token breakdown). Mirrors showPreferences: a normal-level
-    // titled window, created lazily and retained. Token analytics is an
+    // daily/hourly token breakdown). Mirrors showPreferences: a floating aux
+    // panel (makeAuxPanel), created lazily and retained. Token analytics is an
     // occasional review, so it lives here rather than in the popover.
     private func showTokenUsage() {
         closePanel()
@@ -213,16 +208,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 Self.installContent(NSHostingController(rootView: TokenUsageWindowView(model: model)), in: win)
             }
         } else {
-            let win = NSWindow(contentViewController: NSHostingController(rootView: TokenUsageWindowView(model: model)))
-            win.title = "AIMonitor — Token usage"
-            win.styleMask = [.titled, .closable]
-            win.isReleasedWhenClosed = false
-            // Reopen on the user's current Space, not the one it was first
-            // opened on (same rationale as Preferences).
-            win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-            // .help() tooltips need mouse-moved events; without this they fire
-            // unreliably in this window (e.g. not on the active/expanded card).
-            win.acceptsMouseMovedEvents = true
+            let win = Self.makeAuxPanel(
+                title: "AIMonitor — Token usage",
+                content: NSHostingController(rootView: TokenUsageWindowView(model: model)))
             NotificationCenter.default.addObserver(
                 self, selector: #selector(auxWindowWillClose(_:)),
                 name: NSWindow.willCloseNotification, object: win)
@@ -236,6 +224,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NSApp.activate(ignoringOtherApps: true)
         // Start fetching token buckets and pull them once right away.
         model.tokenWindowDidOpen()
+    }
+
+    // makeAuxPanel builds the Preferences / Token-usage window as a floating
+    // NSPanel rather than a plain titled NSWindow. The user is often inside
+    // another app's full-screen Space (there is only one Desktop on the
+    // reporter's Mac; every other Space is a full-screen app). A normal-level
+    // titled NSWindow becomes the app's main window when ordered in, and
+    // Mission Control answers that by leaving the full-screen Space for the
+    // Desktop — .fullScreenAuxiliary alone doesn't prevent it. A panel never
+    // becomes main and, at floating level with .fullScreenAuxiliary, is drawn
+    // inside the full-screen Space instead, exactly like the popover panel
+    // (see setupPanel), which already opens there without a switch.
+    private static func makeAuxPanel(title: String, content: NSViewController) -> NSPanel {
+        let win = NSPanel(contentViewController: content)
+        win.title = title
+        // .nonactivatingPanel: a click on it doesn't trigger app activation,
+        // which is the other event Mission Control uses to pick a Space. The
+        // callers activate explicitly once the panel is already on this Space.
+        win.styleMask = [.titled, .closable, .nonactivatingPanel]
+        win.level = .floating
+        win.isReleasedWhenClosed = false
+        // NSPanel defaults to hiding when the app deactivates; the window should
+        // linger like it always has (togglePopover hides it when the panel opens).
+        win.hidesOnDeactivate = false
+        // Follow the user to whatever Space is active when reopened, and allow
+        // it inside a full-screen Space.
+        win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        // .help() tooltips need mouse-moved events; without this they fire
+        // unreliably (e.g. not on the Token-usage active/expanded card).
+        win.acceptsMouseMovedEvents = true
+        return win
     }
 
     @objc private func auxWindowWillClose(_ note: Notification) {
