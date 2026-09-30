@@ -93,6 +93,9 @@ func applyDockIconPolicy(_ show: Bool) {
 /// the wide legacy bar a "Show scroll bars: Always" system would otherwise
 /// draw. It re-applies on update so a SwiftUI relayout can't revert it.
 struct ScrollerStyler: NSViewRepresentable {
+    /// .legacy keeps the bar permanently visible; .overlay fades when idle.
+    var style: NSScroller.Style = .overlay
+
     func makeNSView(context: Context) -> NSView {
         let v = NSView(frame: .zero)
         apply(from: v)
@@ -101,7 +104,9 @@ struct ScrollerStyler: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) { apply(from: nsView) }
     private func apply(from view: NSView) {
         DispatchQueue.main.async { [weak view] in
-            view?.enclosingScrollView?.scrollerStyle = .overlay
+            guard let scroll = view?.enclosingScrollView else { return }
+            scroll.scrollerStyle = style
+            if style == .legacy { scroll.autohidesScrollers = false }
         }
     }
 }
@@ -111,5 +116,9 @@ extension View {
     /// to content that sits INSIDE the scroll view (so the probe resolves its
     /// enclosing NSScrollView).
     func overlayScroller() -> some View { background(ScrollerStyler()) }
+
+    /// Keeps the enclosing scroll view's bar always visible (legacy style, which
+    /// never auto-hides) so users see at open that the content scrolls.
+    func persistentScroller() -> some View { background(ScrollerStyler(style: .legacy)) }
 }
 
