@@ -88,24 +88,12 @@ func applyDockIconPolicy(_ show: Bool) {
 
 // MARK: - Overlay scroll bars
 
-/// Legacy scrollers never auto-hide, but draw a wide bar with a track. This
-/// one keeps that always-visible behaviour with a slim, track-less knob that
-/// mimics the overlay look.
-final class ThinKnobScroller: NSScroller {
-    private static let thickness: CGFloat = 8
-
-    override class func scrollerWidth(for controlSize: NSControl.ControlSize,
-                                      scrollerStyle: NSScroller.Style) -> CGFloat {
-        thickness
-    }
-
-    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
-
-    override func drawKnob() {
-        let rect = rect(for: .knob).insetBy(dx: 1.5, dy: 0)
-        guard rect.width > 0, rect.height > 0 else { return }
-        NSColor.secondaryLabelColor.withAlphaComponent(0.6).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: rect.width / 2, yRadius: rect.width / 2).fill()
+/// Overlay scroller (native knob, no gutter) that never fades out, so the
+/// bar is visible as soon as the panel opens.
+final class StickyOverlayScroller: NSScroller {
+    override var alphaValue: CGFloat {
+        get { 1 }
+        set { super.alphaValue = 1 }
     }
 }
 
@@ -114,8 +102,8 @@ final class ThinKnobScroller: NSScroller {
 /// the wide legacy bar a "Show scroll bars: Always" system would otherwise
 /// draw. It re-applies on update so a SwiftUI relayout can't revert it.
 struct ScrollerStyler: NSViewRepresentable {
-    /// .legacy keeps the bar permanently visible; .overlay fades when idle.
-    var style: NSScroller.Style = .overlay
+    /// When true the overlay knob stays visible instead of fading when idle.
+    var persistent = false
 
     func makeNSView(context: Context) -> NSView {
         let v = NSView(frame: .zero)
@@ -126,14 +114,12 @@ struct ScrollerStyler: NSViewRepresentable {
     private func apply(from view: NSView) {
         DispatchQueue.main.async { [weak view] in
             guard let scroll = view?.enclosingScrollView else { return }
-            if style == .legacy {
-                if !(scroll.verticalScroller is ThinKnobScroller) {
-                    scroll.verticalScroller = ThinKnobScroller()
+            scroll.scrollerStyle = .overlay
+            if persistent {
+                if !(scroll.verticalScroller is StickyOverlayScroller) {
+                    scroll.verticalScroller = StickyOverlayScroller()
                 }
-                scroll.scrollerStyle = .legacy
-                scroll.autohidesScrollers = false
-            } else {
-                scroll.scrollerStyle = style
+                scroll.verticalScroller?.alphaValue = 1
             }
         }
     }
@@ -145,8 +131,8 @@ extension View {
     /// enclosing NSScrollView).
     func overlayScroller() -> some View { background(ScrollerStyler()) }
 
-    /// Keeps the enclosing scroll view's bar always visible (legacy style, which
-    /// never auto-hides) so users see at open that the content scrolls.
-    func persistentScroller() -> some View { background(ScrollerStyler(style: .legacy)) }
+    /// Keeps the overlay bar always visible (no gutter) so users see at open
+    /// that the content scrolls.
+    func persistentScroller() -> some View { background(ScrollerStyler(persistent: true)) }
 }
 
