@@ -88,12 +88,50 @@ func applyDockIconPolicy(_ show: Bool) {
 
 // MARK: - Overlay scroll bars
 
-/// Overlay scroller (native knob, no gutter) that never fades out, so the
-/// bar is visible as soon as the panel opens.
-final class StickyOverlayScroller: NSScroller {
-    override var alphaValue: CGFloat {
-        get { 1 }
-        set { super.alphaValue = 1 }
+/// Always-visible scroll knob for an overlay-style scroll view. The native
+/// overlay knob fades and AppKit offers no supported way to pin it, so this
+/// draws an 8pt capsule on top of the content (no gutter, no track) and tracks
+/// the scroll position itself. Mouse events pass through to the content.
+final class PersistentKnobView: NSView {
+    private weak var scroll: NSScrollView?
+    private var observers: [NSObjectProtocol] = []
+
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func attach(to scroll: NSScrollView) {
+        guard self.scroll !== scroll else { return }
+        self.scroll = scroll
+        observers.forEach(NotificationCenter.default.removeObserver)
+        let clip = scroll.contentView
+        clip.postsBoundsChangedNotifications = true
+        clip.postsFrameChangedNotifications = true
+        let refresh: (Notification) -> Void = { [weak self] _ in self?.needsDisplay = true }
+        observers = [NSView.boundsDidChangeNotification, NSView.frameDidChangeNotification].map {
+            NotificationCenter.default.addObserver(forName: $0, object: clip, queue: .main, using: refresh)
+        }
+        if let doc = scroll.documentView {
+            doc.postsFrameChangedNotifications = true
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: doc, queue: .main, using: refresh))
+        }
+    }
+
+    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let scroll, let doc = scroll.documentView else { return }
+        let visible = scroll.contentView.bounds
+        let total = doc.frame.height
+        guard total > visible.height + 0.5 else { return }
+        let inset: CGFloat = 3, width: CGFloat = 8
+        let track = bounds.height - 2 * inset
+        let length = max(24, track * visible.height / total)
+        let progress = min(max(visible.minY / (total - visible.height), 0), 1)
+        let y = inset + (track - length) * progress
+        let rect = NSRect(x: bounds.width - width - inset, y: y, width: width, height: length)
+        NSColor.labelColor.withAlphaComponent(0.51).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: width / 2, yRadius: width / 2).fill()
     }
 }
 
@@ -102,7 +140,7 @@ final class StickyOverlayScroller: NSScroller {
 /// the wide legacy bar a "Show scroll bars: Always" system would otherwise
 /// draw. It re-applies on update so a SwiftUI relayout can't revert it.
 struct ScrollerStyler: NSViewRepresentable {
-    /// When true the overlay knob stays visible instead of fading when idle.
+    /// Replaces the fading native knob with an always-visible one.
     var persistent = false
 
     func makeNSView(context: Context) -> NSView {
@@ -115,12 +153,15 @@ struct ScrollerStyler: NSViewRepresentable {
         DispatchQueue.main.async { [weak view] in
             guard let scroll = view?.enclosingScrollView else { return }
             scroll.scrollerStyle = .overlay
-            if persistent {
-                if !(scroll.verticalScroller is StickyOverlayScroller) {
-                    scroll.verticalScroller = StickyOverlayScroller()
-                }
-                scroll.verticalScroller?.alphaValue = 1
+            guard persistent else { return }
+            scroll.hasVerticalScroller = false
+            let knob = scroll.subviews.compactMap { $0 as? PersistentKnobView }.first
+                ?? PersistentKnobView(frame: scroll.bounds)
+            if knob.superview == nil {
+                knob.autoresizingMask = [.width, .height]
+                scroll.addSubview(knob)
             }
+            knob.attach(to: scroll)
         }
     }
 }
@@ -131,8 +172,8 @@ extension View {
     /// enclosing NSScrollView).
     func overlayScroller() -> some View { background(ScrollerStyler()) }
 
-    /// Keeps the overlay bar always visible (no gutter) so users see at open
-    /// that the content scrolls.
+    /// Like `overlayScroller()`, but the knob stays visible (no gutter) so
+    /// users see at open that the content scrolls.
     func persistentScroller() -> some View { background(ScrollerStyler(persistent: true)) }
 }
 
