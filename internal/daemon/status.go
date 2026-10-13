@@ -226,11 +226,10 @@ func (p *StatusPublisher) publish(ctx context.Context) {
 
 // resolveActiveLabel is the default ActiveLabel resolver for the
 // StatusPublisher: it returns the label of the active account, or "" when
-// none resolves (fresh install, or an unreadable keyring). The
-// claudeconfig handle is built once here and captured, so the per-tick
-// resolver doesn't re-resolve the home dir on every 2s poll.
-func resolveActiveLabel(s *Server) func(ctx context.Context) string {
-	cc, _ := claudeconfig.New() // nil when home is unresolvable → byte-match only
+// none resolves (fresh install, or an unreadable keyring). resolve is the
+// daemon's shared ActiveResolver, so a transient keychain failure keeps
+// the last known label.
+func resolveActiveLabel(resolve func(ctx context.Context) (store.Account, bool, error)) func(ctx context.Context) string {
 	return func(ctx context.Context) string {
 		// Drop the cached live-slot blob before resolving. A `switch` performed
 		// by a separate `aimonitor` process rewrites the live slot without
@@ -240,7 +239,7 @@ func resolveActiveLabel(s *Server) func(ctx context.Context) string {
 		// a cross-process switch visible on the next 2s publish tick. Only the
 		// live slot is dropped; the multi-account stash sweep keeps its cache. (#92)
 		claude.InvalidateActiveCache()
-		acct, found, err := ResolveActiveAccount(ctx, s.store, s.provider, cc)
+		acct, found, err := resolve(ctx)
 		if err != nil || !found {
 			return ""
 		}
@@ -268,15 +267,23 @@ func resolveActiveLabel(s *Server) func(ctx context.Context) string {
 //
 // Returns (_, false, nil) when neither method resolves an account.
 func ResolveActiveAccount(ctx context.Context, st *store.Store, p provider.Provider, cc *claudeconfig.Store) (store.Account, bool, error) {
+	acct, found, _, err := resolveActive(ctx, st, p, cc)
+	return acct, found, err
+}
+
+// resolveActive is ResolveActiveAccount plus liveEmpty: true when the live
+// slot holds no credential at all (item absent), as opposed to holding one
+// that matches no managed account. ActiveResolver needs the difference.
+func resolveActive(ctx context.Context, st *store.Store, p provider.Provider, cc *claudeconfig.Store) (acct store.Account, found, liveEmpty bool, err error) {
 	live, err := p.ActiveCredential(ctx)
 	if err != nil {
-		return store.Account{}, false, fmt.Errorf("active credential: %w", err)
+		return store.Account{}, false, false, fmt.Errorf("active credential: %w", err)
 	}
 	defer live.Zero()
 
 	accounts, err := st.ListAccounts(ctx)
 	if err != nil {
-		return store.Account{}, false, fmt.Errorf("list accounts: %w", err)
+		return store.Account{}, false, false, fmt.Errorf("list accounts: %w", err)
 	}
 
 	// 1. Byte-match — authoritative when it hits.
@@ -289,7 +296,7 @@ func ResolveActiveAccount(ctx context.Context, st *store.Store, p provider.Provi
 			match := bytes.Equal(stash.Bytes, live.Bytes)
 			stash.Zero()
 			if match {
-				return accounts[i], true, nil
+				return accounts[i], true, false, nil
 			}
 		}
 	}
@@ -302,16 +309,16 @@ func ResolveActiveAccount(ctx context.Context, st *store.Store, p provider.Provi
 			acct, gErr := st.GetAccountByIdentity(ctx, oa.EmailAddress, oa.OrganizationUUID)
 			switch {
 			case gErr == nil:
-				return acct, true, nil
+				return acct, true, false, nil
 			case errors.Is(gErr, store.ErrAccountNotFound):
 				// neither method resolved — fall through
 			default:
-				return store.Account{}, false, gErr
+				return store.Account{}, false, false, gErr
 			}
 		}
 	}
 
-	return store.Account{}, false, nil
+	return store.Account{}, false, len(live.Bytes) == 0, nil
 }
 
 // UnknownActiveEmail returns the Claude email currently in the live slot

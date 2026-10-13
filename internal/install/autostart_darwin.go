@@ -12,12 +12,15 @@
 package install
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 )
 
 const (
@@ -93,25 +96,85 @@ func EnableAutostart(binaryPath string) error {
 		return fmt.Errorf("mkdir log dir: %w", err)
 	}
 
-	plist := fmt.Sprintf(plistTemplate, LaunchAgentLabel, binaryPath, logDir)
-	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
-		return fmt.Errorf("write plist: %w", err)
+	plist := []byte(fmt.Sprintf(plistTemplate, LaunchAgentLabel, binaryPath, logDir))
+	existing, _ := os.ReadFile(plistPath)
+	unchanged := bytes.Equal(existing, plist)
+	if !unchanged {
+		if err := os.WriteFile(plistPath, plist, 0o644); err != nil {
+			return fmt.Errorf("write plist: %w", err)
+		}
 	}
 
 	uid := strconv.Itoa(os.Getuid())
-	target := "gui/" + uid
+	domain := "gui/" + uid
+	target := domain + "/" + LaunchAgentLabel
+
+	// Same plist and already loaded: nothing to apply. Bouncing a healthy
+	// daemon here is what left it stopped when the widget's "Start daemon"
+	// button was pressed on a daemon that was actually running.
+	if unchanged && serviceLoaded(target) {
+		return nil
+	}
 
 	// Bootout first so the bootstrap below picks up any plist changes
 	// (path move, log path rename, etc.). Ignore the "service not
 	// loaded yet" error on first run.
-	_ = exec.Command("launchctl", "bootout", target+"/"+LaunchAgentLabel).Run()
+	_, _ = runLaunchctl("bootout", target)
+	waitUnloaded(target)
 
-	bootstrap := exec.Command("launchctl", "bootstrap", target, plistPath)
-	out, err := bootstrap.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("launchctl bootstrap: %w (%s)", err, string(out))
+	var out []byte
+	var bootErr error
+	for attempt := 0; attempt < bootstrapAttempts; attempt++ {
+		if out, bootErr = runLaunchctl("bootstrap", domain, plistPath); bootErr == nil {
+			return nil
+		}
+		if !bootstrapInProgress(bootErr, out) {
+			break
+		}
+		pause(bootstrapRetryDelay)
 	}
-	return nil
+	return fmt.Errorf("launchctl bootstrap: %w (%s)", bootErr, string(out))
+}
+
+const (
+	// bootout returns before launchd has finished removing the service, so a
+	// bootstrap issued straight after fails with "37: Operation already in
+	// progress" and leaves nothing running. Wait for the removal, and retry
+	// the bootstrap if it still races.
+	unloadWaitAttempts  = 50
+	unloadPollInterval  = 200 * time.Millisecond
+	bootstrapAttempts   = 10
+	bootstrapRetryDelay = 500 * time.Millisecond
+	launchctlEALREADY   = 37
+	launchctlInProgress = "Operation already in progress"
+)
+
+// runLaunchctl and pause are seams for tests, which must not touch the
+// developer's real launchd domain.
+var (
+	runLaunchctl = func(args ...string) ([]byte, error) {
+		return exec.Command("launchctl", args...).CombinedOutput()
+	}
+	pause = time.Sleep
+)
+
+func serviceLoaded(target string) bool {
+	_, err := runLaunchctl("print", target)
+	return err == nil
+}
+
+func waitUnloaded(target string) {
+	for i := 0; i < unloadWaitAttempts && serviceLoaded(target); i++ {
+		pause(unloadPollInterval)
+	}
+}
+
+func bootstrapInProgress(err error, out []byte) bool {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == launchctlEALREADY {
+		return true
+	}
+	return strings.Contains(string(out), launchctlInProgress)
 }
 
 // DisableAutostart unloads the LaunchAgent and removes its plist.
@@ -125,7 +188,7 @@ func DisableAutostart() error {
 	uid := strconv.Itoa(os.Getuid())
 	target := "gui/" + uid + "/" + LaunchAgentLabel
 	// Tolerate "not loaded" on first call.
-	_ = exec.Command("launchctl", "bootout", target).Run()
+	_, _ = runLaunchctl("bootout", target)
 
 	if err := os.Remove(plistPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove plist: %w", err)
@@ -136,15 +199,9 @@ func DisableAutostart() error {
 // IsAutostartEnabled reports whether launchctl currently knows about
 // our LaunchAgent in the user's GUI domain. Cheap (~10ms).
 func IsAutostartEnabled() (bool, error) {
-	uid := strconv.Itoa(os.Getuid())
-	target := "gui/" + uid + "/" + LaunchAgentLabel
-	cmd := exec.Command("launchctl", "print", target)
-	if err := cmd.Run(); err != nil {
-		// `launchctl print` exits non-zero when the service isn't
-		// loaded; treat that as a clean "false" rather than an error.
-		return false, nil
-	}
-	return true, nil
+	// `launchctl print` exits non-zero when the service isn't loaded; that
+	// is a clean "false", not an error.
+	return serviceLoaded("gui/" + strconv.Itoa(os.Getuid()) + "/" + LaunchAgentLabel), nil
 }
 
 func defaultLogDir() (string, error) {

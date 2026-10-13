@@ -6,7 +6,8 @@ import "sync"
 // test inject a fake OS keyring (e.g. via claude.SetKeyringForTest) so it never
 // touches the real macOS Keychain / libsecret. It is NEVER returned by
 // Default() and no production code constructs it, so the shipped binary always
-// uses the platform keyring.
+// uses the platform keyring. (Sole exception: the daemon's
+// AIMONITOR_DEBUG_KEYCHAIN_FAIL_FOR debug mode, which fronts one.)
 type MemoryKeyring struct {
 	mu    sync.Mutex
 	store map[string][]byte

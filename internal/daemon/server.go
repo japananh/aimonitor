@@ -12,6 +12,7 @@ import (
 	"github.com/japananh/aimonitor/internal/config"
 	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/provider/claude"
+	"github.com/japananh/aimonitor/internal/secret"
 	"github.com/japananh/aimonitor/internal/store"
 )
 
@@ -100,12 +101,21 @@ func (s *Server) Run(ctx context.Context) error {
 	// breakdown. It runs alongside auto.OnSample (which keeps its in-memory
 	// session-bar estimate); both consume the same watcher callback.
 	cc, _ := claudeconfig.New() // nil when home is unresolvable → byte-match only
+	// One resolver shared by the publisher, recorder and scheduler, so they
+	// agree on "active" and all ride through a transient keychain failure on
+	// the same last known account.
+	active := &ActiveResolver{Store: s.store, Provider: s.provider, Claude: cc}
 	recorder := NewSampleRecorder(
 		s.store,
-		func(ctx context.Context) (store.Account, bool, error) {
-			return ResolveActiveAccount(ctx, s.store, s.provider, cc)
+		active.Resolve,
+		func(err error) {
+			// A transient keychain failure is already reported once by the
+			// keyring hook; logging each dropped sample would flood the log.
+			if errors.Is(err, secret.ErrUnavailable) {
+				return
+			}
+			logger.Error("sample recorder error", "err", err)
 		},
-		func(err error) { logger.Error("sample recorder error", "err", err) },
 	)
 
 	w, err := NewWatcher(WatcherConfig{
@@ -137,7 +147,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Store:       s.store,
 		Auto:        auto,
 		Interval:    2 * time.Second,
-		ActiveLabel: resolveActiveLabel(s),
+		ActiveLabel: resolveActiveLabel(active.Resolve),
 		// Detect active-account changes the daemon didn't perform (another
 		// credential manager rewrote the live slot): notify + audit them.
 		ExternalWatch: &ExternalSwitchWatcher{Store: s.store},
@@ -199,9 +209,7 @@ func (s *Server) Run(ctx context.Context) error {
 			Provider:      s.provider,
 			Fetcher:       fetcher,
 			RefreshActive: switcher.RefreshActive,
-			ResolveActive: func(ctx context.Context) (store.Account, bool, error) {
-				return ResolveActiveAccount(ctx, s.store, s.provider, switcher.ClaudeConfig)
-			},
+			ResolveActive: active.Resolve,
 			AfterFetch: func(ctx context.Context, label string) {
 				if _, err := autoSwap.MaybeSwap(ctx, label); err != nil {
 					logger.Error("auto-swap loop error", "err", err)
