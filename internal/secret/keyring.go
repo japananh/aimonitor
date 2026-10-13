@@ -42,6 +42,7 @@ func (e *ReadError) Error() string {
 	return msg
 }
 
+// Is lets errors.Is(err, ErrUnavailable) match a ReadError, so callers can test for a transient read failure without unwrapping. It matches only the ErrUnavailable sentinel itself, by identity.
 func (e *ReadError) Is(target error) bool { return target == ErrUnavailable }
 
 // Keyring is the OS-keyring abstraction implemented per platform.
