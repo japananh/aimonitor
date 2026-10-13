@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/provider/claude"
+	"github.com/japananh/aimonitor/internal/secret"
 	"github.com/japananh/aimonitor/internal/store"
 )
 
@@ -324,5 +327,52 @@ func TestUsageScheduler_SuccessInterval(t *testing.T) {
 			t.Errorf("%s: successInterval(%v,%v,%v,%v) = %v, want %v",
 				c.name, c.pct, c.known, c.pending, c.stuck, got, c.want)
 		}
+	}
+}
+
+// runSchedulerFor runs Run for d and returns how many times ResolveActive was
+// called, i.e. how many ticks fired.
+func runSchedulerFor(t *testing.T, st *store.Store, resolveErr error, d time.Duration) int {
+	t.Helper()
+	calls := 0
+	u := &UsageScheduler{
+		Store:       st,
+		Provider:    &fakeProvider{},
+		Fetcher:     &claude.UsageFetcher{},
+		Baseline:    20 * time.Millisecond,
+		MaxBackoff:  40 * time.Millisecond,
+		Jitter:      time.Millisecond,
+		minInterval: time.Millisecond,
+		ResolveActive: func(context.Context) (store.Account, bool, error) {
+			calls++
+			return store.Account{}, false, resolveErr
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	_ = u.Run(ctx)
+	return calls
+}
+
+// A keychain that cannot be read made no API request, so it must not feed the
+// API backoff: the 01:18 DNS failure and the 14:29 keychain blip both ended up
+// as multi-minute usage blackouts. The retry waits keychainRetryInterval
+// (30s), so within the test window exactly one tick fires.
+func TestUsageScheduler_TransientKeychainFailureRetriesSoonNotBackoff(t *testing.T) {
+	st := openStore(t)
+	down := fmt.Errorf("active credential: %w", &secret.ReadError{Service: "svc", Account: "acct", Reason: "timed out after 5s"})
+
+	if got := runSchedulerFor(t, st, down, 400*time.Millisecond); got != 1 {
+		t.Errorf("keychain failure ticks = %d, want 1 (next retry is 30s away, not on the API backoff)", got)
+	}
+}
+
+// Control: any other error still takes the exponential-backoff path, which
+// at these settings re-ticks within tens of milliseconds.
+func TestUsageScheduler_OtherErrorsStillBackOff(t *testing.T) {
+	st := openStore(t)
+
+	if got := runSchedulerFor(t, st, errors.New("list accounts: boom"), 400*time.Millisecond); got < 3 {
+		t.Errorf("generic error ticks = %d, want several (backoff path unchanged)", got)
 	}
 }

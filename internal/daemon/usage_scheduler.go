@@ -10,8 +10,14 @@ import (
 
 	"github.com/japananh/aimonitor/internal/provider"
 	"github.com/japananh/aimonitor/internal/provider/claude"
+	"github.com/japananh/aimonitor/internal/secret"
 	"github.com/japananh/aimonitor/internal/store"
 )
+
+// keychainRetryInterval is the wait before the next tick after the keychain
+// could not be read. No API call is made on that path, so it is not subject to
+// the Baseline floor; the keyring itself rate-limits the real retries.
+const keychainRetryInterval = 30 * time.Second
 
 // UsageScheduler periodically calls Anthropic's /api/oauth/usage endpoint
 // for the *active* account and persists the result to the oauth_usage
@@ -124,6 +130,10 @@ type UsageScheduler struct {
 	// collapses to a single pending fetch. Nil disables it (tests, and any
 	// provider without the StatusPublisher wired).
 	Kick <-chan struct{}
+
+	// minInterval is the floor jittered() applies. Zero means one second;
+	// only tests lower it, to observe ticks on a millisecond scale.
+	minInterval time.Duration
 
 	// rand is seeded per-scheduler so tests can substitute a deterministic
 	// source. Default uses the package math/rand/v2 global source.
@@ -303,6 +313,12 @@ func (u *UsageScheduler) Run(ctx context.Context) error {
 					pct, ok := u.activePct(ctx)
 					next = u.successInterval(pct, ok, u.swapPending(), u.swapStuck())
 				}
+			case errors.Is(err, secret.ErrUnavailable):
+				// The keychain could not be read, so no request was made: retry
+				// soon and leave the API backoff alone. Escalating it would turn a
+				// one-second keychain blip into a 10-minute usage blackout. The
+				// keyring hook already logged the failure once.
+				next = keychainRetryInterval
 			case err != nil:
 				currentBackoff = doubleCapped(currentBackoff, u.MaxBackoff)
 				next = currentBackoff
@@ -500,10 +516,11 @@ func (u *UsageScheduler) jittered(base time.Duration) time.Duration {
 	}
 	offset := time.Duration(u.rand.Int64N(int64(2*u.Jitter))) - u.Jitter
 	out := base + offset
-	if out < time.Second {
-		out = time.Second
+	floor := u.minInterval
+	if floor == 0 {
+		floor = time.Second
 	}
-	return out
+	return max(out, floor)
 }
 
 // doubleCapped returns min(d*2, maxDur). Used by exponential backoff.

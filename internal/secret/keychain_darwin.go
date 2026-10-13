@@ -64,14 +64,35 @@ func (m *macOSKeychain) Get(service, account string) ([]byte, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
 	if err := cmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && ee.ExitCode() == securityExitNotFound {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("keychain find (%s/%s): %s", service, account, redactedStderr(&errOut))
+		return nil, classifyFindError(service, account, err, ctx.Err(), &errOut)
 	}
 	// /usr/bin/security appends a trailing newline.
 	return bytes.TrimRight(out.Bytes(), "\n"), nil
+}
+
+// classifyFindError separates "item absent" (exit 44) from every other
+// failure. A non-44 exit with empty stderr is what a killed or hung
+// `security` looks like (e.g. the item is locked or being rewritten); it is
+// reported as a *ReadError so callers can retry instead of treating the
+// item as gone.
+func classifyFindError(service, account string, runErr, ctxErr error, stderr *bytes.Buffer) error {
+	var ee *exec.ExitError
+	if errors.As(runErr, &ee) && ee.ExitCode() == securityExitNotFound {
+		return ErrNotFound
+	}
+	re := &ReadError{Service: service, Account: account, Stderr: redactedStderr(stderr)}
+	if re.Stderr == noStderr {
+		re.Stderr = ""
+	}
+	switch {
+	case errors.Is(ctxErr, context.DeadlineExceeded):
+		re.Reason = fmt.Sprintf("timed out after %s", keychainCmdTimeout)
+	case ee != nil:
+		re.Reason = ee.Error() // "exit status N" or "signal: killed"
+	default:
+		re.Reason = runErr.Error()
+	}
+	return re
 }
 
 // Set upserts the password under (service, account). The -U flag updates
@@ -125,6 +146,8 @@ func (m *macOSKeychain) Delete(service, account string) error {
 	return nil
 }
 
+const noStderr = "(no stderr)"
+
 // redactedStderr trims a /usr/bin/security stderr buffer for inclusion in
 // an error message. The CLI does not echo passwords on stderr in any
 // observed failure path, but the helper exists as a guarded chokepoint so
@@ -133,7 +156,7 @@ func (m *macOSKeychain) Delete(service, account string) error {
 func redactedStderr(b *bytes.Buffer) string {
 	s := strings.TrimSpace(b.String())
 	if s == "" {
-		return "(no stderr)"
+		return noStderr
 	}
 	return s
 }

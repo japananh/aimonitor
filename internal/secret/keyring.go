@@ -13,11 +13,37 @@ package secret
 
 import (
 	"errors"
+	"fmt"
 )
 
 // ErrNotFound is returned when the requested (service, account) pair does
 // not exist in the keyring.
 var ErrNotFound = errors.New("keyring: entry not found")
+
+// ErrUnavailable marks a read that failed for a reason other than the item
+// being absent: the backing tool timed out, was killed, or exited abnormally
+// (item locked or mid-rewrite by another process). It is usually transient,
+// so callers must not treat it as "item missing".
+var ErrUnavailable = errors.New("keyring: read failed (transient)")
+
+// ReadError is the concrete error behind ErrUnavailable. It keeps the cause
+// that "(no stderr)" used to hide.
+type ReadError struct {
+	Service, Account string
+	Reason           string // e.g. "timed out after 5s", "exit status 36"
+	Stderr           string // trimmed tool stderr, may be empty
+}
+
+func (e *ReadError) Error() string {
+	msg := fmt.Sprintf("keychain find (%s/%s): %s", e.Service, e.Account, e.Reason)
+	if e.Stderr != "" {
+		msg += ": " + e.Stderr
+	}
+	return msg
+}
+
+// Is lets errors.Is(err, ErrUnavailable) match a ReadError, so callers can test for a transient read failure without unwrapping. It matches only the ErrUnavailable sentinel itself, by identity.
+func (e *ReadError) Is(target error) bool { return target == ErrUnavailable }
 
 // Keyring is the OS-keyring abstraction implemented per platform.
 type Keyring interface {
@@ -46,7 +72,29 @@ func Default() (Keyring, error) {
 	if defaultOverride != nil {
 		return defaultOverride, nil
 	}
+	if resilientDefault != nil {
+		return resilientDefault, nil
+	}
 	return defaultKeyring()
+}
+
+// resilientDefault, when non-nil, is what Default() returns. Set by
+// EnableResilientDefault, which only the long-running daemon calls; one-shot
+// CLI commands keep the plain platform keyring.
+var resilientDefault *Resilient
+
+// EnableResilientDefault makes Default() return a Resilient wrapper around
+// inner (the platform keyring when nil). Call once at daemon startup, before
+// the first keychain use.
+func EnableResilientDefault(inner Keyring, hook func(Event)) error {
+	if inner == nil {
+		var err error
+		if inner, err = defaultKeyring(); err != nil {
+			return err
+		}
+	}
+	resilientDefault = NewResilient(inner, hook)
+	return nil
 }
 
 // defaultOverride, when non-nil, is what Default() returns. Set ONLY by

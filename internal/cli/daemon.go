@@ -63,6 +63,10 @@ func runDaemon(cmd *cobra.Command) error {
 		daemon.SetLogWriter(w)
 	}
 
+	if err := daemon.EnableKeychainResilience(); err != nil {
+		return fmt.Errorf("keychain: %w", err)
+	}
+
 	cfg, err := config.Load("")
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
