@@ -689,12 +689,11 @@ func TestUpdateChecklistItemBody(t *testing.T) {
 // slimChecklist must surface the checklist id, name, and each item's id/name/
 // resolved (never a nil items slice, so the JSON carries [] not null).
 func TestSlimChecklist(t *testing.T) {
-	raw := rawCUChecklist{ID: "c1", Name: "QA"}
-	raw.Items = []struct {
-		ID       string `json:"id"`
-		Name     string `json:"name"`
-		Resolved bool   `json:"resolved"`
-	}{{ID: "i1", Name: "build", Resolved: true}, {ID: "i2", Name: "ship", Resolved: false}}
+	var raw rawCUChecklist
+	if err := json.Unmarshal([]byte(`{"id":"c1","name":"QA","items":[
+		{"id":"i1","name":"build","resolved":true},{"id":"i2","name":"ship","resolved":false}]}`), &raw); err != nil {
+		t.Fatal(err)
+	}
 
 	got := slimChecklist(raw)
 	if got.ID != "c1" || got.Name != "QA" {
