@@ -586,3 +586,38 @@ func TestClickUpListAndSearch_IncludeSubtasksFlag(t *testing.T) {
 		})
 	}
 }
+
+// clickup_get_task must surface checklists with item ids, resolved state,
+// assignee and parent/children so agents can tick items.
+func TestClickUpGetTask_Checklists(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "T1", "name": "task",
+			"checklists": []map[string]any{{
+				"id": "cl1", "name": "QA",
+				"items": []map[string]any{
+					{"id": "i1", "name": "parent item", "resolved": true,
+						"assignee": map[string]any{"username": "alice"},
+						"children": []map[string]any{{"id": "i2"}}},
+					{"id": "i2", "name": "child item", "parent": "i1"},
+				},
+			}},
+		})
+	}))
+	defer srv.Close()
+	pointAPIsAt(t, srv)
+
+	creds, _ := testCreds(t)
+	_ = creds.Store(ServiceClickUp, "pk_1_TOK")
+	c := NewClient(creds)
+	res, _, err := c.clickupGetTask(context.Background(), nil, cuTaskIn{TaskID: "T1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := resultJSON(t, res)
+	for _, want := range []string{`"checklists"`, `"cl1"`, `"i1"`, `"resolved": true`, `"assignee": "alice"`, `"children"`, `"parent": "i1"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("checklists missing %q in %s", want, out)
+		}
+	}
+}

@@ -412,6 +412,7 @@ func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in 
 		DateUpdated string            `json:"date_updated"`
 		Subtasks    []rawCUTask       `json:"subtasks"`
 		Attachments []rawCUAttachment `json:"attachments"`
+		Checklists  []rawCUChecklist  `json:"checklists"`
 		Creator     struct {
 			Username string `json:"username"`
 		} `json:"creator"`
@@ -436,6 +437,13 @@ func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in 
 		attachments = append(attachments, slimAttachment(a))
 	}
 	res["attachments"] = attachments
+	// Always set, [] when none: checklist ids + item ids feed
+	// clickup_update_checklist_item.
+	checklists := make([]cuChecklist, 0, len(out.Checklists))
+	for _, cl := range out.Checklists {
+		checklists = append(checklists, slimChecklist(cl))
+	}
+	res["checklists"] = checklists
 	// Slim the descendants with the same shape as list/search; each carries
 	// parent / top_level_parent so the caller can rebuild the nesting. Only set
 	// the key when asked, so callers can tell "none" from "didn't request".
@@ -823,9 +831,12 @@ func (c *Client) clickupDeleteDependency(ctx context.Context, _ *mcp.CallToolReq
 // cuChecklistItem is the slimmed checklist-item shape. id is what
 // clickup_update_checklist_item / clickup_delete_checklist_item want.
 type cuChecklistItem struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Resolved bool   `json:"resolved"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Resolved bool     `json:"resolved"`
+	Assignee string   `json:"assignee,omitempty"`
+	Parent   string   `json:"parent,omitempty"`
+	Children []string `json:"children,omitempty"`
 }
 
 // cuChecklist is the slimmed checklist shape returned after a create — id is
@@ -844,13 +855,27 @@ type rawCUChecklist struct {
 		ID       string `json:"id"`
 		Name     string `json:"name"`
 		Resolved bool   `json:"resolved"`
+		Assignee *struct {
+			Username string `json:"username"`
+		} `json:"assignee"`
+		Parent   string `json:"parent"`
+		Children []struct {
+			ID string `json:"id"`
+		} `json:"children"`
 	} `json:"items"`
 }
 
 func slimChecklist(raw rawCUChecklist) cuChecklist {
 	items := make([]cuChecklistItem, 0, len(raw.Items))
 	for _, it := range raw.Items {
-		items = append(items, cuChecklistItem{ID: it.ID, Name: it.Name, Resolved: it.Resolved})
+		item := cuChecklistItem{ID: it.ID, Name: it.Name, Resolved: it.Resolved, Parent: it.Parent}
+		if it.Assignee != nil {
+			item.Assignee = it.Assignee.Username
+		}
+		for _, ch := range it.Children {
+			item.Children = append(item.Children, ch.ID)
+		}
+		items = append(items, item)
 	}
 	return cuChecklist{ID: raw.ID, Name: raw.Name, Items: items}
 }
