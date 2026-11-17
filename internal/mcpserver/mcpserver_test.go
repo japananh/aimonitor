@@ -271,7 +271,8 @@ func TestClickUpAuthAndSlimming(t *testing.T) {
 				"url":       "https://app.clickup.com/t/t1",
 				"list":      map[string]any{"name": "Sprint 1"},
 				// noise that must be dropped by slimming:
-				"custom_fields": []any{1, 2, 3},
+				"custom_fields": []any{map[string]any{"id": "f1", "name": "Size", "type": "short_text", "value": "L"}},
+				"points":        3,
 				"watchers":      []any{"a", "b"},
 			}}})
 		default:
@@ -295,6 +296,9 @@ func TestClickUpAuthAndSlimming(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("slimmed task missing %q in %s", want, out)
 		}
+	}
+	if !strings.Contains(out, `\"points\": 3`) {
+		t.Errorf("points missing in %s", out)
 	}
 	if strings.Contains(out, "custom_fields") || strings.Contains(out, "watchers") {
 		t.Errorf("slimming leaked noise: %s", out)
