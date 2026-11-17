@@ -759,3 +759,49 @@ func TestSlimTask_NullPoints(t *testing.T) {
 		t.Errorf("unset points must serialise as null: %s", b)
 	}
 }
+
+// points is a pointer so 0 is sent explicitly and an absent field stays omitted.
+func TestTaskBody_Points(t *testing.T) {
+	zero, half := 0.0, 0.5
+	cases := []struct {
+		name string
+		p    *float64
+		want any // nil means the key must be absent
+	}{
+		{"omitted", nil, nil},
+		{"zero is sent", &zero, 0.0},
+		{"fraction", &half, 0.5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ub, err := updateTaskBody(cuUpdateTaskIn{TaskID: "x", Name: "n", Points: tc.p})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for label, b := range map[string]map[string]any{
+				"create": createTaskBody(cuCreateTaskIn{Name: "T", Points: tc.p}),
+				"update": ub,
+			} {
+				got, ok := b["points"]
+				if tc.want == nil {
+					if ok {
+						t.Errorf("%s: points must be absent, got %v", label, got)
+					}
+					continue
+				}
+				if !ok || got != tc.want {
+					t.Errorf("%s: points = %v (present=%v), want %v", label, got, ok, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// A points-only update is a valid update, not "nothing to update".
+func TestUpdateTaskBody_PointsOnly(t *testing.T) {
+	p := 2.0
+	b, err := updateTaskBody(cuUpdateTaskIn{TaskID: "x", Points: &p})
+	if err != nil || b["points"] != 2.0 {
+		t.Fatalf("body=%v err=%v", b, err)
+	}
+}
