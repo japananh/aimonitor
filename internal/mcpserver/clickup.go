@@ -31,6 +31,81 @@ type cuTask struct {
 	Parent         string   `json:"parent,omitempty"`
 	TopLevelParent string   `json:"top_level_parent,omitempty"`
 	URL            string   `json:"url,omitempty"`
+	// Points is ClickUp's built-in Sprint Points; null when unset, so a caller
+	// can tell "no estimate" from 0.
+	Points *float64 `json:"points"`
+	// CustomFields is filled only on request (include_custom_fields), valued
+	// fields only, to keep list/search payloads small.
+	CustomFields []cuFieldValue `json:"custom_fields,omitempty"`
+}
+
+// cuFieldValue is a custom field reduced to its resolved value.
+type cuFieldValue struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value any    `json:"value"`
+}
+
+type rawCUFieldOption struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Label      string `json:"label"`
+	OrderIndex int    `json:"orderindex"`
+}
+
+type rawCUFieldValue struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	TypeConfig struct {
+		Options []rawCUFieldOption `json:"options"`
+	} `json:"type_config"`
+	Value json.RawMessage `json:"value"`
+}
+
+// slimCustomFields keeps fields that carry a value. ClickUp stores a dropdown
+// value as the option's orderindex and a labels value as option ids, so both
+// are resolved to names via type_config; other types pass through unchanged.
+func slimCustomFields(raw []rawCUFieldValue) []cuFieldValue {
+	var out []cuFieldValue
+	for _, f := range raw {
+		if len(f.Value) == 0 || string(f.Value) == "null" {
+			continue
+		}
+		var v any
+		if err := json.Unmarshal(f.Value, &v); err != nil {
+			continue
+		}
+		switch f.Type {
+		case "drop_down":
+			if n, ok := v.(float64); ok {
+				for _, o := range f.TypeConfig.Options {
+					if o.OrderIndex == int(n) {
+						v = o.Name
+						break
+					}
+				}
+			}
+		case "labels":
+			if ids, ok := v.([]any); ok {
+				names := make([]any, 0, len(ids))
+				for _, id := range ids {
+					name := id
+					for _, o := range f.TypeConfig.Options {
+						if o.ID == id {
+							name = o.Label
+							break
+						}
+					}
+					names = append(names, name)
+				}
+				v = names
+			}
+		}
+		out = append(out, cuFieldValue{ID: f.ID, Name: f.Name, Type: f.Type, Value: v})
+	}
+	return out
 }
 
 // cuAttachment is the slimmed shape for a task attachment. url is the variant
@@ -66,9 +141,11 @@ type rawCUTask struct {
 	Tags []struct {
 		Name string `json:"name"`
 	} `json:"tags"`
-	Parent         string `json:"parent"`
-	TopLevelParent string `json:"top_level_parent"`
-	URL            string `json:"url"`
+	Parent         string            `json:"parent"`
+	TopLevelParent string            `json:"top_level_parent"`
+	URL            string            `json:"url"`
+	Points         *float64          `json:"points"`
+	CustomFields   []rawCUFieldValue `json:"custom_fields"`
 }
 
 func slimTask(t rawCUTask) cuTask {
@@ -76,6 +153,7 @@ func slimTask(t rawCUTask) cuTask {
 		ID: t.ID, Name: t.Name, Status: t.Status.Status,
 		DueDate: t.DueDate, List: t.List.Name, ListID: t.List.ID,
 		Parent: t.Parent, TopLevelParent: t.TopLevelParent, URL: t.URL,
+		Points: t.Points,
 	}
 	for _, a := range t.Assignees {
 		out.Assignees = append(out.Assignees, a.Username)
@@ -86,6 +164,14 @@ func slimTask(t rawCUTask) cuTask {
 	}
 	if t.Priority != nil {
 		out.Priority = t.Priority.Priority
+	}
+	return out
+}
+
+func slimTaskWithFields(t rawCUTask, withFields bool) cuTask {
+	out := slimTask(t)
+	if withFields {
+		out.CustomFields = slimCustomFields(t.CustomFields)
 	}
 	return out
 }
@@ -311,11 +397,12 @@ func (c *Client) clickupListMembers(ctx context.Context, _ *mcp.CallToolRequest,
 // --- tasks --------------------------------------------------------------
 
 type cuListTasksIn struct {
-	ListID          string   `json:"list_id" jsonschema:"list ID"`
-	Statuses        []string `json:"statuses,omitempty" jsonschema:"only these statuses"`
-	IncludeClosed   bool     `json:"include_closed,omitempty" jsonschema:"include closed tasks"`
-	IncludeSubtasks bool     `json:"include_subtasks,omitempty" jsonschema:"also return subtasks (ClickUp omits them by default)"`
-	Page            int      `json:"page,omitempty" jsonschema:"page number (0-based; 100 tasks per page)"`
+	ListID              string   `json:"list_id" jsonschema:"list ID"`
+	Statuses            []string `json:"statuses,omitempty" jsonschema:"only these statuses"`
+	IncludeClosed       bool     `json:"include_closed,omitempty" jsonschema:"include closed tasks"`
+	IncludeSubtasks     bool     `json:"include_subtasks,omitempty" jsonschema:"also return subtasks (ClickUp omits them by default)"`
+	Page                int      `json:"page,omitempty" jsonschema:"page number (0-based; 100 tasks per page)"`
+	IncludeCustomFields bool     `json:"include_custom_fields,omitempty" jsonschema:"also return each task's custom field values (valued fields only; dropdown/labels resolved to names)"`
 }
 
 func (c *Client) clickupListTasks(ctx context.Context, _ *mcp.CallToolRequest, in cuListTasksIn) (*mcp.CallToolResult, any, error) {
@@ -340,19 +427,20 @@ func (c *Client) clickupListTasks(ctx context.Context, _ *mcp.CallToolRequest, i
 	}
 	tasks := make([]cuTask, 0, len(out.Tasks))
 	for _, t := range out.Tasks {
-		tasks = append(tasks, slimTask(t))
+		tasks = append(tasks, slimTaskWithFields(t, in.IncludeCustomFields))
 	}
 	return textResult(map[string]any{"tasks": tasks})
 }
 
 type cuSearchTasksIn struct {
-	WorkspaceID     string   `json:"workspace_id" jsonschema:"workspace (team) ID"`
-	AssigneeIDs     []string `json:"assignee_ids,omitempty" jsonschema:"only tasks assigned to these user IDs"`
-	Statuses        []string `json:"statuses,omitempty" jsonschema:"only these statuses"`
-	IncludeClosed   bool     `json:"include_closed,omitempty" jsonschema:"include closed tasks"`
-	IncludeSubtasks bool     `json:"include_subtasks,omitempty" jsonschema:"also return subtasks (ClickUp omits them by default)"`
-	UpdatedAfter    string   `json:"updated_after,omitempty" jsonschema:"unix ms timestamp; only tasks updated after this"`
-	Page            int      `json:"page,omitempty" jsonschema:"page number (0-based)"`
+	WorkspaceID         string   `json:"workspace_id" jsonschema:"workspace (team) ID"`
+	AssigneeIDs         []string `json:"assignee_ids,omitempty" jsonschema:"only tasks assigned to these user IDs"`
+	Statuses            []string `json:"statuses,omitempty" jsonschema:"only these statuses"`
+	IncludeClosed       bool     `json:"include_closed,omitempty" jsonschema:"include closed tasks"`
+	IncludeSubtasks     bool     `json:"include_subtasks,omitempty" jsonschema:"also return subtasks (ClickUp omits them by default)"`
+	UpdatedAfter        string   `json:"updated_after,omitempty" jsonschema:"unix ms timestamp; only tasks updated after this"`
+	Page                int      `json:"page,omitempty" jsonschema:"page number (0-based)"`
+	IncludeCustomFields bool     `json:"include_custom_fields,omitempty" jsonschema:"also return each task's custom field values (valued fields only; dropdown/labels resolved to names)"`
 }
 
 func (c *Client) clickupSearchTasks(ctx context.Context, _ *mcp.CallToolRequest, in cuSearchTasksIn) (*mcp.CallToolResult, any, error) {
@@ -383,7 +471,7 @@ func (c *Client) clickupSearchTasks(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 	tasks := make([]cuTask, 0, len(out.Tasks))
 	for _, t := range out.Tasks {
-		tasks = append(tasks, slimTask(t))
+		tasks = append(tasks, slimTaskWithFields(t, in.IncludeCustomFields))
 	}
 	return textResult(map[string]any{"tasks": tasks})
 }
@@ -394,6 +482,8 @@ func (c *Client) clickupSearchTasks(ctx context.Context, _ *mcp.CallToolRequest,
 type cuTaskIn struct {
 	TaskID          string `json:"task_id" jsonschema:"task ID (e.g. 86c2j3k4m or custom ID)"`
 	IncludeSubtasks *bool  `json:"include_subtasks,omitempty" jsonschema:"include the task's subtasks and sub-subtasks (flattened descendant tree, each carrying parent / top_level_parent); default true"`
+	// Only clickup_get_task reads this; other cuTaskIn tools ignore it.
+	IncludeCustomFields *bool `json:"include_custom_fields,omitempty" jsonschema:"include custom field values (valued fields only; dropdown/labels resolved to names); default true for a single task"`
 }
 
 func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in cuTaskIn) (*mcp.CallToolResult, any, error) {
@@ -423,7 +513,7 @@ func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in 
 	// parent / top_level_parent ride on the slim task now (so list_tasks and
 	// search_tasks expose them too), all from this one GET — no extra request.
 	res := map[string]any{
-		"task":         slimTask(out.rawCUTask),
+		"task":         slimTaskWithFields(out.rawCUTask, in.IncludeCustomFields == nil || *in.IncludeCustomFields),
 		"description":  out.Description,
 		"date_created": out.DateCreated,
 		"date_updated": out.DateUpdated,
@@ -450,7 +540,7 @@ func (c *Client) clickupGetTask(ctx context.Context, _ *mcp.CallToolRequest, in 
 	if includeSubtasks {
 		subtasks := make([]cuTask, 0, len(out.Subtasks))
 		for _, t := range out.Subtasks {
-			subtasks = append(subtasks, slimTask(t))
+			subtasks = append(subtasks, slimTaskWithFields(t, in.IncludeCustomFields != nil && *in.IncludeCustomFields))
 		}
 		res["subtasks"] = subtasks
 	}

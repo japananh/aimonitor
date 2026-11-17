@@ -708,3 +708,54 @@ func TestSlimChecklist(t *testing.T) {
 		t.Errorf("items must be a non-nil empty slice, got nil")
 	}
 }
+
+const cuPointsFixture = `{
+  "id": "86d35rp9k", "name": "T", "points": 5,
+  "custom_fields": [
+    {"id":"f1","name":"Size","type":"drop_down","value":1,
+     "type_config":{"options":[{"id":"o0","name":"S","orderindex":0},{"id":"o1","name":"M","orderindex":1}]}},
+    {"id":"f2","name":"Notes","type":"short_text"},
+    {"id":"f3","name":"Area","type":"labels","value":["l2"],
+     "type_config":{"options":[{"id":"l1","label":"BE"},{"id":"l2","label":"FE"}]}},
+    {"id":"f4","name":"Hours","type":"number","value":"12"}
+  ]
+}`
+
+func TestSlimTask_PointsAndCustomFields(t *testing.T) {
+	var raw rawCUTask
+	if err := json.Unmarshal([]byte(cuPointsFixture), &raw); err != nil {
+		t.Fatal(err)
+	}
+	plain := slimTask(raw)
+	if plain.Points == nil || *plain.Points != 5 {
+		t.Fatalf("Points = %v, want 5", plain.Points)
+	}
+	if plain.CustomFields != nil {
+		t.Errorf("custom fields must be opt-in, got %v", plain.CustomFields)
+	}
+
+	got := slimTaskWithFields(raw, true).CustomFields
+	if len(got) != 3 {
+		t.Fatalf("want 3 valued fields (empty one dropped), got %+v", got)
+	}
+	if got[0].Name != "Size" || got[0].Value != "M" {
+		t.Errorf("dropdown = %+v, want resolved name M", got[0])
+	}
+	if l, ok := got[1].Value.([]any); !ok || len(l) != 1 || l[0] != "FE" {
+		t.Errorf("labels = %+v, want [FE]", got[1])
+	}
+	if got[2].Value != "12" {
+		t.Errorf("number = %+v, want passthrough", got[2])
+	}
+}
+
+func TestSlimTask_NullPoints(t *testing.T) {
+	var raw rawCUTask
+	if err := json.Unmarshal([]byte(`{"id":"a","points":null}`), &raw); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(slimTask(raw))
+	if !strings.Contains(string(b), `"points":null`) {
+		t.Errorf("unset points must serialise as null: %s", b)
+	}
+}
