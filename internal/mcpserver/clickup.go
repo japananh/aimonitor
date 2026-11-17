@@ -558,6 +558,7 @@ type cuCreateTaskIn struct {
 	Tags         []string `json:"tags,omitempty" jsonschema:"tag names"`
 	Parent       string   `json:"parent,omitempty" jsonschema:"parent task ID (creates a subtask)"`
 	CustomItemID *int     `json:"custom_item_id,omitempty" jsonschema:"work-item type ID (e.g. ClickUp's Bug type); resolve names to IDs with clickup_list_custom_item_types. Omit for the default Task type"`
+	Points       *float64 `json:"points,omitempty" jsonschema:"Sprint Points (ClickUp's built-in points field, e.g. 0.5, 1, 2); 0 is a valid value"`
 }
 
 // setMarkdownDescription writes a markdown description onto a create/update body
@@ -603,6 +604,9 @@ func createTaskBody(in cuCreateTaskIn) map[string]any {
 	if in.CustomItemID != nil {
 		body["custom_item_id"] = *in.CustomItemID
 	}
+	if in.Points != nil {
+		body["points"] = *in.Points
+	}
 	return body
 }
 
@@ -616,15 +620,16 @@ func (c *Client) clickupCreateTask(ctx context.Context, _ *mcp.CallToolRequest, 
 }
 
 type cuUpdateTaskIn struct {
-	TaskID          string `json:"task_id" jsonschema:"task to update"`
-	Name            string `json:"name,omitempty" jsonschema:"new name"`
-	Description     string `json:"description,omitempty" jsonschema:"new description (markdown)"`
-	Status          string `json:"status,omitempty" jsonschema:"new status"`
-	Priority        int    `json:"priority,omitempty" jsonschema:"priority level: 1 urgent, 2 high, 3 normal, 4 low"`
-	DueDate         int64  `json:"due_date,omitempty" jsonschema:"new due date as unix ms timestamp"`
-	AddAssignees    []int  `json:"add_assignees,omitempty" jsonschema:"user IDs to assign to the task (resolve with clickup_list_members)"`
-	RemoveAssignees []int  `json:"remove_assignees,omitempty" jsonschema:"user IDs to unassign from the task"`
-	CustomItemID    *int   `json:"custom_item_id,omitempty" jsonschema:"work-item type ID (e.g. ClickUp's Bug type); resolve names to IDs with clickup_list_custom_item_types"`
+	TaskID          string   `json:"task_id" jsonschema:"task to update"`
+	Name            string   `json:"name,omitempty" jsonschema:"new name"`
+	Description     string   `json:"description,omitempty" jsonschema:"new description (markdown)"`
+	Status          string   `json:"status,omitempty" jsonschema:"new status"`
+	Priority        int      `json:"priority,omitempty" jsonschema:"priority level: 1 urgent, 2 high, 3 normal, 4 low"`
+	DueDate         int64    `json:"due_date,omitempty" jsonschema:"new due date as unix ms timestamp"`
+	AddAssignees    []int    `json:"add_assignees,omitempty" jsonschema:"user IDs to assign to the task (resolve with clickup_list_members)"`
+	RemoveAssignees []int    `json:"remove_assignees,omitempty" jsonschema:"user IDs to unassign from the task"`
+	CustomItemID    *int     `json:"custom_item_id,omitempty" jsonschema:"work-item type ID (e.g. ClickUp's Bug type); resolve names to IDs with clickup_list_custom_item_types"`
+	Points          *float64 `json:"points,omitempty" jsonschema:"Sprint Points (ClickUp's built-in points field, e.g. 0.5, 1, 2); 0 is a valid value"`
 }
 
 // updateTaskBody maps the update-task input onto ClickUp's PUT /task/{id} body.
@@ -650,6 +655,9 @@ func updateTaskBody(in cuUpdateTaskIn) (map[string]any, error) {
 	}
 	if in.CustomItemID != nil {
 		body["custom_item_id"] = *in.CustomItemID
+	}
+	if in.Points != nil {
+		body["points"] = *in.Points
 	}
 	if len(in.AddAssignees) > 0 || len(in.RemoveAssignees) > 0 {
 		a := map[string]any{}
