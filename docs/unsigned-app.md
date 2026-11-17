@@ -32,7 +32,7 @@ xattr -dr com.apple.quarantine /Applications/AIMonitor.app
 open /Applications/AIMonitor.app
 ```
 
-Re-running the one-line installer (`packaging/macos/install.sh`) does this for you. The CLI (`aimonitor …`) is never quarantined and keeps working across upgrades — only the `.app` needs re-clearing. There is no need to reinstall, and **never** `aimonitor uninstall --purge` (it deletes your saved account logins).
+Re-running the one-line installer (`packaging/macos/install.sh`) does this for you. From v1.1.66 the cask clears the CLI's flag too; on older installs `aimonitor` itself is quarantined and macOS says "Not Opened" when a terminal or MCP host launches it — clear it with `xattr -d com.apple.quarantine "$(command -v aimonitor | xargs readlink -f)"`. There is no need to reinstall, and **never** `aimonitor uninstall --purge` (it deletes your saved account logins).
 
 ## Why not Homebrew Cask's `--no-quarantine`?
 

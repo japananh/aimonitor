@@ -47,7 +47,7 @@ aimonitor update check          # CLI: is a newer release out?
 aimonitor update install        # CLI: upgrade in the background
 ```
 
-> ⚠️ **macOS: `brew upgrade --cask` re-quarantines the app.** Each upgrade lays down a fresh unsigned `.app`, so if it won't open afterward, re-clear Gatekeeper with `xattr -dr com.apple.quarantine /Applications/AIMonitor.app` (re-running the one-line installer does it for you). This is expected — **not** a broken install, so don't reinstall or `--purge`. The CLI keeps working regardless.
+> ⚠️ **macOS: `brew upgrade --cask` re-quarantines the app.** Each upgrade lays down a fresh unsigned `.app`, so if it won't open afterward, re-clear Gatekeeper with `xattr -dr com.apple.quarantine /Applications/AIMonitor.app` (re-running the one-line installer does it for you). This is expected — **not** a broken install, so don't reinstall or `--purge`. The brew cask also clears the CLI's flag; if a terminal or MCP host still reports `aimonitor` "Not Opened", run `xattr -d com.apple.quarantine "$(command -v aimonitor | xargs readlink -f)"`.
 
 The menu-bar app also checks GitHub on launch and offers the update under **Preferences → Check for updates**. Pre-releases are never auto-served — `brew upgrade` keeps you on the latest stable.
 
@@ -145,7 +145,7 @@ aimonitor doctor   # health check: config, SQLite, keyring, accounts
 ```
 
 - **"Daemon not running" / usage looks stale.** Start or restart the background daemon with `aimonitor config set autostart true`, or click **Start daemon** in the popover — it registers a LaunchAgent that relaunches at login.
-- **App won't open — "damaged", "can't be opened", or "unidentified developer"** (macOS Gatekeeper on the unsigned app). Happens on first launch **and after every `brew upgrade`/reinstall** — each lays down a fresh unsigned `.app`. Clear the quarantine flag, then reopen: `xattr -dr com.apple.quarantine /Applications/AIMonitor.app`. This is *not* a broken install, so **don't uninstall or `aimonitor uninstall --purge`** to "reset" it — `--purge` wipes your saved account logins. The CLI (`aimonitor …`) is unaffected. Details: [`docs/unsigned-app.md`](docs/unsigned-app.md).
+- **App won't open — "damaged", "can't be opened", or "unidentified developer"** (macOS Gatekeeper on the unsigned app). Happens on first launch **and after every `brew upgrade`/reinstall** — each lays down a fresh unsigned `.app`. Clear the quarantine flag, then reopen: `xattr -dr com.apple.quarantine /Applications/AIMonitor.app`. This is *not* a broken install, so **don't uninstall or `aimonitor uninstall --purge`** to "reset" it — `--purge` wipes your saved account logins. The cask clears the CLI's flag too (a release before v1.1.66 left `aimonitor` quarantined: `xattr -d com.apple.quarantine "$(command -v aimonitor | xargs readlink -f)"`). Details: [`docs/unsigned-app.md`](docs/unsigned-app.md).
 - **Logs.** The daemon writes to `~/Library/Logs/aimonitor/aimonitor.daemon.log` (INFO/WARN/ERROR — never token bytes); background upgrades log to `update.log` beside it.
 - **Recent switches.** `aimonitor log` prints the switch audit trail.
 
