@@ -150,8 +150,11 @@ homebrew_casks:
     #     freshly-staged unsigned .app so the GUI opens without the "damaged"
     #     block. Each upgrade re-stages a re-quarantined copy, so this re-runs
     #     every time — without it, `brew upgrade` silently breaks the app.
+    #     The CLI in the Caskroom (`binary "aimonitor"`) is quarantined too and
+    #     is just as unsigned: Gatekeeper blocks it when a terminal or an MCP
+    #     host launches it, so a second step clears it.
     #     must_succeed:false → a headless/locked-down install still completes;
-    #     the caveats repeat the manual command as a fallback.
+    #     the caveats repeat the manual commands as a fallback.
     #
     # Registering the daemon's LaunchAgent is deliberately NOT done here. An
     # install step runs sandboxed, and writing
@@ -177,6 +180,11 @@ homebrew_casks:
             writable_paths: ["AIMonitor.app"],
             writable_base: :appdir,
             must_succeed: false
+        run "/usr/bin/xattr",
+            args: ["-d", "com.apple.quarantine", "{{ "{{staged_path}}" }}/aimonitor"],
+            writable_paths: ["aimonitor"],
+            writable_base: :staged_path,
+            must_succeed: false
       end
     # Surfaced after `brew install`. Documented in docs/unsigned-app.md.
     caveats: |
@@ -185,11 +193,12 @@ homebrew_casks:
 
         aimonitor config set autostart false
 
-      The menu bar app is unsigned. Install auto-clears the Gatekeeper
-      quarantine flag; if macOS still blocks the launch ("damaged" or
-      "unidentified developer"), clear it manually:
+      The menu bar app and the CLI are unsigned. Install auto-clears the
+      Gatekeeper quarantine flag on both; if macOS still blocks a launch
+      ("damaged", "unidentified developer" or "Not Opened"), clear it manually:
 
         xattr -dr com.apple.quarantine /Applications/AIMonitor.app
+        xattr -d com.apple.quarantine "$(brew --caskroom)/aimonitor/$(brew list --cask --versions aimonitor | awk '{print $2}')/aimonitor"
 
       For COMPLETE removal — including saved logins in your Keychain, the
       database, and config — run this BEFORE `brew uninstall`:
